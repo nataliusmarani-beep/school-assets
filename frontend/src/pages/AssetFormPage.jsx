@@ -16,6 +16,8 @@ import { Alert, AlertDescription } from "../components/ui/alert";
 import { Upload, X, FileText, ImageIcon, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 
+const CAMPUSES = ["YPJ Kuala Kencana", "YPJ Tembagapura"];
+
 const CATEGORIES = [
   "IT Equipment", "AV Equipment", "Furniture", "Lab Equipment",
   "Vehicles", "Books", "Sports", "Music Equipment", "Other",
@@ -33,7 +35,7 @@ export default function AssetFormPage() {
 
   const [form, setForm] = useState({
     name: "", asset_tag: "", category: "IT Equipment", description: "",
-    location: "", status: "active", purchase_price: "",
+    campus: "", location: "", status: "active", purchase_price: "",
     purchase_date: new Date().toISOString().split("T")[0],
     useful_life_years: 5, warranty_end_date: "", serial_number: "",
     supplier: "", assigned_to_name: "", photo_path: null, documents: [],
@@ -184,7 +186,18 @@ export default function AssetFormPage() {
               </Select>
             </div>
             <div>
-              <Label className="label-mono">Location</Label>
+              <Label className="label-mono">Campus</Label>
+              <Select value={form.campus || ""} onValueChange={(v)=>update("campus",v)}>
+                <SelectTrigger className="mt-2 rounded-none border-slate-300" data-testid="asset-campus-select">
+                  <SelectValue placeholder="Select campus…"/>
+                </SelectTrigger>
+                <SelectContent>
+                  {CAMPUSES.map((c)=>(<SelectItem key={c} value={c}>{c}</SelectItem>))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="label-mono">Room / Location</Label>
               <Input value={form.location} onChange={(e)=>update("location",e.target.value)}
                 required placeholder="e.g. Computer Lab A" className="mt-2 rounded-none border-slate-300"
                 data-testid="asset-location-input"/>

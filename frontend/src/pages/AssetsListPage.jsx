@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import api, { fmtCurrency, fmtDate } from "../lib/api";
 import { Input } from "../components/ui/input";
-import { Button } from "../components/ui/button";
 import {
   Select,
   SelectContent,
@@ -11,6 +10,13 @@ import {
   SelectValue,
 } from "../components/ui/select";
 import { Search, Plus, Filter } from "lucide-react";
+
+const CAMPUSES = ["YPJ Kuala Kencana", "YPJ Tembagapura"];
+
+const CAMPUS_DOT = {
+  "YPJ Kuala Kencana": "bg-amber-400",
+  "YPJ Tembagapura": "bg-blue-500",
+};
 
 const CATEGORIES = [
   "IT Equipment", "AV Equipment", "Furniture", "Lab Equipment",
@@ -28,6 +34,7 @@ export default function AssetsListPage() {
   const [assets, setAssets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [campus, setCampus] = useState("all");
   const [category, setCategory] = useState("all");
   const [status, setStatus] = useState("all");
 
@@ -35,6 +42,7 @@ export default function AssetsListPage() {
     setLoading(true);
     const params = {};
     if (search) params.search = search;
+    if (campus !== "all") params.campus = campus;
     if (category !== "all") params.category = category;
     if (status !== "all") params.status = status;
     api.get("/assets", { params })
@@ -51,7 +59,7 @@ export default function AssetsListPage() {
     const t = setTimeout(load, 200);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, category, status]);
+  }, [search, campus, category, status]);
 
   return (
     <div className="p-6 lg:p-10 max-w-[1600px] mx-auto" data-testid="assets-page">
@@ -73,7 +81,7 @@ export default function AssetsListPage() {
 
       {/* Filters */}
       <div className="bg-white border border-slate-200 p-4 mb-6 grid grid-cols-1 md:grid-cols-12 gap-3">
-        <div className="md:col-span-6 relative">
+        <div className="md:col-span-4 relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" strokeWidth={1.75} />
           <Input
             placeholder="Search by name, tag or serial number…"
@@ -82,6 +90,24 @@ export default function AssetsListPage() {
             className="pl-9 rounded-none border-slate-300"
             data-testid="asset-search-input"
           />
+        </div>
+        <div className="md:col-span-3">
+          <Select value={campus} onValueChange={setCampus}>
+            <SelectTrigger className="rounded-none border-slate-300" data-testid="filter-campus">
+              <SelectValue placeholder="All campuses" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All campuses</SelectItem>
+              {CAMPUSES.map((c) => (
+                <SelectItem key={c} value={c}>
+                  <span className="flex items-center gap-2">
+                    <span className={`w-2 h-2 rounded-full ${CAMPUS_DOT[c] || "bg-slate-400"}`} />
+                    {c}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <div className="md:col-span-3">
           <Select value={category} onValueChange={setCategory}>
@@ -97,7 +123,7 @@ export default function AssetsListPage() {
             </SelectContent>
           </Select>
         </div>
-        <div className="md:col-span-3">
+        <div className="md:col-span-2">
           <Select value={status} onValueChange={setStatus}>
             <SelectTrigger className="rounded-none border-slate-300" data-testid="filter-status">
               <SelectValue placeholder="All statuses" />
@@ -122,7 +148,8 @@ export default function AssetsListPage() {
                 <th className="text-left font-medium label-mono py-3 px-4">Tag</th>
                 <th className="text-left font-medium label-mono py-3 px-4">Asset</th>
                 <th className="text-left font-medium label-mono py-3 px-4">Category</th>
-                <th className="text-left font-medium label-mono py-3 px-4">Location</th>
+                <th className="text-left font-medium label-mono py-3 px-4">Campus</th>
+                <th className="text-left font-medium label-mono py-3 px-4">Room</th>
                 <th className="text-left font-medium label-mono py-3 px-4">Assigned</th>
                 <th className="text-left font-medium label-mono py-3 px-4">Status</th>
                 <th className="text-right font-medium label-mono py-3 px-4">Book Value</th>
@@ -131,17 +158,18 @@ export default function AssetsListPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="text-center text-slate-500 py-12">Loading…</td>
+                  <td colSpan={8} className="text-center text-slate-500 py-12">Loading…</td>
                 </tr>
               ) : assets.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="text-center text-slate-500 py-16">
+                  <td colSpan={8} className="text-center text-slate-500 py-16">
                     <div className="font-display text-lg text-slate-700 mb-1">No assets found</div>
                     <div className="text-xs">Try adjusting filters or add your first asset.</div>
                   </td>
                 </tr>
               ) : assets.map((a) => {
                 const st = STATUS_LABELS[a.status] || STATUS_LABELS.active;
+                const dot = CAMPUS_DOT[a.campus];
                 return (
                   <tr
                     key={a.id}
@@ -158,6 +186,14 @@ export default function AssetsListPage() {
                       <div className="text-xs text-slate-500 mt-0.5">{a.serial_number || "—"}</div>
                     </td>
                     <td className="py-3 px-4 text-slate-700">{a.category}</td>
+                    <td className="py-3 px-4 text-slate-700">
+                      {a.campus ? (
+                        <span className="flex items-center gap-1.5">
+                          <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dot || "bg-slate-400"}`} />
+                          {a.campus}
+                        </span>
+                      ) : "—"}
+                    </td>
                     <td className="py-3 px-4 text-slate-700">{a.location}</td>
                     <td className="py-3 px-4 text-slate-700">{a.assigned_to_name || "—"}</td>
                     <td className="py-3 px-4">

@@ -66,6 +66,7 @@ def init_db():
         asset_tag TEXT NOT NULL,
         category TEXT NOT NULL,
         description TEXT DEFAULT '',
+        campus TEXT NOT NULL DEFAULT '',
         location TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'active',
         purchase_price REAL NOT NULL,
@@ -136,6 +137,11 @@ def init_db():
     );
     """)
     conn.commit()
+    # Migrations for existing databases
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(assets)").fetchall()]
+    if "campus" not in cols:
+        conn.execute("ALTER TABLE assets ADD COLUMN campus TEXT NOT NULL DEFAULT ''")
+        conn.commit()
     conn.close()
 
 
@@ -221,6 +227,7 @@ class AssetIn(BaseModel):
     asset_tag: str
     category: str
     description: Optional[str] = ""
+    campus: Optional[str] = ""
     location: str
     status: Literal["active", "in_repair", "retired", "lost"] = "active"
     purchase_price: float
@@ -240,6 +247,7 @@ class AssetUpdate(BaseModel):
     asset_tag: Optional[str] = None
     category: Optional[str] = None
     description: Optional[str] = None
+    campus: Optional[str] = None
     location: Optional[str] = None
     status: Optional[str] = None
     purchase_price: Optional[float] = None
@@ -441,6 +449,7 @@ async def list_assets(
     category: Optional[str] = None,
     status: Optional[str] = None,
     location: Optional[str] = None,
+    campus: Optional[str] = None,
     assigned_to: Optional[str] = None,
 ):
     conn = get_conn()
@@ -452,6 +461,9 @@ async def list_assets(
     if status:
         conditions.append("status = ?")
         params.append(status)
+    if campus:
+        conditions.append("campus = ?")
+        params.append(campus)
     if location:
         conditions.append("location = ?")
         params.append(location)
@@ -477,14 +489,14 @@ async def create_asset(body: AssetIn, user: dict = Depends(get_current_user)):
     ts = now_iso()
     conn = get_conn()
     conn.execute("""
-        INSERT INTO assets (id,name,asset_tag,category,description,location,status,
+        INSERT INTO assets (id,name,asset_tag,category,description,campus,location,status,
             purchase_price,purchase_date,useful_life_years,warranty_end_date,
             serial_number,supplier,assigned_to_user_id,assigned_to_name,
             photo_path,documents,created_at,updated_at,created_by)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
         aid, body.name, body.asset_tag, body.category, body.description or "",
-        body.location, body.status, body.purchase_price, body.purchase_date,
+        body.campus or "", body.location, body.status, body.purchase_price, body.purchase_date,
         body.useful_life_years, body.warranty_end_date, body.serial_number or "",
         body.supplier or "", body.assigned_to_user_id, body.assigned_to_name,
         body.photo_path, json.dumps(body.documents), ts, ts, user["id"],
@@ -861,44 +873,45 @@ def seed_data():
     asset_count = conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
     if asset_count == 0:
         ts = now_iso()
+        # (name, tag, category, desc, campus, location, status, price, pdate, life, warranty, serial, supplier, assignee_id, assignee_name)
         demo = [
             ("Dell Latitude 5430 Laptop", "IT-LAP-0001", "IT Equipment",
-             "Teacher laptop with Windows 11 Pro", "Computer Lab A", "active",
+             "Teacher laptop with Windows 11 Pro", "YPJ Kuala Kencana", "Computer Lab A", "active",
              1250.00, "2023-08-15", 4, "2026-08-15", "DL5430X01", "Dell Technologies", staff_id, "Maria Hernandez"),
             ("Epson PowerLite Projector", "AV-PRJ-0014", "AV Equipment",
-             "Classroom projector 3500 lumens", "Room 204", "active",
+             "Classroom projector 3500 lumens", "YPJ Tembagapura", "Room 204", "active",
              680.00, "2022-03-10", 6, "2025-03-10", "EPL3500-204", "Epson", None, "Room 204"),
             ("Microscope Set Olympus CX23", "LAB-MIC-0007", "Lab Equipment",
-             "Set of 8 student microscopes", "Biology Lab", "active",
+             "Set of 8 student microscopes", "YPJ Kuala Kencana", "Biology Lab", "active",
              4200.00, "2021-09-01", 10, "2024-09-01", "OLY-CX23-S8", "Olympus", staff_id, "Maria Hernandez"),
             ("Steelcase Student Desks (40)", "FUR-DSK-0040", "Furniture",
-             "Set of 40 height-adjustable desks", "Room 112", "active",
+             "Set of 40 height-adjustable desks", "YPJ Kuala Kencana", "Room 112", "active",
              8000.00, "2020-07-20", 12, "2030-07-20", "SC-LOT-112", "Steelcase", None, "Room 112"),
             ("Toyota Hiace School Bus", "VEH-BUS-0001", "Vehicles",
-             "16-seater school transport van", "Main Garage", "active",
+             "16-seater school transport van", "YPJ Tembagapura", "Main Garage", "active",
              35000.00, "2019-04-12", 8, "2024-04-12", "TYT-HIACE-19", "Toyota", None, "Transport Dept"),
             ("iPad Pro 11\" Cart (30 units)", "IT-IPD-0030", "IT Equipment",
-             "Mobile cart of iPads for classroom use", "Library", "active",
+             "Mobile cart of iPads for classroom use", "YPJ Kuala Kencana", "Library", "active",
              27000.00, "2024-01-20", 5, "2027-01-20", "IPD-CART-LIB1", "Apple", None, "Library"),
             ("Smart Interactive Whiteboard", "AV-IWB-0003", "AV Equipment",
-             "Smart Board 6065 65-inch", "Room 301", "in_repair",
+             "Smart Board 6065 65-inch", "YPJ Tembagapura", "Room 301", "in_repair",
              3500.00, "2022-11-05", 7, "2025-11-05", "SB6065-301", "Smart Technologies", None, "Room 301"),
             ("Casio Digital Piano CDP-S110", "MUS-PIA-0002", "Music Equipment",
-             "Compact digital piano for music room", "Music Room", "active",
+             "Compact digital piano for music room", "YPJ Kuala Kencana", "Music Room", "active",
              540.00, "2023-02-14", 8, "2026-02-14", "CDS110-002", "Casio", None, "Music Room"),
         ]
         asset_ids = []
         for row in demo:
             aid = str(uuid.uuid4())
             asset_ids.append(aid)
-            (name, tag, cat, desc, loc, status, price, pdate, life, warranty, serial, supplier, assignee_id, assignee_name) = row
+            (name, tag, cat, desc, campus, loc, status, price, pdate, life, warranty, serial, supplier, assignee_id, assignee_name) = row
             conn.execute("""
-                INSERT INTO assets (id,name,asset_tag,category,description,location,status,
+                INSERT INTO assets (id,name,asset_tag,category,description,campus,location,status,
                     purchase_price,purchase_date,useful_life_years,warranty_end_date,
                     serial_number,supplier,assigned_to_user_id,assigned_to_name,
                     photo_path,documents,created_at,updated_at,created_by)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """, (aid, name, tag, cat, desc, loc, status, price, pdate, life, warranty,
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """, (aid, name, tag, cat, desc, campus, loc, status, price, pdate, life, warranty,
                   serial, supplier, assignee_id, assignee_name, None, "[]", ts, ts, admin_id))
             conn.execute("""
                 INSERT INTO ownership_logs (id,asset_id,from_name,from_user_id,to_name,to_user_id,note,by,by_name,at)

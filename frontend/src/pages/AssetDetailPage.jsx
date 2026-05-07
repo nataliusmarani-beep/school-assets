@@ -211,7 +211,8 @@ export default function AssetDetailPage() {
 
           <div className="bg-white border border-slate-200 p-6 space-y-4">
             <div className="label-mono">Quick facts</div>
-            <Detail icon={Building2} label="Location" value={asset.location}/>
+            <Detail icon={Building2} label="Campus" value={asset.campus || "—"}/>
+            <Detail icon={Building2} label="Room" value={asset.location}/>
             <Detail icon={UserIcon} label="Assigned to" value={asset.assigned_to_name || "—"}/>
             <Detail icon={Calendar} label="Purchased" value={fmtDate(asset.purchase_date)}/>
             <Detail icon={ShieldCheck} label="Warranty until" value={fmtDate(asset.warranty_end_date)}/>
