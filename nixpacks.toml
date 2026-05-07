@@ -3,7 +3,7 @@
 providers = ["python"]
 
 [phases.setup]
-nixPkgs = ["python311", "nodejs_18"]
+nixPkgs = ["python311", "python311Packages.pip", "nodejs_18"]
 
 [phases.install]
 dependsOn = ["setup"]
