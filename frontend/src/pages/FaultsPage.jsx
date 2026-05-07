@@ -19,7 +19,7 @@ import { Wrench } from "lucide-react";
 const STATUS_BADGE = {
   open: "bg-amber-50 text-amber-700 border-amber-200",
   in_progress: "bg-blue-50 text-blue-700 border-blue-200",
-  resolved: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  resolved: "bg-blue-50 text-blue-800 border-blue-200",
 };
 
 const SEVERITY_BADGE = {
@@ -108,7 +108,7 @@ export default function FaultsPage() {
                   </div>
                   <div className="text-sm text-slate-600 mt-2">{f.description}</div>
                   <div className="text-xs text-slate-500 mt-3 flex items-center gap-3 flex-wrap">
-                    <Link to={`/assets/${f.asset_id}`} className="hover:text-emerald-700">
+                    <Link to={`/assets/${f.asset_id}`} className="hover:text-blue-800">
                       {f.asset_name} <span className="font-mono">({f.asset_tag})</span>
                     </Link>
                     <span>·</span>
@@ -117,7 +117,7 @@ export default function FaultsPage() {
                     <span>{fmtDate(f.created_at)}</span>
                   </div>
                   {f.resolution_note && (
-                    <div className="text-sm text-emerald-700 mt-2 bg-emerald-50 border border-emerald-200 p-2">
+                    <div className="text-sm text-blue-800 mt-2 bg-blue-50 border border-blue-200 p-2">
                       Resolution: {f.resolution_note}
                     </div>
                   )}
@@ -131,7 +131,7 @@ export default function FaultsPage() {
                     </Button>
                   )}
                   {f.status !== "resolved" && (
-                    <Button size="sm" className="rounded-none bg-emerald-700 hover:bg-emerald-800"
+                    <Button size="sm" className="rounded-none bg-blue-800 hover:bg-blue-900"
                       onClick={() => { setResolveTarget(f); setResolveOpen(true); }}
                       data-testid={`fault-resolve-${f.id}`}>
                       Resolve
@@ -153,7 +153,7 @@ export default function FaultsPage() {
               rows={3} className="rounded-none" data-testid="resolve-note-input"/>
           </div>
           <DialogFooter>
-            <Button onClick={submitResolve} className="rounded-none bg-emerald-700"
+            <Button onClick={submitResolve} className="rounded-none bg-blue-800"
               data-testid="confirm-resolve-button">
               Mark resolved
             </Button>

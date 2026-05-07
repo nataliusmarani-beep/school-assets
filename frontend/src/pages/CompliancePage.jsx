@@ -17,7 +17,7 @@ import { Plus, ShieldCheck, Trash2 } from "lucide-react";
 const STATUS_STYLES = {
   pending: "bg-amber-50 text-amber-700 border-amber-200",
   overdue: "bg-rose-50 text-rose-700 border-rose-200",
-  completed: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  completed: "bg-blue-50 text-blue-800 border-blue-200",
 };
 
 export default function CompliancePage() {
@@ -154,7 +154,7 @@ export default function CompliancePage() {
             </Section>
           )}
           {grouped.completed.length > 0 && (
-            <Section title="Completed" count={grouped.completed.length} accent="text-emerald-700">
+            <Section title="Completed" count={grouped.completed.length} accent="text-blue-800">
               {grouped.completed.map((c) => <Item key={c.id} c={c} onComplete={markComplete} onDelete={remove} canModify={isAdmin}/>)}
             </Section>
           )}

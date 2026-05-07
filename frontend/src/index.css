@@ -37,14 +37,14 @@ code, .font-mono {
         --secondary-foreground: 222 47% 11%;
         --muted: 210 40% 96%;
         --muted-foreground: 215 16% 47%;
-        --accent: 158 64% 25%;
+        --accent: 221 83% 35%;
         --accent-foreground: 0 0% 100%;
         --destructive: 0 72% 51%;
         --destructive-foreground: 0 0% 98%;
         --border: 214 32% 91%;
         --input: 214 32% 91%;
-        --ring: 158 64% 30%;
-        --chart-1: 158 64% 30%;
+        --ring: 221 83% 40%;
+        --chart-1: 221 83% 40%;
         --chart-2: 215 28% 17%;
         --chart-3: 32 95% 44%;
         --chart-4: 220 70% 50%;
@@ -79,7 +79,7 @@ code, .font-mono {
 
 .sidebar-link.active {
     background: rgba(255,255,255,0.05);
-    border-left-color: rgb(16 185 129);
+    border-left-color: rgb(29 78 216);
     color: white;
 }
 

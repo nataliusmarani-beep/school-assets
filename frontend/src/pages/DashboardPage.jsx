@@ -203,7 +203,7 @@ export default function DashboardPage() {
                 Fault reports
               </h2>
             </div>
-            <Link to="/faults" className="text-xs text-emerald-700 hover:text-emerald-800" data-testid="view-all-faults">
+            <Link to="/faults" className="text-xs text-blue-800 hover:text-blue-900" data-testid="view-all-faults">
               View all →
             </Link>
           </div>
@@ -237,7 +237,7 @@ export default function DashboardPage() {
               <div className="label-mono mb-1">Inventory</div>
               <h2 className="font-display text-xl font-medium text-slate-900">By category</h2>
             </div>
-            <Link to="/compliance" className="text-xs text-emerald-700 hover:text-emerald-800" data-testid="view-compliance-link">
+            <Link to="/compliance" className="text-xs text-blue-800 hover:text-blue-900" data-testid="view-compliance-link">
               Compliance →
             </Link>
           </div>
@@ -252,7 +252,7 @@ export default function DashboardPage() {
                   </div>
                   <div className="h-1 bg-slate-100">
                     <div
-                      className="h-full bg-emerald-700"
+                      className="h-full bg-blue-800"
                       style={{ width: `${pct}%` }}
                     />
                   </div>

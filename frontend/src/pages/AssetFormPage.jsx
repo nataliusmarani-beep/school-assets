@@ -159,7 +159,7 @@ export default function AssetFormPage() {
       <form onSubmit={submit} className="space-y-8">
         {/* Section 1: Basic Info */}
         <section className="bg-white border border-slate-200 p-6">
-          <div className="label-mono mb-5 text-emerald-700">01 — Basic Information</div>
+          <div className="label-mono mb-5 text-blue-800">01 — Basic Information</div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             <div className="md:col-span-2">
               <Label className="label-mono">Asset name</Label>
@@ -225,7 +225,7 @@ export default function AssetFormPage() {
 
         {/* Section 2: Financial */}
         <section className="bg-white border border-slate-200 p-6">
-          <div className="label-mono mb-5 text-emerald-700">02 — Financials & Warranty</div>
+          <div className="label-mono mb-5 text-blue-800">02 — Financials & Warranty</div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             <div>
               <Label className="label-mono">Purchase price (USD)</Label>
@@ -265,7 +265,7 @@ export default function AssetFormPage() {
 
         {/* Section 3: Media */}
         <section className="bg-white border border-slate-200 p-6">
-          <div className="label-mono mb-5 text-emerald-700">03 — Photo & Documents</div>
+          <div className="label-mono mb-5 text-blue-800">03 — Photo & Documents</div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             {/* Photo */}

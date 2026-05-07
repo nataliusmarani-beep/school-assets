@@ -120,7 +120,7 @@ export default function UsersPage() {
                   <td className="py-3 px-4 text-slate-700">{u.email}</td>
                   <td className="py-3 px-4">
                     <span className={`text-xs px-2 py-0.5 border capitalize ${
-                      u.role === "admin" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-slate-100 text-slate-600 border-slate-200"
+                      u.role === "admin" ? "bg-blue-50 text-blue-800 border-blue-200" : "bg-slate-100 text-slate-600 border-slate-200"
                     }`}>{u.role}</span>
                   </td>
                   <td className="py-3 px-4 text-slate-700">{u.department || "—"}</td>

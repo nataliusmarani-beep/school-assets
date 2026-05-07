@@ -18,7 +18,7 @@ const CATEGORIES = [
 ];
 
 const STATUS_LABELS = {
-  active: { label: "Active", cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  active: { label: "Active", cls: "bg-blue-50 text-blue-800 border-blue-200" },
   in_repair: { label: "In Repair", cls: "bg-amber-50 text-amber-700 border-amber-200" },
   retired: { label: "Retired", cls: "bg-slate-100 text-slate-600 border-slate-200" },
   lost: { label: "Lost", cls: "bg-rose-50 text-rose-700 border-rose-200" },
@@ -149,10 +149,10 @@ export default function AssetsListPage() {
                     data-testid={`asset-row-${a.id}`}
                   >
                     <td className="py-3 px-4 font-mono text-xs text-slate-600">
-                      <Link to={`/assets/${a.id}`} className="hover:text-emerald-700">{a.asset_tag}</Link>
+                      <Link to={`/assets/${a.id}`} className="hover:text-blue-800">{a.asset_tag}</Link>
                     </td>
                     <td className="py-3 px-4">
-                      <Link to={`/assets/${a.id}`} className="font-medium text-slate-900 hover:text-emerald-700">
+                      <Link to={`/assets/${a.id}`} className="font-medium text-slate-900 hover:text-blue-800">
                         {a.name}
                       </Link>
                       <div className="text-xs text-slate-500 mt-0.5">{a.serial_number || "—"}</div>

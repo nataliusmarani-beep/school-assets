@@ -235,10 +235,10 @@ export default function AssetDetailPage() {
         <div className="lg:col-span-2">
           <Tabs defaultValue="overview" className="bg-white border border-slate-200">
             <TabsList className="w-full justify-start rounded-none bg-slate-50 border-b border-slate-200 p-0 h-auto">
-              <TabsTrigger value="overview" className="rounded-none data-[state=active]:bg-white data-[state=active]:border-b-2 data-[state=active]:border-emerald-700 px-6 py-3" data-testid="tab-overview">Overview</TabsTrigger>
-              <TabsTrigger value="history" className="rounded-none data-[state=active]:bg-white data-[state=active]:border-b-2 data-[state=active]:border-emerald-700 px-6 py-3" data-testid="tab-history">Ownership</TabsTrigger>
-              <TabsTrigger value="faults" className="rounded-none data-[state=active]:bg-white data-[state=active]:border-b-2 data-[state=active]:border-emerald-700 px-6 py-3" data-testid="tab-faults">Faults ({asset.faults?.length || 0})</TabsTrigger>
-              <TabsTrigger value="docs" className="rounded-none data-[state=active]:bg-white data-[state=active]:border-b-2 data-[state=active]:border-emerald-700 px-6 py-3" data-testid="tab-docs">Documents</TabsTrigger>
+              <TabsTrigger value="overview" className="rounded-none data-[state=active]:bg-white data-[state=active]:border-b-2 data-[state=active]:border-blue-800 px-6 py-3" data-testid="tab-overview">Overview</TabsTrigger>
+              <TabsTrigger value="history" className="rounded-none data-[state=active]:bg-white data-[state=active]:border-b-2 data-[state=active]:border-blue-800 px-6 py-3" data-testid="tab-history">Ownership</TabsTrigger>
+              <TabsTrigger value="faults" className="rounded-none data-[state=active]:bg-white data-[state=active]:border-b-2 data-[state=active]:border-blue-800 px-6 py-3" data-testid="tab-faults">Faults ({asset.faults?.length || 0})</TabsTrigger>
+              <TabsTrigger value="docs" className="rounded-none data-[state=active]:bg-white data-[state=active]:border-b-2 data-[state=active]:border-blue-800 px-6 py-3" data-testid="tab-docs">Documents</TabsTrigger>
             </TabsList>
 
             <TabsContent value="overview" className="p-6">
@@ -259,9 +259,9 @@ export default function AssetDetailPage() {
                 <ol className="relative border-l-2 border-slate-200 ml-2 space-y-6">
                   {asset.ownership_history.map((h) => (
                     <li key={h.id} className="pl-6 relative">
-                      <div className="absolute -left-[7px] top-1 w-3 h-3 bg-emerald-600"/>
+                      <div className="absolute -left-[7px] top-1 w-3 h-3 bg-blue-700"/>
                       <div className="text-sm font-medium text-slate-900">
-                        Transferred to <span className="text-emerald-700">{h.to_name}</span>
+                        Transferred to <span className="text-blue-800">{h.to_name}</span>
                       </div>
                       <div className="text-xs text-slate-500 mt-1">
                         From: {h.from_name || "—"} · By {h.by_name} · {fmtDate(h.at)}
@@ -283,7 +283,7 @@ export default function AssetDetailPage() {
                       <div className="flex items-start justify-between">
                         <div className="font-medium text-slate-900">{f.title}</div>
                         <span className={`text-xs px-2 py-0.5 border ${
-                          f.status === "resolved" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
+                          f.status === "resolved" ? "bg-blue-50 text-blue-800 border-blue-200" :
                           f.status === "in_progress" ? "bg-blue-50 text-blue-700 border-blue-200" :
                           "bg-amber-50 text-amber-700 border-amber-200"
                         }`}>{f.status.replace("_", " ")}</span>
@@ -342,7 +342,7 @@ function Row({ label, value, bold = false }) {
   return (
     <div className="flex items-center justify-between text-sm">
       <span className="text-slate-600">{label}</span>
-      <span className={`font-mono ${bold ? "text-emerald-700 font-semibold text-base" : "text-slate-900"}`}>{value}</span>
+      <span className={`font-mono ${bold ? "text-blue-800 font-semibold text-base" : "text-slate-900"}`}>{value}</span>
     </div>
   );
 }

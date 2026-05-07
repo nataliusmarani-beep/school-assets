@@ -81,7 +81,7 @@ export default function LoginPage() {
           <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight text-slate-900 leading-tight">
             Manage every asset, from
             <br />
-            <span className="text-emerald-700">classroom to campus.</span>
+            <span className="text-blue-800">classroom to campus.</span>
           </h1>
           <p className="text-sm text-slate-600 mt-4 leading-relaxed">
             One source of truth for inventory, ownership, warranty, faults &
@@ -198,7 +198,7 @@ export default function LoginPage() {
         />
         <div className="absolute inset-0 bg-slate-900/60" />
         <div className="relative h-full flex flex-col justify-end p-12 text-white">
-          <div className="label-mono text-emerald-300 mb-3">Built for schools</div>
+          <div className="label-mono text-blue-300 mb-3">Built for schools</div>
           <p className="font-display text-2xl leading-tight max-w-md">
             "We replaced four spreadsheets and a clipboard. Inventory now closes
             in hours, not weeks."
