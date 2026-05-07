@@ -724,6 +724,118 @@ async def delete_compliance(cid: str, _: dict = Depends(admin_required)):
     return {"ok": True}
 
 
+# ---- Activity log ----
+@api.get("/activity")
+async def get_activity(
+    _: dict = Depends(get_current_user),
+    page: int = Query(1, ge=1),
+    limit: int = Query(30, ge=1, le=100),
+    event_type: Optional[str] = None,
+):
+    conn = get_conn()
+    offset = (page - 1) * limit
+
+    type_filter = ""
+    if event_type and event_type != "all":
+        type_filter = f"WHERE type = '{event_type}'"
+
+    rows = conn.execute(f"""
+        SELECT * FROM (
+            SELECT
+                'asset_created' AS type,
+                a.id AS ref_id,
+                a.name AS subject,
+                u.name AS actor,
+                a.category AS detail,
+                a.campus AS campus,
+                a.created_at AS at
+            FROM assets a
+            LEFT JOIN users u ON u.id = a.created_by
+
+            UNION ALL
+
+            SELECT
+                'ownership_transfer' AS type,
+                ol.asset_id AS ref_id,
+                a.name AS subject,
+                ol.by_name AS actor,
+                ol.to_name AS detail,
+                a.campus AS campus,
+                ol.at AS at
+            FROM ownership_logs ol
+            LEFT JOIN assets a ON a.id = ol.asset_id
+
+            UNION ALL
+
+            SELECT
+                'fault_reported' AS type,
+                f.asset_id AS ref_id,
+                a.name AS subject,
+                f.reported_by_name AS actor,
+                f.title AS detail,
+                a.campus AS campus,
+                f.created_at AS at
+            FROM faults f
+            LEFT JOIN assets a ON a.id = f.asset_id
+
+            UNION ALL
+
+            SELECT
+                'fault_resolved' AS type,
+                f.asset_id AS ref_id,
+                a.name AS subject,
+                f.reported_by_name AS actor,
+                f.title AS detail,
+                a.campus AS campus,
+                f.resolved_at AS at
+            FROM faults f
+            LEFT JOIN assets a ON a.id = f.asset_id
+            WHERE f.resolved_at IS NOT NULL
+
+            UNION ALL
+
+            SELECT
+                'compliance_added' AS type,
+                c.id AS ref_id,
+                c.title AS subject,
+                NULL AS actor,
+                c.category AS detail,
+                NULL AS campus,
+                c.created_at AS at
+            FROM compliance c
+
+            UNION ALL
+
+            SELECT
+                'user_created' AS type,
+                u.id AS ref_id,
+                u.name AS subject,
+                NULL AS actor,
+                u.role AS detail,
+                u.campus AS campus,
+                u.created_at AS at
+            FROM users u
+        ) events
+        {type_filter}
+        ORDER BY at DESC
+        LIMIT ? OFFSET ?
+    """, (limit, offset)).fetchall()
+
+    total = conn.execute(f"""
+        SELECT COUNT(*) FROM (
+            SELECT created_at AS at, 'asset_created' AS type FROM assets
+            UNION ALL SELECT at, 'ownership_transfer' FROM ownership_logs
+            UNION ALL SELECT created_at, 'fault_reported' FROM faults
+            UNION ALL SELECT resolved_at, 'fault_resolved' FROM faults WHERE resolved_at IS NOT NULL
+            UNION ALL SELECT created_at, 'compliance_added' FROM compliance
+            UNION ALL SELECT created_at, 'user_created' FROM users
+        ) e {type_filter}
+    """).fetchone()[0]
+
+    conn.close()
+    return {"items": [dict(r) for r in rows], "total": total, "page": page, "limit": limit}
+
+
 # ---- Dashboard ----
 @api.get("/dashboard/stats")
 async def dashboard_stats(user: dict = Depends(get_current_user)):
