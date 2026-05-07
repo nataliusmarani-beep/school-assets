@@ -313,6 +313,7 @@ export default function AssetFormPage() {
                   </label>
                 )}
               </div>
+              <p className="mt-1.5 text-xs text-slate-400">{t("upload_size_limit")}</p>
             </div>
 
             {/* PDFs */}
@@ -323,6 +324,7 @@ export default function AssetFormPage() {
                 <div className="mt-2">{pdfUploading ? t("uploading") : t("attach_doc")}</div>
                 <input type="file" onChange={handlePdf} className="hidden" data-testid="document-upload-input"/>
               </label>
+              <p className="mt-1.5 text-xs text-slate-400">{t("upload_size_limit")}</p>
             </div>
           </div>
 
