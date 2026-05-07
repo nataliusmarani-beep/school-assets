@@ -817,6 +817,17 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
     }
 
 
+@api.get("/backup")
+async def backup_db(user: dict = Depends(admin_required)):
+    if not DB_PATH.exists():
+        raise HTTPException(404, "Database file not found")
+    return FileResponse(
+        str(DB_PATH),
+        media_type="application/octet-stream",
+        filename=f"ypj-backup-{datetime.now().strftime('%Y%m%d')}.db",
+    )
+
+
 # ---- Mount ----
 app.include_router(api)
 app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")

@@ -11,6 +11,9 @@ import AssetDetailPage from "./pages/AssetDetailPage";
 import FaultsPage from "./pages/FaultsPage";
 import CompliancePage from "./pages/CompliancePage";
 import UsersPage from "./pages/UsersPage";
+import ReportsPage from "./pages/ReportsPage";
+import ActivityLogsPage from "./pages/ActivityLogsPage";
+import HelpPage from "./pages/HelpPage";
 import { Toaster } from "./components/ui/sonner";
 
 function Layout({ children }) {
@@ -48,6 +51,15 @@ function App() {
             }/>
             <Route path="/users" element={
               <ProtectedRoute adminOnly><Layout><UsersPage /></Layout></ProtectedRoute>
+            }/>
+            <Route path="/reports" element={
+              <ProtectedRoute><Layout><ReportsPage /></Layout></ProtectedRoute>
+            }/>
+            <Route path="/activity-logs" element={
+              <ProtectedRoute adminOnly><Layout><ActivityLogsPage /></Layout></ProtectedRoute>
+            }/>
+            <Route path="/help" element={
+              <ProtectedRoute><Layout><HelpPage /></Layout></ProtectedRoute>
             }/>
           </Routes>
         </BrowserRouter>
