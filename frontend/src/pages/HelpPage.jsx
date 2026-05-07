@@ -5,17 +5,17 @@ import {
   Wrench, ShieldCheck, TrendingDown, Users, Upload,
 } from "lucide-react";
 
-const SECTIONS = [
-  { id: "getting-started",    icon: HelpCircle,      title: "Getting started" },
-  { id: "dashboard",          icon: LayoutDashboard, title: "Reading the dashboard" },
-  { id: "register-asset",     icon: Plus,            title: "Registering a new asset" },
-  { id: "find-filter",        icon: Search,          title: "Finding & filtering assets" },
-  { id: "transfer",           icon: ArrowLeftRight,  title: "Transferring ownership" },
-  { id: "faults",             icon: Wrench,          title: "Reporting & resolving faults" },
-  { id: "compliance",         icon: ShieldCheck,     title: "Tracking compliance" },
-  { id: "depreciation",       icon: TrendingDown,    title: "Warranty & depreciation" },
-  { id: "users",              icon: Users,           title: "Managing users (admin)" },
-  { id: "attachments",        icon: Upload,          title: "Photos & PDF attachments" },
+const SECTION_IDS = [
+  { id: "getting-started",  icon: HelpCircle,      titleKey: "help_s1_title" },
+  { id: "dashboard",        icon: LayoutDashboard, titleKey: "help_s2_title" },
+  { id: "register-asset",   icon: Plus,            titleKey: "help_s3_title" },
+  { id: "find-filter",      icon: Search,          titleKey: "help_s4_title" },
+  { id: "transfer",         icon: ArrowLeftRight,  titleKey: "help_s5_title" },
+  { id: "faults",           icon: Wrench,          titleKey: "help_s6_title" },
+  { id: "compliance",       icon: ShieldCheck,     titleKey: "help_s7_title" },
+  { id: "depreciation",     icon: TrendingDown,    titleKey: "help_s8_title" },
+  { id: "users",            icon: Users,           titleKey: "help_s9_title" },
+  { id: "attachments",      icon: Upload,          titleKey: "help_s10_title" },
 ];
 
 function SectionHeader({ id, icon: Icon, title }) {
@@ -76,7 +76,7 @@ export default function HelpPage() {
   const [active, setActive] = useState("getting-started");
 
   useEffect(() => {
-    const ids = SECTIONS.map((s) => s.id);
+    const ids = SECTION_IDS.map((s) => s.id);
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
@@ -94,21 +94,18 @@ export default function HelpPage() {
 
   return (
     <div className="p-6 lg:p-10 max-w-[1200px] mx-auto">
-      {/* Page title */}
       <div className="label-mono mb-2">{t("documentation")}</div>
       <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight text-slate-900 mb-2">
         {t("help_guide")}
       </h1>
-      <p className="text-slate-500 mb-10 max-w-xl">
-        A quick reference for everyday tasks in the YPJ School Asset Registry. Click any topic in the contents to jump to the section.
-      </p>
+      <p className="text-slate-500 mb-10 max-w-xl">{t("help_subtitle")}</p>
 
       <div className="flex gap-10 items-start">
         {/* Sidebar TOC */}
         <aside className="hidden lg:block w-52 flex-shrink-0 sticky top-6">
-          <div className="label-mono mb-3 text-slate-400">On this page</div>
+          <div className="label-mono mb-3 text-slate-400">{t("help_toc_label")}</div>
           <nav className="space-y-0.5">
-            {SECTIONS.map((s) => (
+            {SECTION_IDS.map((s) => (
               <a
                 key={s.id}
                 href={`#${s.id}`}
@@ -118,169 +115,99 @@ export default function HelpPage() {
                     : "border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300"
                 }`}
               >
-                {s.title}
+                {t(s.titleKey)}
               </a>
             ))}
           </nav>
 
-          {/* Need more help */}
           <div className="mt-8 p-4 border border-slate-200 bg-slate-50">
-            <div className="label-mono text-slate-400 mb-2">Need more help?</div>
-            <p className="text-xs text-slate-500 leading-relaxed">
-              Reach out to your school administrator or the operations team for account changes and policy questions.
-            </p>
+            <div className="label-mono text-slate-400 mb-2">{t("help_need_help_title")}</div>
+            <p className="text-xs text-slate-500 leading-relaxed">{t("help_need_help_body")}</p>
           </div>
         </aside>
 
         {/* Content */}
         <div className="flex-1 min-w-0 space-y-12">
 
-          {/* Getting started */}
           <section>
-            <SectionHeader id="getting-started" icon={HelpCircle} title="Getting started" />
+            <SectionHeader id="getting-started" icon={HelpCircle} title={t("help_s1_title")} />
             <hr className="border-slate-200 mb-6" />
-            <P>
-              Welcome to the YPJ School Asset Registry. The system gives every staff member a single, real-time view of every asset across campus — from laptops and projectors to furniture and vehicles — with depreciation, warranty and compliance tracked automatically.
-            </P>
-            <P><Bold>Two roles determine what you can do:</Bold></P>
-            <Ul items={[
-              "Admin — full access. Create/edit/delete assets, manage users, create compliance checks.",
-              "Staff — read assets, transfer ownership, report faults, mark compliance complete.",
-            ]} />
+            <P>{t("help_s1_intro")}</P>
+            <P><Bold>{t("help_s1_roles_heading")}</Bold></P>
+            <Ul items={[t("help_s1_role_admin"), t("help_s1_role_staff")]} />
           </section>
 
-          {/* Reading the dashboard */}
           <section>
-            <SectionHeader id="dashboard" icon={LayoutDashboard} title="Reading the dashboard" />
+            <SectionHeader id="dashboard" icon={LayoutDashboard} title={t("help_s2_title")} />
             <hr className="border-slate-200 mb-6" />
-            <P>The dashboard is the home page after login. It shows four KPI cards at the top:</P>
-            <Ul items={[
-              "Total Assets — count of every active record.",
-              "Current Book Value — what your inventory is worth today, after depreciation.",
-              "Accumulated Depreciation — how much value has been written off (straight-line method).",
-              "Open Faults — fault reports that have not yet been resolved.",
-            ]} />
-            <P>
-              The chart shows a 6-year forecast of book value. The right panel lists assets whose warranty is expiring (or already expired) within 60 days — click any item to open it.
-            </P>
+            <P>{t("help_s2_intro")}</P>
+            <Ul items={[t("help_s2_kpi1"), t("help_s2_kpi2"), t("help_s2_kpi3"), t("help_s2_kpi4")]} />
+            <P>{t("help_s2_outro")}</P>
           </section>
 
-          {/* Registering a new asset */}
           <section>
-            <SectionHeader id="register-asset" icon={Plus} title="Registering a new asset" />
+            <SectionHeader id="register-asset" icon={Plus} title={t("help_s3_title")} />
             <hr className="border-slate-200 mb-6" />
             <Ol items={[
-              "Click Assets in the sidebar, then Add asset.",
-              "Fill in Section 01 — Basic Information: name, asset tag, category, location, status, and the initial owner.",
-              "In Section 02 — Financials & Warranty, enter the purchase price, purchase date, useful life (in years) and warranty end date. Depreciation is calculated automatically using the straight-line method.",
-              "In Section 03 — Photo & Documents, click the photo box to upload an image of the asset, and the document box to attach PDFs (invoices, manuals, certificates).",
-              "Click Create asset.",
+              t("help_s3_step1"), t("help_s3_step2"), t("help_s3_step3"),
+              t("help_s3_step4"), t("help_s3_step5"),
             ]} />
           </section>
 
-          {/* Finding & filtering assets */}
           <section>
-            <SectionHeader id="find-filter" icon={Search} title="Finding & filtering assets" />
+            <SectionHeader id="find-filter" icon={Search} title={t("help_s4_title")} />
             <hr className="border-slate-200 mb-6" />
-            <P>The Assets page supports advanced filtering:</P>
-            <Ul items={[
-              "The search box matches asset name, tag, or serial number (live, as you type).",
-              "Use the Category dropdown to filter by IT Equipment, Furniture, Lab, Vehicles, etc.",
-              "Use the Campus dropdown to show only one campus at a time.",
-              "Use the Status dropdown to show only Active, In Repair, Retired or Lost items.",
-            ]} />
-            <P>Click any row to open the full asset detail page.</P>
+            <P>{t("help_s4_intro")}</P>
+            <Ul items={[t("help_s4_tip1"), t("help_s4_tip2"), t("help_s4_tip3"), t("help_s4_tip4")]} />
+            <P>{t("help_s4_outro")}</P>
           </section>
 
-          {/* Transferring ownership */}
           <section>
-            <SectionHeader id="transfer" icon={ArrowLeftRight} title="Transferring ownership" />
+            <SectionHeader id="transfer" icon={ArrowLeftRight} title={t("help_s5_title")} />
             <hr className="border-slate-200 mb-6" />
-            <P>When a piece of equipment moves to a new owner, classroom or department:</P>
-            <Ol items={[
-              "Open the asset detail page.",
-              "Click Transfer (top right).",
-              "Type the new owner / location and an optional note.",
-              "Click Confirm transfer.",
-            ]} />
-            <P>
-              The full ownership trail is preserved on the Ownership tab — every transfer is timestamped, including who performed it.
-            </P>
+            <P>{t("help_s5_intro")}</P>
+            <Ol items={[t("help_s5_step1"), t("help_s5_step2"), t("help_s5_step3"), t("help_s5_step4")]} />
+            <P>{t("help_s5_note")}</P>
           </section>
 
-          {/* Reporting & resolving faults */}
           <section>
-            <SectionHeader id="faults" icon={Wrench} title="Reporting & resolving faults" />
+            <SectionHeader id="faults" icon={Wrench} title={t("help_s6_title")} />
             <hr className="border-slate-200 mb-6" />
-            <P>
-              Anyone can report a fault from an asset's detail page (Report fault button) or from the Faults page.
-            </P>
-            <P>Each fault has a status workflow:</P>
-            <Ul items={[
-              "Open — newly reported.",
-              "In Progress — someone has started work on it.",
-              "Resolved — fixed; a resolution note can be added.",
-            ]} />
-            <P>
-              Faults page actions: Mark in progress moves an Open fault forward; Resolve closes it with an optional note.
-            </P>
+            <P>{t("help_s6_intro")}</P>
+            <P>{t("help_s6_workflow_heading")}</P>
+            <Ul items={[t("help_s6_status1"), t("help_s6_status2"), t("help_s6_status3")]} />
+            <P>{t("help_s6_actions")}</P>
           </section>
 
-          {/* Tracking compliance */}
           <section>
-            <SectionHeader id="compliance" icon={ShieldCheck} title="Tracking compliance" />
+            <SectionHeader id="compliance" icon={ShieldCheck} title={t("help_s7_title")} />
             <hr className="border-slate-200 mb-6" />
-            <P>
-              Use the Compliance section for recurring regulatory requirements — fire-extinguisher recertifications, school-bus safety inspections, lab calibrations, audits, etc.
-            </P>
-            <Ul items={[
-              "Admin creates checks with a title, category, due date and frequency (Once, Monthly, Quarterly, Annual).",
-              "Items are grouped by status: Overdue, Pending, Completed.",
-              "Overdue items are flagged automatically on the dashboard for action.",
-            ]} />
+            <P>{t("help_s7_intro")}</P>
+            <Ul items={[t("help_s7_tip1"), t("help_s7_tip2"), t("help_s7_tip3")]} />
           </section>
 
-          {/* Warranty & depreciation */}
           <section>
-            <SectionHeader id="depreciation" icon={TrendingDown} title="Warranty & depreciation" />
+            <SectionHeader id="depreciation" icon={TrendingDown} title={t("help_s8_title")} />
             <hr className="border-slate-200 mb-6" />
-            <P>
-              Warranty alerts appear on the dashboard for any asset whose warranty has expired or will expire within 60 days. Click an alert to open the asset and plan a renewal or replacement.
-            </P>
-            <P>Depreciation is calculated automatically using the straight-line method:</P>
+            <P>{t("help_s8_warranty")}</P>
+            <P>{t("help_s8_dep_intro")}</P>
             <CodeBlock>{`annual_depreciation = purchase_price / useful_life_years\ncurrent_book_value  = purchase_price − (annual × age_in_years)`}</CodeBlock>
-            <P>
-              You'll see the live numbers — annual, accumulated, and current book value — on every asset's detail page.
-            </P>
+            <P>{t("help_s8_outro")}</P>
           </section>
 
-          {/* Managing users (admin) */}
           <section>
-            <SectionHeader id="users" icon={Users} title="Managing users (admin)" />
+            <SectionHeader id="users" icon={Users} title={t("help_s9_title")} />
             <hr className="border-slate-200 mb-6" />
-            <P>Admins can invite unlimited users from the Users page:</P>
-            <Ol items={[
-              "Click Add user.",
-              "Enter name, email, password, role (Staff or Admin), campus and department.",
-              "Click Create. The user can immediately sign in with the credentials you set.",
-            ]} />
-            <P>
-              To remove a user, click the trash icon on their row. You cannot delete your own account.
-            </P>
+            <P>{t("help_s9_intro")}</P>
+            <Ol items={[t("help_s9_step1"), t("help_s9_step2"), t("help_s9_step3")]} />
+            <P>{t("help_s9_note")}</P>
           </section>
 
-          {/* Photos & PDF attachments */}
           <section>
-            <SectionHeader id="attachments" icon={Upload} title="Photos & PDF attachments" />
+            <SectionHeader id="attachments" icon={Upload} title={t("help_s10_title")} />
             <hr className="border-slate-200 mb-6" />
-            <P>
-              Each asset can have one photo and unlimited PDF/document attachments. Files are stored securely in cloud object storage and only authenticated users can access them.
-            </P>
-            <Ul items={[
-              "Add — upload during Add/Edit asset (Section 03).",
-              "View — photo appears in the Asset Detail header. Documents appear under the Documents tab.",
-              "Download — click the download icon next to any document.",
-            ]} />
+            <P>{t("help_s10_intro")}</P>
+            <Ul items={[t("help_s10_tip1"), t("help_s10_tip2"), t("help_s10_tip3")]} />
           </section>
 
         </div>
