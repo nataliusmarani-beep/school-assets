@@ -65,12 +65,10 @@ export default function LoginPage() {
       {/* Left: Form */}
       <div className="flex flex-col justify-between bg-white px-8 py-10 sm:px-16">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-emerald-600 flex items-center justify-center">
-            <School className="w-5 h-5 text-white" strokeWidth={1.75} />
-          </div>
+          <img src={require("../ypj-logo.png")} alt="YPJ Logo" className="w-9 h-9 object-contain" />
           <div>
             <div className="font-display font-semibold text-slate-900 text-base leading-none">
-              Lexicon
+              YPJ School
             </div>
             <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500 mt-1">
               School Asset Registry
@@ -187,7 +185,7 @@ export default function LoginPage() {
         </div>
 
         <div className="text-xs text-slate-400">
-          © {new Date().getFullYear()} Lexicon Asset Registry
+          © {new Date().getFullYear()} YPJ School Asset Registry
         </div>
       </div>
 
