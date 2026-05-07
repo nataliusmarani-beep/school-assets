@@ -1,8 +1,9 @@
-# Tell Nixpacks to provide both Python 3.11 and Node 20
+# Nixpacks auto-detects Node.js (from frontend/package.json)
+# We only need to add Python 3.11 on top of that
 providers = ["python", "node"]
 
 [phases.setup]
-nixPkgs = ["python311", "nodejs_20", "nodePackages.npm"]
+nixPkgs = ["python311"]
 
 [phases.install]
 dependsOn = ["setup"]
