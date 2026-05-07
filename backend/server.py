@@ -9,13 +9,14 @@ import uuid
 import sqlite3
 import json
 import logging
+import io
 import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Literal
 
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, UploadFile, File, Query
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, EmailStr
@@ -821,6 +822,182 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
         "compliance_upcoming": upcoming,
         "depreciation_timeline": timeline,
     }
+
+
+def _xlsx_response(wb, filename: str) -> StreamingResponse:
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers=headers)
+
+
+def _style_header(ws):
+    from openpyxl.styles import Font, PatternFill, Alignment
+    for cell in ws[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="1D4ED8")
+        cell.alignment = Alignment(horizontal="center")
+
+
+@api.get("/reports/asset-inventory")
+async def report_asset_inventory(_: dict = Depends(admin_required)):
+    import openpyxl
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT name, asset_tag, category, campus, location, status,
+               assigned_to_name, purchase_price, purchase_date, useful_life_years,
+               warranty_end_date, serial_number, supplier, created_at
+        FROM assets ORDER BY name
+    """).fetchall()
+    conn.close()
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Asset Inventory"
+    headers = ["Asset Name", "Tag", "Category", "Campus", "Room/Location", "Status",
+               "Assigned To", "Purchase Price (USD)", "Purchase Date", "Useful Life (yrs)",
+               "Warranty End", "Serial Number", "Supplier", "Created At"]
+    ws.append(headers)
+    _style_header(ws)
+    for r in rows:
+        d = dict(r)
+        dep = calc_depreciation(d["purchase_price"], d["purchase_date"], d.get("useful_life_years", 5))
+        ws.append([
+            d["name"], d["asset_tag"], d["category"], d["campus"], d["location"],
+            d["status"], d["assigned_to_name"] or "", d["purchase_price"],
+            d["purchase_date"][:10] if d["purchase_date"] else "",
+            d["useful_life_years"], d["warranty_end_date"][:10] if d["warranty_end_date"] else "",
+            d["serial_number"] or "", d["supplier"] or "", d["created_at"][:10],
+        ])
+    today = datetime.now().strftime("%Y%m%d")
+    return _xlsx_response(wb, f"asset-inventory-{today}.xlsx")
+
+
+@api.get("/reports/depreciation")
+async def report_depreciation(_: dict = Depends(admin_required)):
+    import openpyxl
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT name, asset_tag, category, campus, purchase_price, purchase_date, useful_life_years
+        FROM assets ORDER BY name
+    """).fetchall()
+    conn.close()
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Depreciation Schedule"
+    headers = ["Asset Name", "Tag", "Category", "Campus", "Purchase Price (USD)",
+               "Purchase Date", "Useful Life (yrs)", "Annual Depreciation (USD)",
+               "Accumulated Depreciation (USD)", "Current Book Value (USD)", "Age (yrs)"]
+    ws.append(headers)
+    _style_header(ws)
+    for r in rows:
+        d = dict(r)
+        dep = calc_depreciation(d["purchase_price"], d["purchase_date"], d.get("useful_life_years", 5))
+        ws.append([
+            d["name"], d["asset_tag"], d["category"], d["campus"],
+            d["purchase_price"], d["purchase_date"][:10] if d["purchase_date"] else "",
+            d["useful_life_years"],
+            round(dep["annual"], 2), round(dep["accumulated"], 2),
+            round(dep["current_value"], 2), round(dep["age_years"], 2),
+        ])
+    today = datetime.now().strftime("%Y%m%d")
+    return _xlsx_response(wb, f"depreciation-schedule-{today}.xlsx")
+
+
+@api.get("/reports/faults")
+async def report_faults(_: dict = Depends(admin_required)):
+    import openpyxl
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT f.title, f.description, f.severity, f.status,
+               a.name AS asset_name, a.asset_tag, a.campus,
+               f.reported_by_name, f.resolution_note, f.resolved_at, f.created_at
+        FROM faults f
+        LEFT JOIN assets a ON a.id = f.asset_id
+        ORDER BY f.created_at DESC
+    """).fetchall()
+    conn.close()
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Fault Report"
+    headers = ["Fault Title", "Description", "Severity", "Status", "Asset Name",
+               "Asset Tag", "Campus", "Reported By", "Resolution Note", "Resolved At", "Reported At"]
+    ws.append(headers)
+    _style_header(ws)
+    for r in rows:
+        d = dict(r)
+        ws.append([
+            d["title"], d["description"], d["severity"], d["status"],
+            d["asset_name"] or "", d["asset_tag"] or "", d["campus"] or "",
+            d["reported_by_name"],
+            d["resolution_note"] or "", d["resolved_at"][:10] if d["resolved_at"] else "",
+            d["created_at"][:10],
+        ])
+    today = datetime.now().strftime("%Y%m%d")
+    return _xlsx_response(wb, f"fault-report-{today}.xlsx")
+
+
+@api.get("/reports/compliance")
+async def report_compliance(_: dict = Depends(admin_required)):
+    import openpyxl
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT c.title, c.description, c.category, c.frequency, c.due_date,
+               c.status, c.completed_date, c.note,
+               a.name AS asset_name, a.asset_tag, c.created_at
+        FROM compliance c
+        LEFT JOIN assets a ON a.id = c.asset_id
+        ORDER BY c.due_date
+    """).fetchall()
+    conn.close()
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Compliance Register"
+    headers = ["Title", "Description", "Category", "Frequency", "Due Date", "Status",
+               "Completed Date", "Note", "Asset Name", "Asset Tag", "Created At"]
+    ws.append(headers)
+    _style_header(ws)
+    for r in rows:
+        d = dict(r)
+        ws.append([
+            d["title"], d["description"] or "", d["category"], d["frequency"],
+            d["due_date"][:10] if d["due_date"] else "", d["status"],
+            d["completed_date"][:10] if d["completed_date"] else "",
+            d["note"] or "", d["asset_name"] or "", d["asset_tag"] or "",
+            d["created_at"][:10],
+        ])
+    today = datetime.now().strftime("%Y%m%d")
+    return _xlsx_response(wb, f"compliance-register-{today}.xlsx")
+
+
+@api.get("/reports/ownership")
+async def report_ownership(_: dict = Depends(admin_required)):
+    import openpyxl
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT a.name AS asset_name, a.asset_tag, a.campus, a.category,
+               ol.from_name, ol.to_name, ol.note, ol.by_name, ol.at
+        FROM ownership_logs ol
+        LEFT JOIN assets a ON a.id = ol.asset_id
+        ORDER BY ol.at DESC
+    """).fetchall()
+    conn.close()
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Ownership History"
+    headers = ["Asset Name", "Asset Tag", "Campus", "Category",
+               "Transferred From", "Transferred To", "Note", "Actioned By", "Date"]
+    ws.append(headers)
+    _style_header(ws)
+    for r in rows:
+        d = dict(r)
+        ws.append([
+            d["asset_name"] or "", d["asset_tag"] or "", d["campus"] or "", d["category"] or "",
+            d["from_name"] or "", d["to_name"] or "", d["note"] or "",
+            d["by_name"], d["at"][:10] if d["at"] else "",
+        ])
+    today = datetime.now().strftime("%Y%m%d")
+    return _xlsx_response(wb, f"ownership-history-{today}.xlsx")
 
 
 @api.get("/backup")
