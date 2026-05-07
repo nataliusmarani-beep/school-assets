@@ -16,7 +16,7 @@ export default function UsersPage() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ name: "", email: "", password: "", role: "staff", department: "" });
+  const [form, setForm] = useState({ name: "", email: "", password: "", role: "staff", department: "", campus: "" });
 
   const load = () => {
     setLoading(true);
@@ -30,7 +30,7 @@ export default function UsersPage() {
       await api.post("/users", form);
       toast.success("User created");
       setOpen(false);
-      setForm({ name: "", email: "", password: "", role: "staff", department: "" });
+      setForm({ name: "", email: "", password: "", role: "staff", department: "", campus: "" });
       load();
     } catch (err) { toast.error(formatErr(err)); }
   };
@@ -83,6 +83,15 @@ export default function UsersPage() {
                   <Input value={form.department} onChange={(e)=>setForm({...form,department:e.target.value})}
                     className="mt-2 rounded-none"/></div>
               </div>
+              <div><Label className="label-mono">{t("col_campus")}</Label>
+                <Select value={form.campus} onValueChange={(v)=>setForm({...form,campus:v})}>
+                  <SelectTrigger className="mt-2 rounded-none"><SelectValue placeholder={t("select_campus")}/></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="YPJ Kuala Kencana">YPJ Kuala Kencana</SelectItem>
+                    <SelectItem value="YPJ Tembagapura">YPJ Tembagapura</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <DialogFooter>
                 <Button type="submit" className="rounded-none bg-slate-900" data-testid="submit-user-button">
                   {t("create_user")}
@@ -102,13 +111,14 @@ export default function UsersPage() {
                 <th className="text-left label-mono py-3 px-4">{t("email")}</th>
                 <th className="text-left label-mono py-3 px-4">{t("role")}</th>
                 <th className="text-left label-mono py-3 px-4">{t("department")}</th>
+                <th className="text-left label-mono py-3 px-4">{t("col_campus")}</th>
                 <th className="text-left label-mono py-3 px-4">{t("col_joined")}</th>
                 <th className="text-right label-mono py-3 px-4">{t("col_actions")}</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={6} className="text-center text-slate-500 py-12">{t("loading")}</td></tr>
+                <tr><td colSpan={7} className="text-center text-slate-500 py-12">{t("loading")}</td></tr>
               ) : users.map((u) => (
                 <tr key={u.id} className="border-b border-slate-100 hover:bg-slate-50" data-testid={`user-row-${u.id}`}>
                   <td className="py-3 px-4 font-medium text-slate-900">{u.name}</td>
@@ -119,6 +129,14 @@ export default function UsersPage() {
                     }`}>{u.role === "admin" ? t("admin") : t("staff")}</span>
                   </td>
                   <td className="py-3 px-4 text-slate-700">{u.department || "—"}</td>
+                  <td className="py-3 px-4 text-slate-700">
+                    {u.campus ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${u.campus === "YPJ Kuala Kencana" ? "bg-amber-400" : "bg-blue-500"}`}/>
+                        <span className="text-xs">{u.campus}</span>
+                      </span>
+                    ) : "—"}
+                  </td>
                   <td className="py-3 px-4 text-slate-500 text-xs">{fmtDate(u.created_at)}</td>
                   <td className="py-3 px-4 text-right">
                     {u.id !== user.id && (

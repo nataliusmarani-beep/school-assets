@@ -56,6 +56,7 @@ def init_db():
         name TEXT NOT NULL,
         role TEXT NOT NULL DEFAULT 'staff',
         department TEXT,
+        campus TEXT NOT NULL DEFAULT '',
         password_hash TEXT NOT NULL,
         created_at TEXT NOT NULL
     );
@@ -142,6 +143,10 @@ def init_db():
     if "campus" not in cols:
         conn.execute("ALTER TABLE assets ADD COLUMN campus TEXT NOT NULL DEFAULT ''")
         conn.commit()
+    user_cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
+    if "campus" not in user_cols:
+        conn.execute("ALTER TABLE users ADD COLUMN campus TEXT NOT NULL DEFAULT ''")
+        conn.commit()
     conn.close()
 
 
@@ -215,6 +220,7 @@ class UserCreate(BaseModel):
     name: str
     role: Literal["admin", "staff"] = "staff"
     department: Optional[str] = None
+    campus: Optional[str] = ""
 
 
 class LoginIn(BaseModel):
@@ -329,8 +335,8 @@ async def register(body: UserCreate, response: Response):
         raise HTTPException(400, "Email already registered")
     uid = str(uuid.uuid4())
     conn.execute(
-        "INSERT INTO users (id,email,name,role,department,password_hash,created_at) VALUES (?,?,?,?,?,?,?)",
-        (uid, email, body.name, body.role, body.department, hash_password(body.password), now_iso()),
+        "INSERT INTO users (id,email,name,role,department,campus,password_hash,created_at) VALUES (?,?,?,?,?,?,?,?)",
+        (uid, email, body.name, body.role, body.department, body.campus or "", hash_password(body.password), now_iso()),
     )
     conn.commit()
     conn.close()
@@ -372,7 +378,7 @@ async def me(user: dict = Depends(get_current_user)):
 @api.get("/users")
 async def list_users(user: dict = Depends(get_current_user)):
     conn = get_conn()
-    rows = conn.execute("SELECT id,email,name,role,department,created_at FROM users ORDER BY created_at DESC").fetchall()
+    rows = conn.execute("SELECT id,email,name,role,department,campus,created_at FROM users ORDER BY created_at DESC").fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
