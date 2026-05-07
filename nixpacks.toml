@@ -8,7 +8,7 @@ nixPkgs = ["python311", "python311Packages.pip", "nodejs_18"]
 [phases.install]
 dependsOn = ["setup"]
 cmds = [
-    "pip install -r backend/requirements.txt",
+    "pip install -r backend/requirements.txt --break-system-packages",
     "cd frontend && npm install --legacy-peer-deps"
 ]
 
