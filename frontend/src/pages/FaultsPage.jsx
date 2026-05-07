@@ -43,7 +43,7 @@ export default function FaultsPage() {
   const updateStatus = async (f, status, note = null) => {
     try {
       await api.put(`/faults/${f.id}`, { status, ...(note ? { resolution_note: note } : {}) });
-      toast.success("Fault updated");
+      toast.success(t("fault_updated"));
       load();
     } catch (e) { toast.error(formatErr(e)); }
   };

@@ -38,7 +38,7 @@ export default function AssetDetailPage() {
     setLoading(true);
     api.get(`/assets/${id}`)
       .then((r) => setAsset(r.data))
-      .catch(() => toast.error("Failed to load asset"))
+      .catch(() => toast.error(t("asset_load_error")))
       .finally(() => setLoading(false));
   };
 
@@ -65,7 +65,7 @@ export default function AssetDetailPage() {
   const submitTransfer = async () => {
     try {
       await api.post(`/assets/${id}/transfer`, { new_owner_name: transferTo, note: transferNote });
-      toast.success("Asset transferred");
+      toast.success(t("asset_transferred"));
       setTransferOpen(false); setTransferTo(""); setTransferNote("");
       load();
     } catch (e) { toast.error(formatErr(e)); }
@@ -74,7 +74,7 @@ export default function AssetDetailPage() {
   const submitFault = async () => {
     try {
       await api.post(`/faults`, { asset_id: id, title: faultTitle, description: faultDesc, severity: faultSev });
-      toast.success("Fault reported");
+      toast.success(t("fault_reported_ok"));
       setFaultOpen(false); setFaultTitle(""); setFaultDesc("");
       load();
     } catch (e) { toast.error(formatErr(e)); }

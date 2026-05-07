@@ -41,7 +41,7 @@ export default function CompliancePage() {
     e.preventDefault();
     try {
       await api.post("/compliance", { ...form, due_date: new Date(form.due_date).toISOString() });
-      toast.success("Compliance item created");
+      toast.success(t("compliance_created"));
       setOpen(false);
       setForm({ title: "", description: "", category: "Safety", due_date: new Date().toISOString().split("T")[0], frequency: "annual" });
       load();
@@ -57,7 +57,7 @@ export default function CompliancePage() {
   };
 
   const remove = async (c) => {
-    if (!window.confirm("Delete this compliance item?")) return;
+    if (!window.confirm(t("delete_compliance_confirm"))) return;
     try { await api.delete(`/compliance/${c.id}`); load(); }
     catch (e) { toast.error(formatErr(e)); }
   };

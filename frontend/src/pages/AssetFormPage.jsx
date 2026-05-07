@@ -87,7 +87,7 @@ export default function AssetFormPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     if (file.size > MAX_FILE_BYTES) {
-      toast.error("Photo must be 200 KB or smaller.");
+      toast.error(t("photo_too_large"));
       e.target.value = "";
       return;
     }
@@ -95,7 +95,7 @@ export default function AssetFormPage() {
     try {
       const r = await uploadFile(file);
       update("photo_path", r.path);
-      toast.success("Photo uploaded");
+      toast.success(t("photo_uploaded"));
     } catch (err) {
       toast.error(formatErr(err));
     } finally {
@@ -108,7 +108,7 @@ export default function AssetFormPage() {
     const file = e.target.files?.[0];
     if (!file) return;
     if (file.size > MAX_FILE_BYTES) {
-      toast.error("Document must be 200 KB or smaller.");
+      toast.error(t("doc_too_large"));
       e.target.value = "";
       return;
     }
@@ -116,7 +116,7 @@ export default function AssetFormPage() {
     try {
       const r = await uploadFile(file);
       update("documents", [...form.documents, r]);
-      toast.success("Document attached");
+      toast.success(t("doc_attached"));
     } catch (err) {
       toast.error(formatErr(err));
     } finally {

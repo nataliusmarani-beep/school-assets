@@ -28,7 +28,7 @@ export default function UsersPage() {
     e.preventDefault();
     try {
       await api.post("/users", form);
-      toast.success("User created");
+      toast.success(t("user_created_ok"));
       setOpen(false);
       setForm({ name: "", email: "", password: "", role: "staff", department: "", campus: "" });
       load();
@@ -37,7 +37,7 @@ export default function UsersPage() {
 
   const remove = async (u) => {
     if (u.id === user.id) return toast.error(t("cant_delete_self"));
-    if (!window.confirm(`Delete ${u.name}?`)) return;
+    if (!window.confirm(t("delete_user_confirm").replace("{{name}}", u.name))) return;
     try { await api.delete(`/users/${u.id}`); load(); }
     catch (e) { toast.error(formatErr(e)); }
   };
