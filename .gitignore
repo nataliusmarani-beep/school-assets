@@ -1,0 +1,21 @@
+# Python
+backend/venv/
+backend/__pycache__/
+backend/*.pyc
+backend/schoolassets.db
+backend/uploads/
+*.db
+*.db-shm
+*.db-wal
+
+# Node
+frontend/node_modules/
+frontend/build/
+
+# Env
+.env
+backend/.env
+frontend/.env.local
+
+# OS
+.DS_Store

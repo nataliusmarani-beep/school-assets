@@ -1,0 +1,19 @@
+# Tell Nixpacks to provide both Python 3.11 and Node 20
+providers = ["python", "node"]
+
+[phases.setup]
+nixPkgs = ["python311", "nodejs_20", "nodePackages.npm"]
+
+[phases.install]
+dependsOn = ["setup"]
+cmds = [
+    "pip install -r backend/requirements.txt",
+    "cd frontend && npm install --legacy-peer-deps"
+]
+
+[phases.build]
+dependsOn = ["install"]
+cmds = ["cd frontend && npm run build"]
+
+[start]
+cmd = "uvicorn backend.server:app --host 0.0.0.0 --port $PORT"
