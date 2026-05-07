@@ -17,4 +17,4 @@ dependsOn = ["install"]
 cmds = ["cd frontend && npm run build"]
 
 [start]
-cmd = "uvicorn backend.server:app --host 0.0.0.0 --port $PORT"
+cmd = "python3 -m uvicorn backend.server:app --host 0.0.0.0 --port $PORT"
