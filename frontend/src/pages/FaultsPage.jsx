@@ -90,15 +90,15 @@ export default function FaultsPage() {
       {loading ? (
         <div className="text-sm text-slate-500">{t("loading")}</div>
       ) : faults.length === 0 ? (
-        <div className="bg-white border border-slate-200 p-12 text-center">
-          <Wrench className="w-8 h-8 text-slate-300 mx-auto mb-3" strokeWidth={1.5}/>
-          <div className="font-display text-lg text-slate-700">{t("no_fault_reports")}</div>
-          <div className="text-xs text-slate-500 mt-1">{t("faults_sub")}</div>
+        <div className="bg-white border border-slate-200 p-20 flex flex-col items-center justify-center text-center">
+          <Wrench className="w-10 h-10 text-slate-300 mb-4" strokeWidth={1.5}/>
+          <div className="font-display text-lg text-slate-700 mb-1">{t("no_fault_reports")}</div>
+          <div className="text-sm text-slate-400">{t("faults_sub")}</div>
         </div>
       ) : (
         <div className="space-y-3">
           {faults.map((f) => (
-            <div key={f.id} className="bg-white border border-slate-200 p-5" data-testid={`fault-row-${f.id}`}>
+            <div key={f.id} className="bg-white border border-slate-200 p-6" data-testid={`fault-row-${f.id}`}>
               <div className="flex items-start justify-between gap-4 flex-wrap">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 flex-wrap">
@@ -107,16 +107,16 @@ export default function FaultsPage() {
                       {STATUS_LABEL[f.status] || f.status}
                     </span>
                     <span className={`text-xs label-mono ${SEVERITY_BADGE[f.severity]}`}>
-                      {SEV_LABEL[f.severity] || f.severity}
+                      {(SEV_LABEL[f.severity] || f.severity).toUpperCase()} {t("sev_label")}
                     </span>
                   </div>
                   <div className="text-sm text-slate-600 mt-2">{f.description}</div>
-                  <div className="text-xs text-slate-500 mt-3 flex items-center gap-3 flex-wrap">
-                    <Link to={`/assets/${f.asset_id}`} className="hover:text-blue-800">
+                  <div className="text-xs text-slate-400 mt-3 flex items-center gap-2 flex-wrap">
+                    <Link to={`/assets/${f.asset_id}`} className="hover:text-blue-800 text-slate-500">
                       {f.asset_name} <span className="font-mono">({f.asset_tag})</span>
                     </Link>
                     <span>·</span>
-                    <span>{f.reported_by_name}</span>
+                    <span>{t("reported_by")} {f.reported_by_name}</span>
                     <span>·</span>
                     <span>{fmtDate(f.created_at)}</span>
                   </div>
