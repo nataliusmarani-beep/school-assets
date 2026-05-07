@@ -8,7 +8,7 @@ nixPkgs = ["python311", "python311Packages.pip", "nodejs_18"]
 [phases.install]
 dependsOn = ["setup"]
 cmds = [
-    "pip install -r backend/requirements.txt --break-system-packages",
+    "python3 -m venv /app/venv && /app/venv/bin/pip install -r backend/requirements.txt",
     "cd frontend && npm install --legacy-peer-deps"
 ]
 
@@ -17,4 +17,4 @@ dependsOn = ["install"]
 cmds = ["cd frontend && npm run build"]
 
 [start]
-cmd = "python3 -m uvicorn backend.server:app --host 0.0.0.0 --port $PORT"
+cmd = "/app/venv/bin/python -m uvicorn backend.server:app --host 0.0.0.0 --port $PORT"
