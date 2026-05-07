@@ -81,9 +81,16 @@ export default function AssetFormPage() {
     return res.data;
   };
 
+  const MAX_FILE_BYTES = 200 * 1024; // 200 KB
+
   const handlePhoto = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (file.size > MAX_FILE_BYTES) {
+      toast.error("Photo must be 200 KB or smaller.");
+      e.target.value = "";
+      return;
+    }
     setPhotoUploading(true);
     try {
       const r = await uploadFile(file);
@@ -93,12 +100,18 @@ export default function AssetFormPage() {
       toast.error(formatErr(err));
     } finally {
       setPhotoUploading(false);
+      e.target.value = "";
     }
   };
 
   const handlePdf = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (file.size > MAX_FILE_BYTES) {
+      toast.error("Document must be 200 KB or smaller.");
+      e.target.value = "";
+      return;
+    }
     setPdfUploading(true);
     try {
       const r = await uploadFile(file);
