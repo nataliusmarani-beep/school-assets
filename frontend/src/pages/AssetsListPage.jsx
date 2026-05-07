@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import api, { fmtCurrency, fmtDate } from "../lib/api";
+import { useLang } from "../context/LangContext";
+import { CATEGORY_VALUES, CATEGORY_KEYS, STATUS_KEYS } from "../i18n";
 import { Input } from "../components/ui/input";
 import {
   Select,
@@ -18,19 +20,15 @@ const CAMPUS_DOT = {
   "YPJ Tembagapura": "bg-blue-500",
 };
 
-const CATEGORIES = [
-  "IT Equipment", "AV Equipment", "Furniture", "Lab Equipment",
-  "Vehicles", "Books", "Sports", "Music Equipment", "Other",
-];
-
-const STATUS_LABELS = {
-  active: { label: "Active", cls: "bg-blue-50 text-blue-800 border-blue-200" },
-  in_repair: { label: "In Repair", cls: "bg-amber-50 text-amber-700 border-amber-200" },
-  retired: { label: "Retired", cls: "bg-slate-100 text-slate-600 border-slate-200" },
-  lost: { label: "Lost", cls: "bg-rose-50 text-rose-700 border-rose-200" },
+const STATUS_CLS = {
+  active: "bg-blue-50 text-blue-800 border-blue-200",
+  in_repair: "bg-amber-50 text-amber-700 border-amber-200",
+  retired: "bg-slate-100 text-slate-600 border-slate-200",
+  lost: "bg-rose-50 text-rose-700 border-rose-200",
 };
 
 export default function AssetsListPage() {
+  const { t } = useLang();
   const [assets, setAssets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -50,24 +48,20 @@ export default function AssetsListPage() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
   useEffect(() => {
     const t = setTimeout(load, 200);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    /* eslint-disable-next-line */
   }, [search, campus, category, status]);
 
   return (
     <div className="p-6 lg:p-10 max-w-[1600px] mx-auto" data-testid="assets-page">
       <div className="flex items-end justify-between mb-8 flex-wrap gap-4">
         <div>
-          <div className="label-mono mb-2">Inventory</div>
+          <div className="label-mono mb-2">{t("inventory")}</div>
           <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight text-slate-900">
-            Assets
+            {t("assets")}
           </h1>
         </div>
         <Link
@@ -75,7 +69,7 @@ export default function AssetsListPage() {
           data-testid="add-asset-button"
           className="inline-flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-sm px-4 py-2.5"
         >
-          <Plus className="w-4 h-4" strokeWidth={1.75} /> Add asset
+          <Plus className="w-4 h-4" strokeWidth={1.75} /> {t("add_asset")}
         </Link>
       </div>
 
@@ -84,7 +78,7 @@ export default function AssetsListPage() {
         <div className="md:col-span-4 relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" strokeWidth={1.75} />
           <Input
-            placeholder="Search by name, tag or serial number…"
+            placeholder={t("search_placeholder")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9 rounded-none border-slate-300"
@@ -94,10 +88,10 @@ export default function AssetsListPage() {
         <div className="md:col-span-3">
           <Select value={campus} onValueChange={setCampus}>
             <SelectTrigger className="rounded-none border-slate-300" data-testid="filter-campus">
-              <SelectValue placeholder="All campuses" />
+              <SelectValue placeholder={t("all_campuses")} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All campuses</SelectItem>
+              <SelectItem value="all">{t("all_campuses")}</SelectItem>
               {CAMPUSES.map((c) => (
                 <SelectItem key={c} value={c}>
                   <span className="flex items-center gap-2">
@@ -113,12 +107,12 @@ export default function AssetsListPage() {
           <Select value={category} onValueChange={setCategory}>
             <SelectTrigger className="rounded-none border-slate-300" data-testid="filter-category">
               <Filter className="w-3.5 h-3.5 mr-2 text-slate-400" strokeWidth={1.75} />
-              <SelectValue placeholder="All categories" />
+              <SelectValue placeholder={t("all_categories")} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All categories</SelectItem>
-              {CATEGORIES.map((c) => (
-                <SelectItem key={c} value={c}>{c}</SelectItem>
+              <SelectItem value="all">{t("all_categories")}</SelectItem>
+              {CATEGORY_VALUES.map((c, i) => (
+                <SelectItem key={c} value={c}>{t(CATEGORY_KEYS[i])}</SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -126,14 +120,13 @@ export default function AssetsListPage() {
         <div className="md:col-span-2">
           <Select value={status} onValueChange={setStatus}>
             <SelectTrigger className="rounded-none border-slate-300" data-testid="filter-status">
-              <SelectValue placeholder="All statuses" />
+              <SelectValue placeholder={t("all_statuses")} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All statuses</SelectItem>
-              <SelectItem value="active">Active</SelectItem>
-              <SelectItem value="in_repair">In Repair</SelectItem>
-              <SelectItem value="retired">Retired</SelectItem>
-              <SelectItem value="lost">Lost</SelectItem>
+              <SelectItem value="all">{t("all_statuses")}</SelectItem>
+              {Object.entries(STATUS_KEYS).map(([val, key]) => (
+                <SelectItem key={val} value={val}>{t(key)}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
@@ -145,44 +138,36 @@ export default function AssetsListPage() {
           <table className="w-full text-sm" data-testid="assets-table">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200">
-                <th className="text-left font-medium label-mono py-3 px-4">Tag</th>
-                <th className="text-left font-medium label-mono py-3 px-4">Asset</th>
-                <th className="text-left font-medium label-mono py-3 px-4">Category</th>
-                <th className="text-left font-medium label-mono py-3 px-4">Campus</th>
-                <th className="text-left font-medium label-mono py-3 px-4">Room</th>
-                <th className="text-left font-medium label-mono py-3 px-4">Assigned</th>
-                <th className="text-left font-medium label-mono py-3 px-4">Status</th>
-                <th className="text-right font-medium label-mono py-3 px-4">Book Value</th>
+                <th className="text-left font-medium label-mono py-3 px-4">{t("col_tag")}</th>
+                <th className="text-left font-medium label-mono py-3 px-4">{t("col_asset")}</th>
+                <th className="text-left font-medium label-mono py-3 px-4">{t("col_category")}</th>
+                <th className="text-left font-medium label-mono py-3 px-4">{t("col_campus")}</th>
+                <th className="text-left font-medium label-mono py-3 px-4">{t("col_room")}</th>
+                <th className="text-left font-medium label-mono py-3 px-4">{t("col_assigned")}</th>
+                <th className="text-left font-medium label-mono py-3 px-4">{t("col_status")}</th>
+                <th className="text-right font-medium label-mono py-3 px-4">{t("col_book_value")}</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr>
-                  <td colSpan={8} className="text-center text-slate-500 py-12">Loading…</td>
-                </tr>
+                <tr><td colSpan={8} className="text-center text-slate-500 py-12">{t("loading")}</td></tr>
               ) : assets.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="text-center text-slate-500 py-16">
-                    <div className="font-display text-lg text-slate-700 mb-1">No assets found</div>
-                    <div className="text-xs">Try adjusting filters or add your first asset.</div>
+                    <div className="font-display text-lg text-slate-700 mb-1">{t("no_assets")}</div>
+                    <div className="text-xs">{t("no_assets_sub")}</div>
                   </td>
                 </tr>
               ) : assets.map((a) => {
-                const st = STATUS_LABELS[a.status] || STATUS_LABELS.active;
+                const cls = STATUS_CLS[a.status] || STATUS_CLS.active;
                 const dot = CAMPUS_DOT[a.campus];
                 return (
-                  <tr
-                    key={a.id}
-                    className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer"
-                    data-testid={`asset-row-${a.id}`}
-                  >
+                  <tr key={a.id} className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer" data-testid={`asset-row-${a.id}`}>
                     <td className="py-3 px-4 font-mono text-xs text-slate-600">
                       <Link to={`/assets/${a.id}`} className="hover:text-blue-800">{a.asset_tag}</Link>
                     </td>
                     <td className="py-3 px-4">
-                      <Link to={`/assets/${a.id}`} className="font-medium text-slate-900 hover:text-blue-800">
-                        {a.name}
-                      </Link>
+                      <Link to={`/assets/${a.id}`} className="font-medium text-slate-900 hover:text-blue-800">{a.name}</Link>
                       <div className="text-xs text-slate-500 mt-0.5">{a.serial_number || "—"}</div>
                     </td>
                     <td className="py-3 px-4 text-slate-700">{a.category}</td>
@@ -197,8 +182,8 @@ export default function AssetsListPage() {
                     <td className="py-3 px-4 text-slate-700">{a.location}</td>
                     <td className="py-3 px-4 text-slate-700">{a.assigned_to_name || "—"}</td>
                     <td className="py-3 px-4">
-                      <span className={`inline-flex items-center px-2 py-0.5 text-xs border ${st.cls}`}>
-                        {st.label}
+                      <span className={`inline-flex items-center px-2 py-0.5 text-xs border ${cls}`}>
+                        {t(STATUS_KEYS[a.status] || "status_active")}
                       </span>
                     </td>
                     <td className="py-3 px-4 text-right font-mono">
@@ -214,8 +199,8 @@ export default function AssetsListPage() {
       </div>
 
       <div className="text-xs text-slate-500 mt-3 flex items-center justify-between">
-        <span>{assets.length} asset{assets.length !== 1 && "s"}</span>
-        <span>Last refreshed {fmtDate(new Date().toISOString())}</span>
+        <span>{assets.length} {assets.length !== 1 ? t("count_assets") : t("count_asset")}</span>
+        <span>{t("last_refreshed")} {fmtDate(new Date().toISOString())}</span>
       </div>
     </div>
   );

@@ -15,18 +15,16 @@ import {
 import { Alert, AlertDescription } from "../components/ui/alert";
 import { Upload, X, FileText, ImageIcon, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
+import { useLang } from "../context/LangContext";
+import { CATEGORY_VALUES, CATEGORY_KEYS } from "../i18n";
 
 const CAMPUSES = ["YPJ Kuala Kencana", "YPJ Tembagapura"];
-
-const CATEGORIES = [
-  "IT Equipment", "AV Equipment", "Furniture", "Lab Equipment",
-  "Vehicles", "Books", "Sports", "Music Equipment", "Other",
-];
 
 export default function AssetFormPage() {
   const { id } = useParams();
   const isEdit = !!id;
   const navigate = useNavigate();
+  const { t } = useLang();
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [photoUploading, setPhotoUploading] = useState(false);
@@ -150,46 +148,46 @@ export default function AssetFormPage() {
         className="text-xs text-slate-500 hover:text-slate-900 inline-flex items-center gap-1.5 mb-6"
         data-testid="back-button"
       >
-        <ArrowLeft className="w-3.5 h-3.5" /> Back
+        <ArrowLeft className="w-3.5 h-3.5" /> {t("back")}
       </button>
 
-      <div className="label-mono mb-2">{isEdit ? "Edit asset" : "New asset"}</div>
+      <div className="label-mono mb-2">{isEdit ? t("edit_asset") : t("new_asset")}</div>
       <h1 className="font-display text-3xl font-semibold tracking-tight text-slate-900 mb-8">
-        {isEdit ? form.name : "Register a new asset"}
+        {isEdit ? form.name : t("register_asset")}
       </h1>
 
       <form onSubmit={submit} className="space-y-8">
         {/* Section 1: Basic Info */}
         <section className="bg-white border border-slate-200 p-6">
-          <div className="label-mono mb-5 text-blue-800">01 — Basic Information</div>
+          <div className="label-mono mb-5 text-blue-800">{t("section_basic")}</div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             <div className="md:col-span-2">
-              <Label className="label-mono">Asset name</Label>
+              <Label className="label-mono">{t("asset_name")}</Label>
               <Input value={form.name} onChange={(e)=>update("name",e.target.value)}
                 required className="mt-2 rounded-none border-slate-300" data-testid="asset-name-input"/>
             </div>
             <div>
-              <Label className="label-mono">Asset tag</Label>
+              <Label className="label-mono">{t("asset_tag")}</Label>
               <Input value={form.asset_tag} onChange={(e)=>update("asset_tag",e.target.value)}
-                required placeholder="e.g. IT-LAP-0001" className="mt-2 rounded-none border-slate-300 font-mono"
+                required placeholder={t("asset_tag_placeholder")} className="mt-2 rounded-none border-slate-300 font-mono"
                 data-testid="asset-tag-input"/>
             </div>
             <div>
-              <Label className="label-mono">Category</Label>
+              <Label className="label-mono">{t("col_category")}</Label>
               <Select value={form.category} onValueChange={(v)=>update("category",v)}>
                 <SelectTrigger className="mt-2 rounded-none border-slate-300" data-testid="asset-category-select">
                   <SelectValue/>
                 </SelectTrigger>
                 <SelectContent>
-                  {CATEGORIES.map((c)=>(<SelectItem key={c} value={c}>{c}</SelectItem>))}
+                  {CATEGORY_VALUES.map((c, i)=>(<SelectItem key={c} value={c}>{t(CATEGORY_KEYS[i])}</SelectItem>))}
                 </SelectContent>
               </Select>
             </div>
             <div>
-              <Label className="label-mono">Campus</Label>
+              <Label className="label-mono">{t("campus")}</Label>
               <Select value={form.campus || ""} onValueChange={(v)=>update("campus",v)}>
                 <SelectTrigger className="mt-2 rounded-none border-slate-300" data-testid="asset-campus-select">
-                  <SelectValue placeholder="Select campus…"/>
+                  <SelectValue placeholder={t("select_campus")}/>
                 </SelectTrigger>
                 <SelectContent>
                   {CAMPUSES.map((c)=>(<SelectItem key={c} value={c}>{c}</SelectItem>))}
@@ -197,40 +195,40 @@ export default function AssetFormPage() {
               </Select>
             </div>
             <div>
-              <Label className="label-mono">Room / Location</Label>
+              <Label className="label-mono">{t("room_location")}</Label>
               <Input value={form.location} onChange={(e)=>update("location",e.target.value)}
-                required placeholder="e.g. Computer Lab A" className="mt-2 rounded-none border-slate-300"
+                required placeholder={t("room_placeholder")} className="mt-2 rounded-none border-slate-300"
                 data-testid="asset-location-input"/>
             </div>
             <div>
-              <Label className="label-mono">Status</Label>
+              <Label className="label-mono">{t("status")}</Label>
               <Select value={form.status} onValueChange={(v)=>update("status",v)}>
                 <SelectTrigger className="mt-2 rounded-none border-slate-300" data-testid="asset-status-select">
                   <SelectValue/>
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="in_repair">In Repair</SelectItem>
-                  <SelectItem value="retired">Retired</SelectItem>
-                  <SelectItem value="lost">Lost</SelectItem>
+                  <SelectItem value="active">{t("status_active")}</SelectItem>
+                  <SelectItem value="in_repair">{t("status_in_repair")}</SelectItem>
+                  <SelectItem value="retired">{t("status_retired")}</SelectItem>
+                  <SelectItem value="lost">{t("status_lost")}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="md:col-span-2">
-              <Label className="label-mono">Description</Label>
+              <Label className="label-mono">{t("description")}</Label>
               <Textarea value={form.description} onChange={(e)=>update("description",e.target.value)}
                 rows={3} className="mt-2 rounded-none border-slate-300"
                 data-testid="asset-description-input"/>
             </div>
             <div>
-              <Label className="label-mono">Serial number</Label>
+              <Label className="label-mono">{t("serial_number")}</Label>
               <Input value={form.serial_number} onChange={(e)=>update("serial_number",e.target.value)}
                 className="mt-2 rounded-none border-slate-300 font-mono" data-testid="asset-serial-input"/>
             </div>
             <div>
-              <Label className="label-mono">Initial owner / location</Label>
+              <Label className="label-mono">{t("initial_owner")}</Label>
               <Input value={form.assigned_to_name} onChange={(e)=>update("assigned_to_name",e.target.value)}
-                placeholder="e.g. Maria Hernandez" className="mt-2 rounded-none border-slate-300"
+                placeholder={t("initial_owner_placeholder")} className="mt-2 rounded-none border-slate-300"
                 data-testid="asset-assigned-input"/>
             </div>
           </div>
@@ -238,38 +236,38 @@ export default function AssetFormPage() {
 
         {/* Section 2: Financial */}
         <section className="bg-white border border-slate-200 p-6">
-          <div className="label-mono mb-5 text-blue-800">02 — Financials & Warranty</div>
+          <div className="label-mono mb-5 text-blue-800">{t("section_financials")}</div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             <div>
-              <Label className="label-mono">Purchase price (USD)</Label>
+              <Label className="label-mono">{t("purchase_price")}</Label>
               <Input type="number" step="0.01" value={form.purchase_price}
                 onChange={(e)=>update("purchase_price",e.target.value)}
                 required className="mt-2 rounded-none border-slate-300 font-mono"
                 data-testid="asset-price-input"/>
             </div>
             <div>
-              <Label className="label-mono">Purchase date</Label>
+              <Label className="label-mono">{t("purchase_date")}</Label>
               <Input type="date" value={form.purchase_date}
                 onChange={(e)=>update("purchase_date",e.target.value)}
                 required className="mt-2 rounded-none border-slate-300"
                 data-testid="asset-purchase-date-input"/>
             </div>
             <div>
-              <Label className="label-mono">Useful life (years)</Label>
+              <Label className="label-mono">{t("useful_life")}</Label>
               <Input type="number" min="1" value={form.useful_life_years}
                 onChange={(e)=>update("useful_life_years",e.target.value)}
                 required className="mt-2 rounded-none border-slate-300"
                 data-testid="asset-life-input"/>
             </div>
             <div>
-              <Label className="label-mono">Warranty end date</Label>
+              <Label className="label-mono">{t("warranty_end")}</Label>
               <Input type="date" value={form.warranty_end_date}
                 onChange={(e)=>update("warranty_end_date",e.target.value)}
                 className="mt-2 rounded-none border-slate-300"
                 data-testid="asset-warranty-input"/>
             </div>
             <div className="md:col-span-2">
-              <Label className="label-mono">Supplier</Label>
+              <Label className="label-mono">{t("supplier")}</Label>
               <Input value={form.supplier} onChange={(e)=>update("supplier",e.target.value)}
                 className="mt-2 rounded-none border-slate-300" data-testid="asset-supplier-input"/>
             </div>
@@ -278,12 +276,12 @@ export default function AssetFormPage() {
 
         {/* Section 3: Media */}
         <section className="bg-white border border-slate-200 p-6">
-          <div className="label-mono mb-5 text-blue-800">03 — Photo & Documents</div>
+          <div className="label-mono mb-5 text-blue-800">{t("section_media")}</div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             {/* Photo */}
             <div>
-              <Label className="label-mono">Asset photo</Label>
+              <Label className="label-mono">{t("asset_photo")}</Label>
               <div className="mt-2 border border-dashed border-slate-300 aspect-video flex items-center justify-center bg-slate-50 relative overflow-hidden">
                 {photoPreview ? (
                   <>
@@ -296,7 +294,7 @@ export default function AssetFormPage() {
                 ) : (
                   <label className="flex flex-col items-center gap-2 cursor-pointer text-xs text-slate-500 hover:text-slate-700">
                     <ImageIcon className="w-6 h-6" strokeWidth={1.5}/>
-                    {photoUploading ? "Uploading…" : "Click to upload photo"}
+                    {photoUploading ? t("uploading") : t("click_upload_photo")}
                     <input type="file" accept="image/*" onChange={handlePhoto} className="hidden"
                       data-testid="photo-upload-input"/>
                   </label>
@@ -306,10 +304,10 @@ export default function AssetFormPage() {
 
             {/* PDFs */}
             <div>
-              <Label className="label-mono">Documents (PDF, etc.)</Label>
+              <Label className="label-mono">{t("documents_label")}</Label>
               <label className="mt-2 border border-dashed border-slate-300 aspect-video flex flex-col items-center justify-center bg-slate-50 cursor-pointer text-xs text-slate-500 hover:text-slate-700">
                 <Upload className="w-6 h-6" strokeWidth={1.5}/>
-                <div className="mt-2">{pdfUploading ? "Uploading…" : "Attach a document"}</div>
+                <div className="mt-2">{pdfUploading ? t("uploading") : t("attach_doc")}</div>
                 <input type="file" onChange={handlePdf} className="hidden" data-testid="document-upload-input"/>
               </label>
             </div>
@@ -344,11 +342,11 @@ export default function AssetFormPage() {
           <Button type="submit" disabled={submitting}
             className="rounded-none bg-slate-900 hover:bg-slate-800 h-11 px-6"
             data-testid="submit-asset-button">
-            {submitting ? "Saving…" : (isEdit ? "Save changes" : "Create asset")}
+            {submitting ? t("saving") : (isEdit ? t("save_changes") : t("create_asset"))}
           </Button>
           <Button type="button" variant="outline" onClick={()=>navigate(-1)}
             className="rounded-none h-11">
-            Cancel
+            {t("cancel")}
           </Button>
         </div>
       </form>

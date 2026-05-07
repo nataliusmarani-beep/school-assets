@@ -1,21 +1,14 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import api, { fmtCurrency, fmtDate, formatErr } from "../lib/api";
+import { useLang } from "../context/LangContext";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
-} from "../components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "../components/ui/dialog";
 import { useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
 import {
@@ -27,16 +20,15 @@ export default function AssetDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { t } = useLang();
   const [asset, setAsset] = useState(null);
   const [loading, setLoading] = useState(true);
   const [photoUrl, setPhotoUrl] = useState(null);
 
-  // Transfer dialog
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferTo, setTransferTo] = useState("");
   const [transferNote, setTransferNote] = useState("");
 
-  // Fault dialog
   const [faultOpen, setFaultOpen] = useState(false);
   const [faultTitle, setFaultTitle] = useState("");
   const [faultDesc, setFaultDesc] = useState("");
@@ -67,16 +59,12 @@ export default function AssetDetailPage() {
       const a = document.createElement("a");
       a.href = url; a.download = doc.name; a.click();
       setTimeout(() => URL.revokeObjectURL(url), 100);
-    } catch (e) {
-      toast.error(formatErr(e));
-    }
+    } catch (e) { toast.error(formatErr(e)); }
   };
 
   const submitTransfer = async () => {
     try {
-      await api.post(`/assets/${id}/transfer`, {
-        new_owner_name: transferTo, note: transferNote,
-      });
+      await api.post(`/assets/${id}/transfer`, { new_owner_name: transferTo, note: transferNote });
       toast.success("Asset transferred");
       setTransferOpen(false); setTransferTo(""); setTransferNote("");
       load();
@@ -85,9 +73,7 @@ export default function AssetDetailPage() {
 
   const submitFault = async () => {
     try {
-      await api.post(`/faults`, {
-        asset_id: id, title: faultTitle, description: faultDesc, severity: faultSev,
-      });
+      await api.post(`/faults`, { asset_id: id, title: faultTitle, description: faultDesc, severity: faultSev });
       toast.success("Fault reported");
       setFaultOpen(false); setFaultTitle(""); setFaultDesc("");
       load();
@@ -95,16 +81,16 @@ export default function AssetDetailPage() {
   };
 
   const handleDelete = async () => {
-    if (!window.confirm("Delete this asset? This cannot be undone.")) return;
+    if (!window.confirm(t("delete_asset_confirm"))) return;
     try {
       await api.delete(`/assets/${id}`);
-      toast.success("Asset deleted");
+      toast.success(t("asset_deleted"));
       navigate("/assets");
     } catch (e) { toast.error(formatErr(e)); }
   };
 
-  if (loading) return <div className="p-8 text-sm text-slate-500">Loading…</div>;
-  if (!asset) return <div className="p-8 text-sm text-slate-500">Asset not found.</div>;
+  if (loading) return <div className="p-8 text-sm text-slate-500">{t("loading")}</div>;
+  if (!asset) return <div className="p-8 text-sm text-slate-500">{t("asset_not_found")}</div>;
 
   const dep = asset.depreciation || {};
 
@@ -113,7 +99,7 @@ export default function AssetDetailPage() {
       <button onClick={() => navigate("/assets")}
         className="text-xs text-slate-500 hover:text-slate-900 inline-flex items-center gap-1.5 mb-6"
         data-testid="back-to-assets">
-        <ArrowLeft className="w-3.5 h-3.5"/> Back to assets
+        <ArrowLeft className="w-3.5 h-3.5"/> {t("back_to_assets")}
       </button>
 
       <div className="flex items-start justify-between flex-wrap gap-4 mb-8">
@@ -130,30 +116,32 @@ export default function AssetDetailPage() {
           <Dialog open={faultOpen} onOpenChange={setFaultOpen}>
             <DialogTrigger asChild>
               <Button variant="outline" className="rounded-none" data-testid="report-fault-button">
-                <Wrench className="w-4 h-4 mr-2" strokeWidth={1.75}/> Report fault
+                <Wrench className="w-4 h-4 mr-2" strokeWidth={1.75}/> {t("report_fault")}
               </Button>
             </DialogTrigger>
             <DialogContent className="rounded-none">
-              <DialogHeader><DialogTitle>Report a fault</DialogTitle></DialogHeader>
+              <DialogHeader><DialogTitle>{t("report_a_fault")}</DialogTitle></DialogHeader>
               <div className="space-y-4">
-                <div><Label className="label-mono">Title</Label>
+                <div><Label className="label-mono">{t("title_label")}</Label>
                   <Input value={faultTitle} onChange={(e)=>setFaultTitle(e.target.value)}
                     className="mt-2 rounded-none" data-testid="fault-title-input"/></div>
-                <div><Label className="label-mono">Description</Label>
+                <div><Label className="label-mono">{t("description")}</Label>
                   <Textarea value={faultDesc} onChange={(e)=>setFaultDesc(e.target.value)}
                     rows={3} className="mt-2 rounded-none" data-testid="fault-desc-input"/></div>
-                <div><Label className="label-mono">Severity</Label>
+                <div><Label className="label-mono">{t("severity")}</Label>
                   <Select value={faultSev} onValueChange={setFaultSev}>
                     <SelectTrigger className="mt-2 rounded-none" data-testid="fault-severity-select"><SelectValue/></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="low">Low</SelectItem>
-                      <SelectItem value="medium">Medium</SelectItem>
-                      <SelectItem value="high">High</SelectItem>
+                      <SelectItem value="low">{t("sev_low")}</SelectItem>
+                      <SelectItem value="medium">{t("sev_medium")}</SelectItem>
+                      <SelectItem value="high">{t("sev_high")}</SelectItem>
                     </SelectContent>
                   </Select></div>
               </div>
               <DialogFooter>
-                <Button onClick={submitFault} className="rounded-none bg-slate-900" data-testid="submit-fault-button">Submit</Button>
+                <Button onClick={submitFault} className="rounded-none bg-slate-900" data-testid="submit-fault-button">
+                  {t("submit")}
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
@@ -161,35 +149,36 @@ export default function AssetDetailPage() {
           <Dialog open={transferOpen} onOpenChange={setTransferOpen}>
             <DialogTrigger asChild>
               <Button variant="outline" className="rounded-none" data-testid="transfer-button">
-                <ArrowRightLeft className="w-4 h-4 mr-2" strokeWidth={1.75}/> Transfer
+                <ArrowRightLeft className="w-4 h-4 mr-2" strokeWidth={1.75}/> {t("transfer")}
               </Button>
             </DialogTrigger>
             <DialogContent className="rounded-none">
-              <DialogHeader><DialogTitle>Transfer ownership</DialogTitle></DialogHeader>
+              <DialogHeader><DialogTitle>{t("transfer_ownership")}</DialogTitle></DialogHeader>
               <div className="space-y-4">
-                <div><Label className="label-mono">New owner / location</Label>
+                <div><Label className="label-mono">{t("new_owner_label")}</Label>
                   <Input value={transferTo} onChange={(e)=>setTransferTo(e.target.value)}
-                    placeholder="e.g. James Park, Room 105"
+                    placeholder={t("new_owner_placeholder")}
                     className="mt-2 rounded-none" data-testid="transfer-to-input"/></div>
-                <div><Label className="label-mono">Note</Label>
+                <div><Label className="label-mono">{t("note")}</Label>
                   <Textarea value={transferNote} onChange={(e)=>setTransferNote(e.target.value)}
                     rows={2} className="mt-2 rounded-none" data-testid="transfer-note-input"/></div>
               </div>
               <DialogFooter>
-                <Button onClick={submitTransfer} className="rounded-none bg-slate-900" data-testid="submit-transfer-button">Confirm transfer</Button>
+                <Button onClick={submitTransfer} className="rounded-none bg-slate-900" data-testid="submit-transfer-button">
+                  {t("confirm_transfer")}
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
 
           <Link to={`/assets/${id}/edit`}>
             <Button variant="outline" className="rounded-none" data-testid="edit-asset-button">
-              <Edit className="w-4 h-4 mr-2" strokeWidth={1.75}/> Edit
+              <Edit className="w-4 h-4 mr-2" strokeWidth={1.75}/> {t("edit")}
             </Button>
           </Link>
           {user?.role === "admin" && (
             <Button variant="outline" onClick={handleDelete}
-              className="rounded-none text-rose-600 hover:text-rose-700"
-              data-testid="delete-asset-button">
+              className="rounded-none text-rose-600 hover:text-rose-700" data-testid="delete-asset-button">
               <Trash2 className="w-4 h-4" strokeWidth={1.75}/>
             </Button>
           )}
@@ -197,7 +186,6 @@ export default function AssetDetailPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left: Photo + specs */}
         <div className="lg:col-span-1 space-y-6">
           <div className="bg-white border border-slate-200 aspect-video overflow-hidden">
             {photoUrl ? (
@@ -210,62 +198,61 @@ export default function AssetDetailPage() {
           </div>
 
           <div className="bg-white border border-slate-200 p-6 space-y-4">
-            <div className="label-mono">Quick facts</div>
-            <Detail icon={Building2} label="Campus" value={asset.campus || "—"}/>
-            <Detail icon={Building2} label="Room" value={asset.location}/>
-            <Detail icon={UserIcon} label="Assigned to" value={asset.assigned_to_name || "—"}/>
-            <Detail icon={Calendar} label="Purchased" value={fmtDate(asset.purchase_date)}/>
-            <Detail icon={ShieldCheck} label="Warranty until" value={fmtDate(asset.warranty_end_date)}/>
+            <div className="label-mono">{t("quick_facts")}</div>
+            <Detail icon={Building2} label={t("campus")} value={asset.campus || "—"}/>
+            <Detail icon={Building2} label={t("col_room")} value={asset.location}/>
+            <Detail icon={UserIcon} label={t("assigned_to")} value={asset.assigned_to_name || "—"}/>
+            <Detail icon={Calendar} label={t("purchased")} value={fmtDate(asset.purchase_date)}/>
+            <Detail icon={ShieldCheck} label={t("warranty_until")} value={fmtDate(asset.warranty_end_date)}/>
           </div>
 
           <div className="bg-white border border-slate-200 p-6">
-            <div className="label-mono mb-4">Depreciation</div>
+            <div className="label-mono mb-4">{t("depreciation")}</div>
             <div className="space-y-3">
-              <Row label="Purchase price" value={fmtCurrency(asset.purchase_price)}/>
-              <Row label="Annual depreciation" value={fmtCurrency(dep.annual)}/>
-              <Row label="Accumulated" value={fmtCurrency(dep.accumulated)}/>
+              <Row label={t("purchase_price")} value={fmtCurrency(asset.purchase_price)}/>
+              <Row label={t("annual_dep")} value={fmtCurrency(dep.annual)}/>
+              <Row label={t("accumulated")} value={fmtCurrency(dep.accumulated)}/>
               <div className="border-t border-slate-200 pt-3">
-                <Row label="Current book value" value={fmtCurrency(dep.current_value)} bold/>
+                <Row label={t("current_book_value")} value={fmtCurrency(dep.current_value)} bold/>
               </div>
-              <div className="text-xs text-slate-500">Age: {dep.age_years} yrs · Useful life: {asset.useful_life_years} yrs</div>
+              <div className="text-xs text-slate-500">Age: {dep.age_years} yrs · {t("useful_life")}: {asset.useful_life_years} yrs</div>
             </div>
           </div>
         </div>
 
-        {/* Right: Tabs */}
         <div className="lg:col-span-2">
           <Tabs defaultValue="overview" className="bg-white border border-slate-200">
             <TabsList className="w-full justify-start rounded-none bg-slate-50 border-b border-slate-200 p-0 h-auto">
-              <TabsTrigger value="overview" className="rounded-none data-[state=active]:bg-white data-[state=active]:border-b-2 data-[state=active]:border-blue-800 px-6 py-3" data-testid="tab-overview">Overview</TabsTrigger>
-              <TabsTrigger value="history" className="rounded-none data-[state=active]:bg-white data-[state=active]:border-b-2 data-[state=active]:border-blue-800 px-6 py-3" data-testid="tab-history">Ownership</TabsTrigger>
-              <TabsTrigger value="faults" className="rounded-none data-[state=active]:bg-white data-[state=active]:border-b-2 data-[state=active]:border-blue-800 px-6 py-3" data-testid="tab-faults">Faults ({asset.faults?.length || 0})</TabsTrigger>
-              <TabsTrigger value="docs" className="rounded-none data-[state=active]:bg-white data-[state=active]:border-b-2 data-[state=active]:border-blue-800 px-6 py-3" data-testid="tab-docs">Documents</TabsTrigger>
+              <TabsTrigger value="overview" className="rounded-none data-[state=active]:bg-white data-[state=active]:border-b-2 data-[state=active]:border-blue-800 px-6 py-3" data-testid="tab-overview">{t("tab_overview")}</TabsTrigger>
+              <TabsTrigger value="history" className="rounded-none data-[state=active]:bg-white data-[state=active]:border-b-2 data-[state=active]:border-blue-800 px-6 py-3" data-testid="tab-history">{t("tab_ownership")}</TabsTrigger>
+              <TabsTrigger value="faults" className="rounded-none data-[state=active]:bg-white data-[state=active]:border-b-2 data-[state=active]:border-blue-800 px-6 py-3" data-testid="tab-faults">{t("tab_faults")} ({asset.faults?.length || 0})</TabsTrigger>
+              <TabsTrigger value="docs" className="rounded-none data-[state=active]:bg-white data-[state=active]:border-b-2 data-[state=active]:border-blue-800 px-6 py-3" data-testid="tab-docs">{t("tab_documents")}</TabsTrigger>
             </TabsList>
 
             <TabsContent value="overview" className="p-6">
               <dl className="grid grid-cols-2 gap-y-4">
-                <Field label="Category" value={asset.category}/>
-                <Field label="Status" value={asset.status.replace("_", " ")}/>
-                <Field label="Serial number" value={asset.serial_number || "—"} mono/>
-                <Field label="Supplier" value={asset.supplier || "—"}/>
-                <Field label="Useful life" value={`${asset.useful_life_years} years`}/>
-                <Field label="Created" value={fmtDate(asset.created_at)}/>
+                <Field label={t("cat_label")} value={asset.category}/>
+                <Field label={t("col_status")} value={asset.status.replace("_", " ")}/>
+                <Field label={t("serial_number")} value={asset.serial_number || "—"} mono/>
+                <Field label={t("supplier")} value={asset.supplier || "—"}/>
+                <Field label={t("useful_life")} value={`${asset.useful_life_years} yrs`}/>
+                <Field label={t("created_label")} value={fmtDate(asset.created_at)}/>
               </dl>
             </TabsContent>
 
             <TabsContent value="history" className="p-6">
               {(!asset.ownership_history || asset.ownership_history.length === 0) ? (
-                <div className="text-sm text-slate-500">No ownership records.</div>
+                <div className="text-sm text-slate-500">{t("no_ownership")}</div>
               ) : (
                 <ol className="relative border-l-2 border-slate-200 ml-2 space-y-6">
                   {asset.ownership_history.map((h) => (
                     <li key={h.id} className="pl-6 relative">
                       <div className="absolute -left-[7px] top-1 w-3 h-3 bg-blue-700"/>
                       <div className="text-sm font-medium text-slate-900">
-                        Transferred to <span className="text-blue-800">{h.to_name}</span>
+                        {t("transferred_to")} <span className="text-blue-800">{h.to_name}</span>
                       </div>
                       <div className="text-xs text-slate-500 mt-1">
-                        From: {h.from_name || "—"} · By {h.by_name} · {fmtDate(h.at)}
+                        {h.from_name || "—"} · {h.by_name} · {fmtDate(h.at)}
                       </div>
                       {h.note && <div className="text-sm text-slate-600 mt-2 italic">"{h.note}"</div>}
                     </li>
@@ -276,7 +263,7 @@ export default function AssetDetailPage() {
 
             <TabsContent value="faults" className="p-6">
               {(!asset.faults || asset.faults.length === 0) ? (
-                <div className="text-sm text-slate-500">No fault reports.</div>
+                <div className="text-sm text-slate-500">{t("no_faults")}</div>
               ) : (
                 <div className="space-y-4">
                   {asset.faults.map((f) => (
@@ -291,7 +278,7 @@ export default function AssetDetailPage() {
                       </div>
                       <div className="text-sm text-slate-600 mt-2">{f.description}</div>
                       <div className="text-xs text-slate-500 mt-3">
-                        Reported by {f.reported_by_name} · {fmtDate(f.created_at)} · Severity: {f.severity}
+                        {f.reported_by_name} · {fmtDate(f.created_at)} · {t("severity")}: {f.severity}
                       </div>
                     </div>
                   ))}
@@ -301,7 +288,7 @@ export default function AssetDetailPage() {
 
             <TabsContent value="docs" className="p-6">
               {(!asset.documents || asset.documents.length === 0) ? (
-                <div className="text-sm text-slate-500">No documents attached.</div>
+                <div className="text-sm text-slate-500">{t("no_documents")}</div>
               ) : (
                 <div className="space-y-2">
                   {asset.documents.map((d) => (

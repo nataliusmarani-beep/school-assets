@@ -1,6 +1,7 @@
 import "./App.css";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
+import { LangProvider } from "./context/LangContext";
 import ProtectedRoute from "./components/layout/ProtectedRoute";
 import AppLayout from "./components/layout/AppLayout";
 import LoginPage from "./pages/LoginPage";
@@ -23,6 +24,7 @@ function Layout({ children }) {
 function App() {
   return (
     <div className="App">
+      <LangProvider>
       <AuthProvider>
         <BrowserRouter>
           <Toaster richColors position="top-right" />
@@ -64,6 +66,7 @@ function App() {
           </Routes>
         </BrowserRouter>
       </AuthProvider>
+      </LangProvider>
     </div>
   );
 }
