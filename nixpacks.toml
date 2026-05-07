@@ -1,9 +1,9 @@
-# Nixpacks auto-detects Node.js (from frontend/package.json)
-# We only need to add Python 3.11 on top of that
-providers = ["python", "node"]
+# Use python provider only — keeps everything in one nix phase.
+# Adding nodejs_18 manually avoids the two-phase garbage-collection problem.
+providers = ["python"]
 
 [phases.setup]
-nixPkgs = ["python311"]
+nixPkgs = ["python311", "nodejs_18"]
 
 [phases.install]
 dependsOn = ["setup"]
