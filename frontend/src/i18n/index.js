@@ -274,7 +274,8 @@ export const translations = {
 
     // Help
     support: "Support",
-    help_guide: "Help & Guide",
+    help_guide: "User guide",
+    documentation: "Documentation",
     help_s1_title: "Getting started",
     help_q1: "How do I add a new asset?",
     help_a1: 'Go to Assets → click "+ Add asset", fill in the details and save.',
@@ -567,7 +568,8 @@ export const translations = {
 
     // Help
     support: "Dukungan",
-    help_guide: "Bantuan & Panduan",
+    help_guide: "Panduan pengguna",
+    documentation: "Dokumentasi",
     help_s1_title: "Memulai",
     help_q1: "Bagaimana cara menambah aset baru?",
     help_a1: 'Buka Aset → klik "+ Tambah aset", isi detailnya dan simpan.',
