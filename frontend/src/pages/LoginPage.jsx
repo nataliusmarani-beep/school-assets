@@ -43,7 +43,7 @@ export default function LoginPage() {
           <img src={require("../ypj-logo.png")} alt="YPJ Logo" className="w-9 h-9 object-contain" />
           <div>
             <div className="font-display font-semibold text-slate-900 text-base leading-none">
-              YPJ School
+              Yayasan Pendidikan Jayawijaya
             </div>
             <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500 mt-1">
               {t("brand_subtitle")}
