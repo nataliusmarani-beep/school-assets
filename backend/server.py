@@ -162,6 +162,9 @@ def init_db():
     if "campus" not in cols:
         conn.execute("ALTER TABLE assets ADD COLUMN campus TEXT NOT NULL DEFAULT ''")
         conn.commit()
+    if "asset_type" not in cols:
+        conn.execute("ALTER TABLE assets ADD COLUMN asset_type TEXT NOT NULL DEFAULT 'School Asset'")
+        conn.commit()
     user_cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
     if "campus" not in user_cols:
         conn.execute("ALTER TABLE users ADD COLUMN campus TEXT NOT NULL DEFAULT ''")
@@ -251,6 +254,7 @@ class AssetIn(BaseModel):
     name: str
     asset_tag: str
     category: str
+    asset_type: Optional[str] = "School Asset"
     description: Optional[str] = ""
     campus: Optional[str] = ""
     location: str
@@ -271,6 +275,7 @@ class AssetUpdate(BaseModel):
     name: Optional[str] = None
     asset_tag: Optional[str] = None
     category: Optional[str] = None
+    asset_type: Optional[str] = None
     description: Optional[str] = None
     campus: Optional[str] = None
     location: Optional[str] = None
@@ -514,16 +519,16 @@ async def create_asset(body: AssetIn, user: dict = Depends(get_current_user)):
     ts = now_iso()
     conn = get_conn()
     conn.execute("""
-        INSERT INTO assets (id,name,asset_tag,category,description,campus,location,status,
+        INSERT INTO assets (id,name,asset_tag,category,asset_type,description,campus,location,status,
             purchase_price,purchase_date,useful_life_years,warranty_end_date,
             serial_number,supplier,assigned_to_user_id,assigned_to_name,
             photo_path,documents,created_at,updated_at,created_by)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
-        aid, body.name, body.asset_tag, body.category, body.description or "",
-        body.campus or "", body.location, body.status, body.purchase_price, body.purchase_date,
-        body.useful_life_years, body.warranty_end_date, body.serial_number or "",
-        body.supplier or "", body.assigned_to_user_id, body.assigned_to_name,
+        aid, body.name, body.asset_tag, body.category, body.asset_type or "School Asset",
+        body.description or "", body.campus or "", body.location, body.status,
+        body.purchase_price, body.purchase_date, body.useful_life_years, body.warranty_end_date,
+        body.serial_number or "", body.supplier or "", body.assigned_to_user_id, body.assigned_to_name,
         body.photo_path, json.dumps(body.documents), ts, ts, user["id"],
     ))
     if body.assigned_to_name:

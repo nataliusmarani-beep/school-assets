@@ -32,7 +32,7 @@ export default function AssetFormPage() {
   const [photoPreview, setPhotoPreview] = useState(null);
 
   const [form, setForm] = useState({
-    name: "", asset_tag: "", category: "IT Equipment", description: "",
+    name: "", asset_tag: "", category: "IT Equipment", asset_type: "School Asset", description: "",
     campus: "", location: "", status: "active", purchase_price: "",
     purchase_date: new Date().toISOString().split("T")[0],
     useful_life_years: 5, warranty_end_date: "", serial_number: "",
@@ -193,6 +193,18 @@ export default function AssetFormPage() {
                 </SelectTrigger>
                 <SelectContent>
                   {CATEGORY_VALUES.map((c, i)=>(<SelectItem key={c} value={c}>{t(CATEGORY_KEYS[i])}</SelectItem>))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="label-mono">{t("asset_property_by")}</Label>
+              <Select value={form.asset_type || "School Asset"} onValueChange={(v)=>update("asset_type",v)}>
+                <SelectTrigger className="mt-2 rounded-none border-slate-300" data-testid="asset-type-select">
+                  <SelectValue/>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="School Asset">{t("asset_type_school")}</SelectItem>
+                  <SelectItem value="Company Asset">{t("asset_type_company")}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
