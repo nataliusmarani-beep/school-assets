@@ -169,6 +169,9 @@ def init_db():
     if "campus" not in user_cols:
         conn.execute("ALTER TABLE users ADD COLUMN campus TEXT NOT NULL DEFAULT ''")
         conn.commit()
+    if "supervisor" not in user_cols:
+        conn.execute("ALTER TABLE users ADD COLUMN supervisor TEXT DEFAULT ''")
+        conn.commit()
     conn.close()
 
 
@@ -243,6 +246,7 @@ class UserCreate(BaseModel):
     role: Literal["admin", "staff"] = "staff"
     department: Optional[str] = None
     campus: Optional[str] = ""
+    supervisor: Optional[str] = ""
 
 
 class LoginIn(BaseModel):
@@ -359,8 +363,8 @@ async def register(body: UserCreate, response: Response):
         raise HTTPException(400, "Email already registered")
     uid = str(uuid.uuid4())
     conn.execute(
-        "INSERT INTO users (id,email,name,role,department,campus,password_hash,created_at) VALUES (?,?,?,?,?,?,?,?)",
-        (uid, email, body.name, body.role, body.department, body.campus or "", hash_password(body.password), now_iso()),
+        "INSERT INTO users (id,email,name,role,department,campus,supervisor,password_hash,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+        (uid, email, body.name, body.role, body.department, body.campus or "", body.supervisor or "", hash_password(body.password), now_iso()),
     )
     conn.commit()
     conn.close()
@@ -402,7 +406,7 @@ async def me(user: dict = Depends(get_current_user)):
 @api.get("/users")
 async def list_users(user: dict = Depends(get_current_user)):
     conn = get_conn()
-    rows = conn.execute("SELECT id,email,name,role,department,campus,created_at FROM users ORDER BY created_at DESC").fetchall()
+    rows = conn.execute("SELECT id,email,name,role,department,campus,supervisor,created_at FROM users ORDER BY created_at DESC").fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
