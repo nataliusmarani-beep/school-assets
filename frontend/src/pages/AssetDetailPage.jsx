@@ -445,6 +445,7 @@ export default function AssetDetailPage() {
                 <Field label={t("supplier")} value={asset.supplier || "—"}/>
                 <Field label={t("useful_life")} value={`${asset.useful_life_years} yrs`}/>
                 <Field label={t("created_label")} value={fmtDate(asset.created_at)}/>
+                <Field label={t("col_asset_property_of")} value={asset.asset_type || "School Asset"}/>
               </dl>
 
               <div className="border-t border-slate-100 pt-5">
