@@ -1270,27 +1270,31 @@ def seed_data():
     staff_email = os.environ.get("STAFF_EMAIL", "staff@school.edu")
     staff_password = os.environ.get("STAFF_PASSWORD", "staff123")
 
+    # Find the admin by email OR by role (handles email changes)
     admin = conn.execute("SELECT id FROM users WHERE email = ?", (admin_email,)).fetchone()
     if not admin:
-        admin_id = str(uuid.uuid4())
-        conn.execute(
-            "INSERT INTO users (id,email,name,role,department,password_hash,created_at) VALUES (?,?,?,?,?,?,?)",
-            (admin_id, admin_email, "Admin User", "admin", "Administration", hash_password(admin_password), now_iso()),
-        )
-        logger.info(f"Seeded admin: {admin_email}")
+        existing_admin = conn.execute("SELECT id, email FROM users WHERE role = 'admin' LIMIT 1").fetchone()
+        if existing_admin:
+            # Migrate email to new value from env var
+            conn.execute("UPDATE users SET email = ? WHERE id = ?", (admin_email, existing_admin["id"]))
+            admin_id = existing_admin["id"]
+            logger.info(f"Updated admin email to: {admin_email}")
+        else:
+            admin_id = str(uuid.uuid4())
+            conn.execute(
+                "INSERT INTO users (id,email,name,role,department,password_hash,created_at) VALUES (?,?,?,?,?,?,?)",
+                (admin_id, admin_email, "Admin User", "admin", "Administration", hash_password(admin_password), now_iso()),
+            )
+            logger.info(f"Seeded admin: {admin_email}")
     else:
         admin_id = admin["id"]
 
-    staff = conn.execute("SELECT id FROM users WHERE email = ?", (staff_email,)).fetchone()
-    if not staff:
-        staff_id = str(uuid.uuid4())
-        conn.execute(
-            "INSERT INTO users (id,email,name,role,department,password_hash,created_at) VALUES (?,?,?,?,?,?,?)",
-            (staff_id, staff_email, "Maria Hernandez", "staff", "Science Department", hash_password(staff_password), now_iso()),
-        )
-        logger.info(f"Seeded staff: {staff_email}")
-    else:
-        staff_id = staff["id"]
+    # Remove demo staff user if still present
+    demo_staff = conn.execute("SELECT id FROM users WHERE email = ?", (staff_email,)).fetchone()
+    if demo_staff:
+        conn.execute("DELETE FROM users WHERE id = ?", (demo_staff["id"],))
+        logger.info(f"Removed demo staff user: {staff_email}")
+    staff_id = admin_id  # fallback so demo asset seeding still works
 
     asset_count = conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
     if asset_count == 0:
