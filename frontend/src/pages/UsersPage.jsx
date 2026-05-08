@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "../components/ui/dialog";
 import { toast } from "sonner";
 import { useAuth } from "../context/AuthContext";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Pencil } from "lucide-react";
 
 export default function UsersPage() {
   const { t } = useLang();
@@ -16,6 +16,9 @@ export default function UsersPage() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState(null);
+  const [editForm, setEditForm] = useState({ name: "", email: "", role: "staff", department: "", campus: "", supervisor: "", password: "" });
   const [form, setForm] = useState({ name: "", email: "", password: "", role: "staff", department: "", campus: "", supervisor: "" });
 
   const load = () => {
@@ -31,6 +34,24 @@ export default function UsersPage() {
       toast.success(t("user_created_ok"));
       setOpen(false);
       setForm({ name: "", email: "", password: "", role: "staff", department: "", campus: "", supervisor: "" });
+      load();
+    } catch (err) { toast.error(formatErr(err)); }
+  };
+
+  const openEdit = (u) => {
+    setEditTarget(u);
+    setEditForm({ name: u.name, email: u.email, role: u.role, department: u.department || "", campus: u.campus || "", supervisor: u.supervisor || "", password: "" });
+    setEditOpen(true);
+  };
+
+  const submitEdit = async (e) => {
+    e.preventDefault();
+    const payload = { ...editForm };
+    if (!payload.password) delete payload.password;
+    try {
+      await api.put(`/users/${editTarget.id}`, payload);
+      toast.success(t("user_updated_ok"));
+      setEditOpen(false);
       load();
     } catch (err) { toast.error(formatErr(err)); }
   };
@@ -93,7 +114,7 @@ export default function UsersPage() {
                 </Select>
               </div>
               <div><Label className="label-mono">{t("col_supervisor")}</Label>
-                <Input value={form.supervisor} onChange={(e)=>setForm({...form,supervisor:e.target.value})}
+                <Input type="email" value={form.supervisor} onChange={(e)=>setForm({...form,supervisor:e.target.value})}
                   placeholder={t("supervisor_placeholder")} className="mt-2 rounded-none"/>
               </div>
               <DialogFooter>
@@ -145,11 +166,16 @@ export default function UsersPage() {
                   <td className="py-3 px-4 text-slate-700 text-xs">{u.supervisor || "—"}</td>
                   <td className="py-3 px-4 text-slate-500 text-xs">{fmtDate(u.created_at)}</td>
                   <td className="py-3 px-4 text-right">
-                    {u.id !== user.id && (
-                      <button onClick={()=>remove(u)} className="text-rose-500 hover:text-rose-700" data-testid={`delete-user-${u.id}`}>
-                        <Trash2 className="w-4 h-4"/>
+                    <div className="flex items-center justify-end gap-2">
+                      <button onClick={()=>openEdit(u)} className="text-slate-400 hover:text-slate-700" data-testid={`edit-user-${u.id}`}>
+                        <Pencil className="w-4 h-4"/>
                       </button>
-                    )}
+                      {u.id !== user.id && (
+                        <button onClick={()=>remove(u)} className="text-rose-500 hover:text-rose-700" data-testid={`delete-user-${u.id}`}>
+                          <Trash2 className="w-4 h-4"/>
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -157,6 +183,53 @@ export default function UsersPage() {
           </table>
         </div>
       </div>
+
+      {/* Edit user dialog */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="rounded-none">
+          <DialogHeader><DialogTitle>{t("edit_user")}</DialogTitle></DialogHeader>
+          <form onSubmit={submitEdit} className="space-y-4">
+            <div><Label className="label-mono">{t("full_name")}</Label>
+              <Input required value={editForm.name} onChange={(e)=>setEditForm({...editForm,name:e.target.value})}
+                className="mt-2 rounded-none"/></div>
+            <div><Label className="label-mono">{t("email")}</Label>
+              <Input type="email" required value={editForm.email} onChange={(e)=>setEditForm({...editForm,email:e.target.value})}
+                className="mt-2 rounded-none"/></div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label className="label-mono">{t("role")}</Label>
+                <Select value={editForm.role} onValueChange={(v)=>setEditForm({...editForm,role:v})}>
+                  <SelectTrigger className="mt-2 rounded-none"><SelectValue/></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="staff">{t("staff")}</SelectItem>
+                    <SelectItem value="admin">{t("admin")}</SelectItem>
+                  </SelectContent>
+                </Select></div>
+              <div><Label className="label-mono">{t("department")}</Label>
+                <Input value={editForm.department} onChange={(e)=>setEditForm({...editForm,department:e.target.value})}
+                  className="mt-2 rounded-none"/></div>
+            </div>
+            <div><Label className="label-mono">{t("col_campus")}</Label>
+              <Select value={editForm.campus} onValueChange={(v)=>setEditForm({...editForm,campus:v})}>
+                <SelectTrigger className="mt-2 rounded-none"><SelectValue placeholder={t("select_campus")}/></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="YPJ Kuala Kencana">YPJ Kuala Kencana</SelectItem>
+                  <SelectItem value="YPJ Tembagapura">YPJ Tembagapura</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div><Label className="label-mono">{t("col_supervisor")}</Label>
+              <Input type="email" value={editForm.supervisor} onChange={(e)=>setEditForm({...editForm,supervisor:e.target.value})}
+                placeholder={t("supervisor_placeholder")} className="mt-2 rounded-none"/></div>
+            <div><Label className="label-mono">{t("new_password_optional")}</Label>
+              <Input type="password" minLength={6} value={editForm.password} onChange={(e)=>setEditForm({...editForm,password:e.target.value})}
+                placeholder={t("leave_blank_unchanged")} className="mt-2 rounded-none"/></div>
+            <DialogFooter>
+              <Button variant="outline" className="rounded-none" type="button" onClick={()=>setEditOpen(false)}>{t("cancel")}</Button>
+              <Button type="submit" className="rounded-none bg-slate-900">{t("save_changes")}</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

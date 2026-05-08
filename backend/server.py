@@ -427,6 +427,36 @@ async def delete_user(uid: str, _: dict = Depends(admin_required)):
     return {"ok": True}
 
 
+class UserPatch(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[str] = None
+    department: Optional[str] = None
+    campus: Optional[str] = None
+    supervisor: Optional[str] = None
+    password: Optional[str] = None
+
+
+@api.put("/users/{uid}")
+async def update_user(uid: str, body: UserPatch, _: dict = Depends(admin_required)):
+    updates = {k: v for k, v in body.model_dump(exclude_none=True).items() if v is not None}
+    if not updates:
+        raise HTTPException(400, "No fields to update")
+    if "password" in updates:
+        updates["password_hash"] = hash_password(updates.pop("password"))
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    params = list(updates.values()) + [uid]
+    conn = get_conn()
+    res = conn.execute(f"UPDATE users SET {set_clause} WHERE id = ?", params)
+    if res.rowcount == 0:
+        conn.close()
+        raise HTTPException(404, "User not found")
+    conn.commit()
+    row = conn.execute("SELECT id,email,name,role,department,campus,supervisor,created_at FROM users WHERE id = ?", (uid,)).fetchone()
+    conn.close()
+    return dict(row)
+
+
 # ---- File upload ----
 @api.post("/upload")
 async def upload_file(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
