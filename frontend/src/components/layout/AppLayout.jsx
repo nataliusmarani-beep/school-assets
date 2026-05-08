@@ -143,14 +143,16 @@ export default function AppLayout({ children }) {
       </nav>
 
       <div className="px-3 pb-6 border-t border-slate-800 pt-4 space-y-4">
-        <button
-          onClick={handleBackup}
-          disabled={backing}
-          className="w-full flex items-center justify-center gap-2 bg-amber-400 hover:bg-amber-300 text-slate-900 font-semibold text-sm px-3 py-2.5 transition-colors disabled:opacity-60"
-        >
-          <DatabaseBackup className="w-4 h-4" strokeWidth={1.75} />
-          {backing ? t("backing_up") : t("backup")}
-        </button>
+        {user?.role === "admin" && (
+          <button
+            onClick={handleBackup}
+            disabled={backing}
+            className="w-full flex items-center justify-center gap-2 bg-amber-400 hover:bg-amber-300 text-slate-900 font-semibold text-sm px-3 py-2.5 transition-colors disabled:opacity-60"
+          >
+            <DatabaseBackup className="w-4 h-4" strokeWidth={1.75} />
+            {backing ? t("backing_up") : t("backup")}
+          </button>
+        )}
 
         <div className="px-1">
           <div className="label-mono text-slate-500 mb-2">{t("lang_label")}</div>

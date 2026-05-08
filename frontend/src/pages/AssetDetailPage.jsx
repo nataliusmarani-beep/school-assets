@@ -340,11 +340,13 @@ export default function AssetDetailPage() {
             </DialogContent>
           </Dialog>
 
-          <Link to={`/assets/${id}/edit`}>
-            <Button variant="outline" className="rounded-none" data-testid="edit-asset-button">
-              <Edit className="w-4 h-4 mr-2" strokeWidth={1.75}/> {t("edit")}
-            </Button>
-          </Link>
+          {user?.role === "admin" && (
+            <Link to={`/assets/${id}/edit`}>
+              <Button variant="outline" className="rounded-none" data-testid="edit-asset-button">
+                <Edit className="w-4 h-4 mr-2" strokeWidth={1.75}/> {t("edit")}
+              </Button>
+            </Link>
+          )}
           {user?.role === "admin" && (
             <Button variant="outline" onClick={handleDelete}
               className="rounded-none text-rose-600 hover:text-rose-700" data-testid="delete-asset-button">
