@@ -16,6 +16,7 @@ import ReportsPage from "./pages/ReportsPage";
 import ActivityLogsPage from "./pages/ActivityLogsPage";
 import HelpPage from "./pages/HelpPage";
 import TransferRequestsPage from "./pages/TransferRequestsPage";
+import LoanRequestsPage from "./pages/LoanRequestsPage";
 import { Toaster } from "./components/ui/sonner";
 
 function Layout({ children }) {
@@ -63,6 +64,9 @@ function App() {
             }/>
             <Route path="/transfer-requests" element={
               <ProtectedRoute adminOnly><Layout><TransferRequestsPage /></Layout></ProtectedRoute>
+            }/>
+            <Route path="/loan-requests" element={
+              <ProtectedRoute adminOnly><Layout><LoanRequestsPage /></Layout></ProtectedRoute>
             }/>
             <Route path="/help" element={
               <ProtectedRoute><Layout><HelpPage /></Layout></ProtectedRoute>

@@ -14,6 +14,7 @@ import {
   HelpCircle,
   DatabaseBackup,
   ArrowRightLeft,
+  BookOpen,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import api from "../../lib/api";
@@ -25,6 +26,7 @@ const NAV_LINKS = [
   { to: "/faults", labelKey: "nav_faults", icon: Wrench, testid: "nav-faults" },
   { to: "/compliance", labelKey: "nav_compliance", icon: ShieldCheck, testid: "nav-compliance" },
   { to: "/transfer-requests", labelKey: "nav_transfer_requests", icon: ArrowRightLeft, testid: "nav-transfers", adminOnly: true, badge: "pendingTransfers" },
+  { to: "/loan-requests", labelKey: "nav_loan_requests", icon: BookOpen, testid: "nav-loans", adminOnly: true, badge: "pendingLoans" },
   { to: "/users", labelKey: "nav_users", icon: Users, testid: "nav-users", adminOnly: true },
   { to: "/reports", labelKey: "nav_reports", icon: BarChart3, testid: "nav-reports" },
   { to: "/activity-logs", labelKey: "nav_activity", icon: History, testid: "nav-activity", adminOnly: true },
@@ -38,12 +40,16 @@ export default function AppLayout({ children }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [backing, setBacking] = useState(false);
   const [pendingTransfers, setPendingTransfers] = useState(0);
+  const [pendingLoans, setPendingLoans] = useState(0);
 
   useEffect(() => {
     if (user?.role !== "admin") return;
-    const fetch = () => api.get("/transfer-requests/pending-count").then((r) => setPendingTransfers(r.data.count)).catch(() => {});
-    fetch();
-    const interval = setInterval(fetch, 60000);
+    const fetchCounts = () => {
+      api.get("/transfer-requests/pending-count").then((r) => setPendingTransfers(r.data.count)).catch(() => {});
+      api.get("/loan-requests/pending-count").then((r) => setPendingLoans(r.data.count)).catch(() => {});
+    };
+    fetchCounts();
+    const interval = setInterval(fetchCounts, 60000);
     return () => clearInterval(interval);
   }, [user]);
 
@@ -124,6 +130,11 @@ export default function AppLayout({ children }) {
               {l.badge === "pendingTransfers" && pendingTransfers > 0 && (
                 <span className="text-[10px] font-bold bg-amber-400 text-slate-900 rounded-full w-4 h-4 flex items-center justify-center flex-shrink-0">
                   {pendingTransfers > 9 ? "9+" : pendingTransfers}
+                </span>
+              )}
+              {l.badge === "pendingLoans" && pendingLoans > 0 && (
+                <span className="text-[10px] font-bold bg-amber-400 text-slate-900 rounded-full w-4 h-4 flex items-center justify-center flex-shrink-0">
+                  {pendingLoans > 9 ? "9+" : pendingLoans}
                 </span>
               )}
             </NavLink>

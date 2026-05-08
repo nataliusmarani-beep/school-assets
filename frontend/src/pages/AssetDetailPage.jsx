@@ -13,7 +13,7 @@ import { useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
 import {
   ArrowLeft, ArrowRightLeft, Wrench, Edit, Trash2, Download,
-  FileText, Calendar, ShieldCheck, Building2, User as UserIcon, Tag,
+  FileText, Calendar, ShieldCheck, Building2, User as UserIcon, Tag, BookOpen,
 } from "lucide-react";
 
 export default function AssetDetailPage() {
@@ -28,6 +28,11 @@ export default function AssetDetailPage() {
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferTo, setTransferTo] = useState("");
   const [transferNote, setTransferNote] = useState("");
+
+  const [loanOpen, setLoanOpen] = useState(false);
+  const [loanPurpose, setLoanPurpose] = useState("");
+  const [loanStart, setLoanStart] = useState("");
+  const [loanEnd, setLoanEnd] = useState("");
   const [transferCampus, setTransferCampus] = useState("");
   const [transferRoom, setTransferRoom] = useState("");
   const [userSearch, setUserSearch] = useState("");
@@ -124,6 +129,14 @@ export default function AssetDetailPage() {
       }
       setTransferOpen(false); resetTransferForm();
       load();
+    } catch (e) { toast.error(formatErr(e)); }
+  };
+
+  const submitLoanRequest = async () => {
+    try {
+      await api.post(`/assets/${id}/loan-request`, { purpose: loanPurpose, start_date: loanStart || null, end_date: loanEnd || null });
+      toast.success(t("loan_request_submitted"));
+      setLoanOpen(false); setLoanPurpose(""); setLoanStart(""); setLoanEnd("");
     } catch (e) { toast.error(formatErr(e)); }
   };
 
@@ -280,6 +293,48 @@ export default function AssetDetailPage() {
               <DialogFooter>
                 <Button onClick={submitTransfer} className="rounded-none bg-slate-900" data-testid="submit-transfer-button">
                   {isAdmin ? t("confirm_transfer") : t("submit_request")}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={loanOpen} onOpenChange={setLoanOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline" className="rounded-none" data-testid="loan-request-button">
+                <BookOpen className="w-4 h-4 mr-2" strokeWidth={1.75}/> {t("loan_request")}
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="rounded-none">
+              <DialogHeader>
+                <DialogTitle>{t("loan_request_title")}</DialogTitle>
+              </DialogHeader>
+              <p className="text-sm text-slate-500">{t("loan_request_hint")}</p>
+              <div className="space-y-4">
+                <div>
+                  <Label className="label-mono">{t("loan_purpose")}</Label>
+                  <Textarea value={loanPurpose} onChange={(e) => setLoanPurpose(e.target.value)}
+                    placeholder={t("loan_purpose_placeholder")} rows={2}
+                    className="mt-2 rounded-none" data-testid="loan-purpose-input"/>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="label-mono">{t("loan_from_label")}</Label>
+                    <Input type="date" value={loanStart} onChange={(e) => setLoanStart(e.target.value)}
+                      className="mt-2 rounded-none" data-testid="loan-start-input"/>
+                  </div>
+                  <div>
+                    <Label className="label-mono">{t("loan_until_label")}</Label>
+                    <Input type="date" value={loanEnd} onChange={(e) => setLoanEnd(e.target.value)}
+                      className="mt-2 rounded-none" data-testid="loan-end-input"/>
+                  </div>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" className="rounded-none" onClick={() => setLoanOpen(false)}>
+                  {t("cancel")}
+                </Button>
+                <Button onClick={submitLoanRequest} className="rounded-none bg-slate-900" data-testid="submit-loan-button">
+                  {t("submit_request")}
                 </Button>
               </DialogFooter>
             </DialogContent>

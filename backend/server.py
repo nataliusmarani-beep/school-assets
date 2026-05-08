@@ -138,6 +138,24 @@ def init_db():
         created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS loan_requests (
+        id TEXT PRIMARY KEY,
+        asset_id TEXT NOT NULL,
+        asset_name TEXT NOT NULL,
+        asset_tag TEXT NOT NULL,
+        requested_by TEXT NOT NULL,
+        requested_by_name TEXT NOT NULL,
+        purpose TEXT DEFAULT '',
+        start_date TEXT,
+        end_date TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        reviewed_by TEXT,
+        reviewed_by_name TEXT,
+        reviewed_at TEXT,
+        reject_reason TEXT,
+        created_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS transfer_requests (
         id TEXT PRIMARY KEY,
         asset_id TEXT NOT NULL,
@@ -1286,6 +1304,93 @@ async def backup_db(user: dict = Depends(admin_required)):
         media_type="application/octet-stream",
         filename=f"ypj-backup-{datetime.now().strftime('%Y%m%d')}.db",
     )
+
+
+# ---- Loan requests ----
+
+class LoanRequestIn(BaseModel):
+    purpose: Optional[str] = ""
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+
+
+@api.post("/assets/{aid}/loan-request")
+async def create_loan_request(aid: str, body: LoanRequestIn, user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    asset = conn.execute("SELECT id,name,asset_tag FROM assets WHERE id = ?", (aid,)).fetchone()
+    if not asset:
+        conn.close()
+        raise HTTPException(404, "Asset not found")
+    rid = str(uuid.uuid4())
+    conn.execute(
+        """INSERT INTO loan_requests
+           (id,asset_id,asset_name,asset_tag,requested_by,requested_by_name,purpose,start_date,end_date,status,created_at)
+           VALUES (?,?,?,?,?,?,?,?,?,'pending',?)""",
+        (rid, aid, asset["name"], asset["asset_tag"], user["id"], user["name"],
+         body.purpose or "", body.start_date, body.end_date, now_iso()),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM loan_requests WHERE id = ?", (rid,)).fetchone()
+    conn.close()
+    return dict(row)
+
+
+@api.get("/loan-requests")
+async def list_loan_requests(user: dict = Depends(get_current_user), status: Optional[str] = None):
+    conn = get_conn()
+    if user["role"] == "admin":
+        base = "SELECT * FROM loan_requests"
+        rows = conn.execute(base + (" WHERE status=?" if status and status != "all" else " ORDER BY created_at DESC"),
+                            (status,) if status and status != "all" else ()).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM loan_requests WHERE requested_by=? ORDER BY created_at DESC", (user["id"],)
+        ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@api.get("/loan-requests/pending-count")
+async def loan_pending_count(_: dict = Depends(admin_required)):
+    conn = get_conn()
+    n = conn.execute("SELECT COUNT(*) FROM loan_requests WHERE status='pending'").fetchone()[0]
+    conn.close()
+    return {"count": n}
+
+
+@api.put("/loan-requests/{rid}/approve")
+async def approve_loan(rid: str, user: dict = Depends(admin_required)):
+    conn = get_conn()
+    req = conn.execute("SELECT * FROM loan_requests WHERE id=?", (rid,)).fetchone()
+    if not req:
+        conn.close()
+        raise HTTPException(404, "Loan request not found")
+    now = now_iso()
+    conn.execute(
+        "UPDATE loan_requests SET status='approved',reviewed_by=?,reviewed_by_name=?,reviewed_at=? WHERE id=?",
+        (user["id"], user["name"], now, rid),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM loan_requests WHERE id=?", (rid,)).fetchone()
+    conn.close()
+    return dict(row)
+
+
+@api.put("/loan-requests/{rid}/reject")
+async def reject_loan(rid: str, reason: Optional[str] = None, user: dict = Depends(admin_required)):
+    conn = get_conn()
+    req = conn.execute("SELECT * FROM loan_requests WHERE id=?", (rid,)).fetchone()
+    if not req:
+        conn.close()
+        raise HTTPException(404, "Loan request not found")
+    conn.execute(
+        "UPDATE loan_requests SET status='rejected',reviewed_by=?,reviewed_by_name=?,reviewed_at=?,reject_reason=? WHERE id=?",
+        (user["id"], user["name"], now_iso(), reason or "", rid),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM loan_requests WHERE id=?", (rid,)).fetchone()
+    conn.close()
+    return dict(row)
 
 
 # ---- Mount ----
