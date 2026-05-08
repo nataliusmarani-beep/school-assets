@@ -426,18 +426,6 @@ export default function AssetDetailPage() {
             <Detail icon={ShieldCheck} label={t("warranty_until")} value={fmtDate(asset.warranty_end_date)}/>
           </div>
 
-          <div className="bg-white border border-slate-200 p-6">
-            <div className="label-mono mb-4">{t("depreciation")}</div>
-            <div className="space-y-3">
-              <Row label={t("purchase_price")} value={fmtCurrency(asset.purchase_price)}/>
-              <Row label={t("annual_dep")} value={fmtCurrency(dep.annual)}/>
-              <Row label={t("accumulated")} value={fmtCurrency(dep.accumulated)}/>
-              <div className="border-t border-slate-200 pt-3">
-                <Row label={t("current_book_value")} value={fmtCurrency(dep.current_value)} bold/>
-              </div>
-              <div className="text-xs text-slate-500">Age: {dep.age_years} yrs · {t("useful_life")}: {asset.useful_life_years} yrs</div>
-            </div>
-          </div>
         </div>
 
         <div className="lg:col-span-2">
@@ -449,7 +437,7 @@ export default function AssetDetailPage() {
               <TabsTrigger value="docs" className="rounded-none data-[state=active]:bg-white data-[state=active]:border-b-2 data-[state=active]:border-blue-800 px-6 py-3" data-testid="tab-docs">{t("tab_documents")}</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="overview" className="p-6">
+            <TabsContent value="overview" className="p-6 space-y-6">
               <dl className="grid grid-cols-2 gap-y-4">
                 <Field label={t("cat_label")} value={asset.category}/>
                 <Field label={t("col_status")} value={asset.status.replace("_", " ")}/>
@@ -458,6 +446,19 @@ export default function AssetDetailPage() {
                 <Field label={t("useful_life")} value={`${asset.useful_life_years} yrs`}/>
                 <Field label={t("created_label")} value={fmtDate(asset.created_at)}/>
               </dl>
+
+              <div className="border-t border-slate-100 pt-5">
+                <div className="label-mono mb-4">{t("depreciation")}</div>
+                <div className="space-y-3">
+                  <Row label={t("purchase_price")} value={fmtCurrency(asset.purchase_price)}/>
+                  <Row label={t("annual_dep")} value={fmtCurrency(dep.annual)}/>
+                  <Row label={t("accumulated")} value={fmtCurrency(dep.accumulated)}/>
+                  <div className="border-t border-slate-200 pt-3">
+                    <Row label={t("current_book_value")} value={fmtCurrency(dep.current_value)} bold/>
+                  </div>
+                  <div className="text-xs text-slate-500">Age: {dep.age_years} yrs · {t("useful_life")}: {asset.useful_life_years} yrs</div>
+                </div>
+              </div>
             </TabsContent>
 
             <TabsContent value="history" className="p-6">
