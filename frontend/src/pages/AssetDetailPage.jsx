@@ -39,6 +39,9 @@ export default function AssetDetailPage() {
   const [userResults, setUserResults] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
   const [showUserDropdown, setShowUserDropdown] = useState(false);
+  const [allRooms, setAllRooms] = useState([]);
+  const [roomResults, setRoomResults] = useState([]);
+  const [showRoomDropdown, setShowRoomDropdown] = useState(false);
 
   const [faultOpen, setFaultOpen] = useState(false);
   const [faultTitle, setFaultTitle] = useState("");
@@ -77,11 +80,18 @@ export default function AssetDetailPage() {
   // Staff can only act on assets in their own campus
   const canActOnAsset = isAdmin || !asset || !user?.campus || !asset.campus || user.campus === asset.campus;
 
-  // Load users when transfer dialog opens
+  // Load users + rooms when transfer dialog opens; lock campus for staff
   useEffect(() => {
     if (!transferOpen) return;
+    const campus = !isAdmin && user?.campus ? user.campus : (asset?.campus || "");
+    if (!isAdmin && user?.campus) setTransferCampus(user.campus);
     api.get("/users").then((r) => setAllUsers(r.data)).catch(() => {});
-  }, [transferOpen]);
+    api.get("/assets", { params: campus ? { campus } : {} })
+      .then((r) => {
+        const rooms = [...new Set(r.data.map((a) => a.location).filter(Boolean))].sort();
+        setAllRooms(rooms);
+      }).catch(() => {});
+  }, [transferOpen]); // eslint-disable-line
 
   const handleUserSearch = (val) => {
     setUserSearch(val);
@@ -110,10 +120,25 @@ export default function AssetDetailPage() {
     return parts.join(" — ");
   };
 
+  const handleRoomSearch = (val) => {
+    setTransferRoom(val);
+    if (!val.trim()) { setRoomResults([]); setShowRoomDropdown(false); return; }
+    const q = val.toLowerCase();
+    const matches = allRooms.filter((r) => r.toLowerCase().includes(q) && r !== val);
+    setRoomResults(matches);
+    setShowRoomDropdown(matches.length > 0);
+  };
+
+  const selectRoom = (r) => {
+    setTransferRoom(r);
+    setRoomResults([]);
+    setShowRoomDropdown(false);
+  };
+
   const resetTransferForm = () => {
     setTransferTo(""); setTransferNote(""); setTransferCampus("");
     setTransferRoom(""); setUserSearch(""); setUserResults([]);
-    setShowUserDropdown(false);
+    setShowUserDropdown(false); setRoomResults([]); setShowRoomDropdown(false);
   };
 
   const submitTransfer = async () => {
@@ -259,30 +284,50 @@ export default function AssetDetailPage() {
                   )}
                 </div>
 
-                {/* Campus select */}
+                {/* Campus — locked for staff, select for admin */}
                 <div>
                   <Label className="label-mono">{t("campus")}</Label>
-                  <Select value={transferCampus} onValueChange={setTransferCampus}>
-                    <SelectTrigger className="mt-2 rounded-none">
-                      <SelectValue placeholder={t("select_campus")} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="YPJ Kuala Kencana">YPJ Kuala Kencana</SelectItem>
-                      <SelectItem value="YPJ Tembagapura">YPJ Tembagapura</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  {!isAdmin && user?.campus ? (
+                    <div className="mt-2 px-3 py-2 border border-slate-200 bg-slate-50 text-sm text-slate-700 rounded-none">
+                      {user.campus}
+                    </div>
+                  ) : (
+                    <Select value={transferCampus} onValueChange={setTransferCampus}>
+                      <SelectTrigger className="mt-2 rounded-none">
+                        <SelectValue placeholder={t("select_campus")} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="YPJ Kuala Kencana">YPJ Kuala Kencana</SelectItem>
+                        <SelectItem value="YPJ Tembagapura">YPJ Tembagapura</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
                 </div>
 
-                {/* Room number */}
-                <div>
+                {/* Room — searchable autocomplete */}
+                <div className="relative">
                   <Label className="label-mono">{t("col_room")}</Label>
                   <Input
                     value={transferRoom}
-                    onChange={(e) => setTransferRoom(e.target.value)}
+                    onChange={(e) => handleRoomSearch(e.target.value)}
+                    onFocus={() => { if (transferRoom.trim()) { const q = transferRoom.toLowerCase(); const m = allRooms.filter((r) => r.toLowerCase().includes(q) && r !== transferRoom); setRoomResults(m); setShowRoomDropdown(m.length > 0); } }}
+                    onBlur={() => setTimeout(() => setShowRoomDropdown(false), 150)}
                     placeholder={t("room_placeholder")}
                     className="mt-2 rounded-none"
+                    autoComplete="off"
                     data-testid="transfer-room-input"
                   />
+                  {showRoomDropdown && (
+                    <div className="absolute z-50 left-0 right-0 bg-white border border-slate-200 shadow-md mt-1 max-h-40 overflow-y-auto">
+                      {roomResults.map((r) => (
+                        <button key={r} type="button"
+                          className="w-full text-left px-3 py-2 text-sm text-slate-900 hover:bg-slate-50 border-b border-slate-100 last:border-0"
+                          onMouseDown={(e) => { e.preventDefault(); selectRoom(r); }}>
+                          {r}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* Note */}
