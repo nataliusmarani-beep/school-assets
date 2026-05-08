@@ -15,6 +15,7 @@ import {
   DatabaseBackup,
   ArrowRightLeft,
   BookOpen,
+  ScrollText,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import api from "../../lib/api";
@@ -30,6 +31,7 @@ const NAV_LINKS = [
   { to: "/users", labelKey: "nav_users", icon: Users, testid: "nav-users", adminOnly: true },
   { to: "/reports", labelKey: "nav_reports", icon: BarChart3, testid: "nav-reports", adminOnly: true },
   { to: "/activity-logs", labelKey: "nav_activity", icon: History, testid: "nav-activity", adminOnly: true },
+  { to: "/policies", labelKey: "nav_policies", icon: ScrollText, testid: "nav-policies" },
   { to: "/help", labelKey: "nav_help", icon: HelpCircle, testid: "nav-help" },
 ];
 

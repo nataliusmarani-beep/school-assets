@@ -9,6 +9,7 @@ export const translations = {
     nav_reports: "Reports",
     nav_activity: "Activity logs",
     nav_help: "Help & Guide",
+    nav_policies: "Policies & Procedures",
     brand_subtitle: "School Assets Management",
     nav_section: "Navigation",
     lang_label: "Language",
@@ -441,6 +442,78 @@ export const translations = {
     help_s10_tip1: "Add — upload during Add/Edit asset (Section 03).",
     help_s10_tip2: "View — photo appears in the Asset Detail header. Documents appear under the Documents tab.",
     help_s10_tip3: "Download — click the download icon next to any document.",
+
+    // Policies page
+    pol_section: "Governance",
+    pol_title: "Policies & Procedures",
+    pol_subtitle: "Official YPJ school policies governing staff conduct, asset use, and data management.",
+    pol_toc: "On this page",
+    pol_effective: "Effective",
+    pol_effective_date: "Academic Year 2024–2025. Reviewed annually by the YPJ School Administration.",
+    pol_questions: "Questions?",
+    pol_questions_body: "Contact your school administrator or the ICT department for clarifications on any policy.",
+
+    pol_tag_ict: "ICT",
+    pol_tag_asset: "Asset Management",
+    pol_tag_data: "Data & Privacy",
+    pol_tag_admin: "Administration",
+
+    // RUP
+    pol_rup_title: "Responsible Use Policy (RUP) — ICT Resources",
+    pol_rup_purpose_h: "Overview",
+    pol_rup_purpose: "The following summarises the Responsible Use Policy for Information and Communication Technology (ICT) resources. Please use this as a guide for acceptable use of ICT systems and the Internet at school and off campus.",
+    pol_rup_scope_h: "Scope of YPJ Technology Resources",
+    pol_rup_scope: "All YPJ technology resources — desktops, laptops, iPads, photocopiers, printers, applications (apps), email, Internet, Intranet, SharePoint, network resources, audio/visual equipment, and related technology — belong to PTFI & YPJ and are loaned to me as an employee.",
+    pol_rup_acceptable_h: "Acceptable Use",
+    pol_rup_acceptable: "Use of YPJ technology is for educational purposes and YPJ-related school work only.||Use of YPJ technology is a privilege; care for the equipment is my responsibility.||I will keep YPJ technology resources secure at all times and will not lend them to friends or family members.||I am responsible for the backup and recovery of my own data stored on YPJ technology resources.||All information copied and used will be properly attributed with author, source, publication date, and/or website link.",
+    pol_rup_prohibited_h: "Prohibited Activities",
+    pol_rup_prohibited: "I will not install software, remove programs, or use any configuration method to change the original settings of equipment.||I will not remove YPJ technology resources from the work location (unless given written permission by my Supervisor).||I will not disclose my login password to any other person, in accordance with FMI MIS policy.||Viewing or distributing pornographic, obscene, or offensive material will not be tolerated.||All forms of cyberbullying (harassing, teasing, intimidating, threatening, or sending/posting inappropriate messages via email, chat, text, WhatsApp, images, or websites) are unacceptable.||Avoid chain mail and only send emails to large groups when necessary.||Downloading and streaming large files for non-instructional use is prohibited.||YPJ technology resources cannot be used for personal gain or political activities.||I will not take photos, videos, or audio recordings of others without their consent.||I will not distribute recordings of others via email, SMS, WhatsApp, social media, or any other platform without their consent.",
+    pol_rup_breach_h: "Consequences of Inappropriate Use",
+    pol_rup_breach: "Violations of this policy may result in loss of internet and/or computer access privileges. Serious violations may lead to suspension or dismissal. I will pay an appropriate amount (up to full replacement cost) if a loaned laptop or iPad requires repair or replacement due to negligence, loss, theft, or accident.",
+
+    // Asset Care
+    pol_care_title: "Asset Care & Maintenance Policy",
+    pol_care_purpose_h: "Purpose",
+    pol_care_purpose: "This policy ensures all school assets are properly cared for, maintained in good condition, and any issues are promptly reported to preserve the value of YPJ's inventory.",
+    pol_care_obligations_h: "Staff Obligations",
+    pol_care_obligations: "Handle all assigned assets with reasonable care and in accordance with manufacturer guidelines.||Store assets securely when not in use and protect them from damage, theft, or loss.||Report any damage, malfunction, or deterioration immediately through the Faults page in this system.||Do not attempt unauthorised repairs or modifications to any school asset.||Return assets to the correct location after use.",
+    pol_care_damage_h: "Damage & Loss",
+    pol_care_damage: "Accidental damage must be reported within 24 hours. Damage resulting from negligence or misuse may result in the staff member being held financially responsible for repair or replacement costs, as determined by the school administration.",
+    pol_care_reporting_h: "Reporting",
+    pol_care_reporting: "All faults must be logged in the School Assets Management system via the Report Fault button on the relevant asset's page. This creates an auditable record and enables the maintenance team to respond promptly.",
+
+    // Loan & Transfer
+    pol_loan_title: "Asset Loan & Transfer Policy",
+    pol_loan_purpose_h: "Purpose",
+    pol_loan_purpose: "This policy governs the borrowing and transfer of school assets between staff members and locations, ensuring proper accountability and traceability at all times.",
+    pol_loan_eligibility_h: "Eligibility",
+    pol_loan_eligibility: "All permanent and contract staff are eligible to request asset loans or transfers.||Requests must be made through the School Assets Management system.||Assets may only be used for school-related purposes.||Staff may only request actions on assets within their assigned campus.",
+    pol_loan_process_h: "Request Process",
+    pol_loan_process: "Open the asset in the system and click Request Loan or Transfer.||Provide a clear purpose and specify dates where applicable.||The request will be reviewed and actioned by the school administrator.||You will be notified of the outcome through the system.||Approved loans must be returned by the agreed end date.",
+    pol_loan_return_h: "Return & Accountability",
+    pol_loan_return: "Assets must be returned in the same condition as received. Late returns must be communicated to the administrator in advance. Failure to return an asset may result in disciplinary action and financial liability.",
+
+    // Data & Privacy
+    pol_privacy_title: "Data Protection & Privacy Policy",
+    pol_privacy_purpose_h: "Purpose",
+    pol_privacy_purpose: "YPJ is committed to protecting the personal data of staff, students, and parents. This policy outlines how data within the School Assets Management system is collected, stored, and used.",
+    pol_privacy_principles_h: "Key Principles",
+    pol_privacy_principles: "Data is collected for legitimate school management purposes only.||Access to the system is restricted to authorised staff with valid credentials.||Staff must not share login credentials or access the accounts of others.||System data must not be exported, shared, or distributed outside official school channels.||YPJ reserves the right to monitor system activity for security and compliance purposes.",
+    pol_privacy_access_h: "Access Control",
+    pol_privacy_access: "Admin users have full access to all records. Staff users may only view and act on assets within their assigned campus. All system actions are logged for audit purposes.",
+    pol_privacy_breach_h: "Data Breach",
+    pol_privacy_breach: "Any suspected data breach, unauthorised access, or security incident must be reported immediately to the school administrator and the ICT department. Do not attempt to investigate or resolve a breach independently.",
+
+    // Inventory Management
+    pol_inv_title: "Inventory Management Policy",
+    pol_inv_purpose_h: "Purpose",
+    pol_inv_purpose: "This policy ensures the School Assets Management system remains an accurate, up-to-date record of all YPJ assets, supporting sound financial management and accountability.",
+    pol_inv_register_h: "Asset Registration Requirements",
+    pol_inv_register: "All new assets must be registered in the system before being put into service.||Each asset must have a unique asset tag, category, campus, and assigned owner or location.||Financial information (purchase price, date, useful life) must be recorded accurately to support depreciation calculations.||Photos and supporting documents (invoices, warranties) should be attached where available.",
+    pol_inv_audit_h: "Periodic Audits",
+    pol_inv_audit: "The school administration will conduct a physical asset audit at least once per academic year. Staff are required to cooperate fully, confirm the location and condition of assets assigned to them, and report any discrepancies immediately.",
+    pol_inv_disposal_h: "Disposal & Retirement",
+    pol_inv_disposal: "Assets that are no longer serviceable must be updated to Retired status in the system by an admin user. Physical disposal must follow YPJ and PTFI asset disposal procedures and must not be undertaken without written approval from the school principal.",
   },
 
   ID: {
@@ -453,6 +526,7 @@ export const translations = {
     nav_reports: "Laporan",
     nav_activity: "Log Aktivitas",
     nav_help: "Bantuan & Panduan",
+    nav_policies: "Kebijakan & Prosedur",
     brand_subtitle: "Manajemen Aset Sekolah",
     nav_section: "Navigasi",
     lang_label: "Bahasa",
@@ -874,6 +948,78 @@ export const translations = {
     help_s10_tip1: "Tambah — unggah saat Tambah/Edit aset (Bagian 03).",
     help_s10_tip2: "Lihat — foto muncul di header Detail Aset. Dokumen muncul di tab Dokumen.",
     help_s10_tip3: "Unduh — klik ikon unduh di samping dokumen mana saja.",
+
+    // Policies page
+    pol_section: "Tata Kelola",
+    pol_title: "Kebijakan & Prosedur",
+    pol_subtitle: "Kebijakan resmi YPJ yang mengatur perilaku staf, penggunaan aset, dan pengelolaan data.",
+    pol_toc: "Daftar isi",
+    pol_effective: "Berlaku",
+    pol_effective_date: "Tahun Ajaran 2024–2025. Ditinjau setiap tahun oleh Administrasi Sekolah YPJ.",
+    pol_questions: "Ada pertanyaan?",
+    pol_questions_body: "Hubungi administrator sekolah atau departemen TIK untuk klarifikasi kebijakan apa pun.",
+
+    pol_tag_ict: "TIK",
+    pol_tag_asset: "Manajemen Aset",
+    pol_tag_data: "Data & Privasi",
+    pol_tag_admin: "Administrasi",
+
+    // RUP
+    pol_rup_title: "Kebijakan Penggunaan yang Bertanggung Jawab (RUP) — Sumber Daya TIK",
+    pol_rup_purpose_h: "Ikhtisar",
+    pol_rup_purpose: "Kebijakan Penggunaan yang Bertanggung Jawab atas sumber daya Teknologi Informasi dan Komunikasi (TIK) diringkas di bawah ini. Silakan gunakan ini sebagai panduan untuk penggunaan sistem TIK dan Internet yang dapat diterima di sekolah dan di luar kampus.",
+    pol_rup_scope_h: "Cakupan Sumber Daya Teknologi YPJ",
+    pol_rup_scope: "Semua sumber daya teknologi YPJ: desktop, laptop, iPad, mesin fotokopi, printer, aplikasi, email, Internet, Intranet, SharePoint, sumber daya jaringan, peralatan audio/visual, dan teknologi terkait milik PTFI & YPJ dan dipinjamkan kepada saya sebagai karyawan.",
+    pol_rup_acceptable_h: "Penggunaan yang Dapat Diterima",
+    pol_rup_acceptable: "Penggunaan teknologi YPJ adalah untuk tujuan pendidikan dan hanya untuk pekerjaan sekolah terkait YPJ.||Penggunaan teknologi YPJ adalah hak istimewa; perawatan peralatan adalah tanggung jawab saya.||Saya akan menjaga sumber daya teknologi YPJ aman setiap saat dan tidak akan meminjamkannya kepada teman atau anggota keluarga.||Saya bertanggung jawab atas pencadangan dan pemulihan data saya yang disimpan pada sumber daya teknologi YPJ.||Semua informasi yang disalin dan digunakan akan dirujuk dengan tepat oleh penulis, sumber, tanggal publikasi, dan/atau tautan situs web.",
+    pol_rup_prohibited_h: "Kegiatan yang Dilarang",
+    pol_rup_prohibited: "Saya tidak akan menginstal perangkat lunak, menghapus program, atau menggunakan metode konfigurasi apa pun untuk mengubah pengaturan asli peralatan.||Saya tidak akan mengambil sumber daya teknologi YPJ dari lokasi kerja (kecuali diberi izin tertulis oleh Supervisor saya).||Sesuai dengan kebijakan FMI MIS, saya tidak akan mengungkapkan kata sandi login saya kepada orang lain.||Melihat atau mendistribusikan materi pornografi, cabul, atau yang menghina orang lain tidak akan ditoleransi.||Semua bentuk intimidasi dunia maya (melecehkan, menggoda, mengintimidasi, mengancam, mengirim/memposting pesan yang tidak pantas melalui email, obrolan, pesan teks, WhatsApp, gambar, atau situs web) tidak dapat diterima.||Hindari penggunaan surat berantai dan hanya mengirim email ke grup besar bila perlu.||Mengunduh dan streaming file besar untuk penggunaan non-instruksional dilarang.||Sumber daya teknologi YPJ tidak dapat digunakan untuk keuntungan pribadi atau kegiatan politik.||Saya tidak akan mengambil gambar, video, atau rekaman audio orang lain tanpa persetujuan mereka.||Saya tidak akan mendistribusikan rekaman gambar, video, atau audio orang lain melalui email, SMS, WhatsApp, media sosial, atau platform lain tanpa persetujuan mereka.",
+    pol_rup_breach_h: "Konsekuensi Penggunaan yang Tidak Pantas",
+    pol_rup_breach: "Pelanggaran terhadap kebijakan ini dapat mengakibatkan hilangnya hak akses internet dan/atau hak penggunaan komputer. Pelanggaran serius dapat menyebabkan penangguhan atau pemberhentian. Saya akan membayar jumlah biaya yang sesuai (hingga biaya penggantian penuh) jika laptop atau iPad yang dipinjamkan perlu diperbaiki atau diganti karena kelalaian, kehilangan, pencurian, atau kecelakaan.",
+
+    // Asset Care
+    pol_care_title: "Kebijakan Perawatan & Pemeliharaan Aset",
+    pol_care_purpose_h: "Tujuan",
+    pol_care_purpose: "Kebijakan ini memastikan semua aset sekolah dirawat dengan baik, dijaga dalam kondisi prima, dan setiap masalah dilaporkan segera untuk mempertahankan nilai inventaris YPJ.",
+    pol_care_obligations_h: "Kewajiban Staf",
+    pol_care_obligations: "Tangani semua aset yang diberikan dengan perawatan yang wajar sesuai panduan produsen.||Simpan aset dengan aman saat tidak digunakan dan lindungi dari kerusakan, pencurian, atau kehilangan.||Laporkan kerusakan, malfungsi, atau penurunan kondisi segera melalui halaman Kerusakan di sistem ini.||Jangan mencoba perbaikan atau modifikasi tanpa izin pada aset sekolah mana pun.||Kembalikan aset ke lokasi yang benar setelah digunakan.",
+    pol_care_damage_h: "Kerusakan & Kehilangan",
+    pol_care_damage: "Kerusakan yang tidak disengaja harus dilaporkan dalam 24 jam. Kerusakan akibat kelalaian atau penyalahgunaan dapat mengakibatkan staf bertanggung jawab secara finansial atas biaya perbaikan atau penggantian.",
+    pol_care_reporting_h: "Pelaporan",
+    pol_care_reporting: "Semua kerusakan harus dicatat dalam sistem melalui tombol Laporkan Kerusakan pada halaman aset yang bersangkutan. Ini membuat catatan yang dapat diaudit dan memungkinkan tim pemeliharaan merespons dengan cepat.",
+
+    // Loan & Transfer
+    pol_loan_title: "Kebijakan Peminjaman & Alih Kepemilikan Aset",
+    pol_loan_purpose_h: "Tujuan",
+    pol_loan_purpose: "Kebijakan ini mengatur peminjaman dan transfer aset sekolah antar staf dan lokasi, memastikan akuntabilitas dan keterlacakan yang tepat setiap saat.",
+    pol_loan_eligibility_h: "Kelayakan",
+    pol_loan_eligibility: "Semua staf tetap dan kontrak berhak mengajukan peminjaman atau transfer aset.||Permintaan harus dilakukan melalui sistem Manajemen Aset Sekolah.||Aset hanya boleh digunakan untuk keperluan sekolah.||Staf hanya dapat mengajukan tindakan pada aset di kampus yang ditugaskan kepada mereka.",
+    pol_loan_process_h: "Proses Pengajuan",
+    pol_loan_process: "Buka aset di sistem dan klik Minta Peminjaman atau Alihkan.||Berikan tujuan yang jelas dan tentukan tanggal jika berlaku.||Permintaan akan ditinjau dan ditindaklanjuti oleh administrator sekolah.||Anda akan diberitahu tentang hasilnya melalui sistem.||Peminjaman yang disetujui harus dikembalikan sesuai tanggal yang disepakati.",
+    pol_loan_return_h: "Pengembalian & Akuntabilitas",
+    pol_loan_return: "Aset harus dikembalikan dalam kondisi yang sama seperti saat diterima. Keterlambatan pengembalian harus dikomunikasikan kepada administrator terlebih dahulu. Kegagalan mengembalikan aset dapat mengakibatkan tindakan disipliner dan tanggung jawab finansial.",
+
+    // Data & Privacy
+    pol_privacy_title: "Kebijakan Perlindungan Data & Privasi",
+    pol_privacy_purpose_h: "Tujuan",
+    pol_privacy_purpose: "YPJ berkomitmen untuk melindungi data pribadi staf, siswa, dan orang tua. Kebijakan ini menguraikan bagaimana data dalam sistem Manajemen Aset Sekolah dikumpulkan, disimpan, dan digunakan.",
+    pol_privacy_principles_h: "Prinsip Utama",
+    pol_privacy_principles: "Data dikumpulkan hanya untuk keperluan manajemen sekolah yang sah.||Akses ke sistem dibatasi untuk staf yang berwenang dengan kredensial yang valid.||Staf tidak boleh berbagi kredensial login atau mengakses akun orang lain.||Data sistem tidak boleh diekspor, dibagikan, atau didistribusikan di luar saluran resmi sekolah.||YPJ berhak untuk memantau aktivitas sistem untuk tujuan keamanan dan kepatuhan.",
+    pol_privacy_access_h: "Kontrol Akses",
+    pol_privacy_access: "Pengguna Admin memiliki akses penuh ke semua catatan. Pengguna Staf hanya dapat melihat dan bertindak pada aset di kampus yang ditugaskan. Semua tindakan sistem dicatat untuk tujuan audit.",
+    pol_privacy_breach_h: "Pelanggaran Data",
+    pol_privacy_breach: "Dugaan pelanggaran data, akses tidak sah, atau insiden keamanan apa pun harus segera dilaporkan kepada administrator sekolah dan departemen TIK. Jangan mencoba menyelidiki atau menyelesaikan pelanggaran secara mandiri.",
+
+    // Inventory Management
+    pol_inv_title: "Kebijakan Manajemen Inventaris",
+    pol_inv_purpose_h: "Tujuan",
+    pol_inv_purpose: "Kebijakan ini memastikan sistem Manajemen Aset Sekolah tetap menjadi catatan yang akurat dan terkini dari semua aset YPJ, mendukung manajemen keuangan dan akuntabilitas yang baik.",
+    pol_inv_register_h: "Persyaratan Pendaftaran Aset",
+    pol_inv_register: "Semua aset baru harus didaftarkan dalam sistem sebelum digunakan.||Setiap aset harus memiliki tag aset, kategori, kampus, dan pemilik atau lokasi yang unik.||Informasi keuangan (harga beli, tanggal, masa manfaat) harus dicatat dengan akurat.||Foto dan dokumen pendukung (faktur, garansi) harus dilampirkan jika tersedia.",
+    pol_inv_audit_h: "Audit Berkala",
+    pol_inv_audit: "Administrasi sekolah akan melakukan audit aset fisik setidaknya sekali per tahun ajaran. Staf wajib bekerja sama sepenuhnya, mengkonfirmasi lokasi dan kondisi aset yang ditugaskan kepada mereka, dan segera melaporkan perbedaan apa pun.",
+    pol_inv_disposal_h: "Pelepasan & Pensiun Aset",
+    pol_inv_disposal: "Aset yang tidak dapat lagi digunakan harus diperbarui ke status Pensiun dalam sistem oleh admin. Pelepasan fisik harus mengikuti prosedur pelepasan aset YPJ dan PTFI dan tidak boleh dilakukan tanpa persetujuan tertulis dari kepala sekolah.",
   },
 };
 

@@ -15,6 +15,7 @@ import UsersPage from "./pages/UsersPage";
 import ReportsPage from "./pages/ReportsPage";
 import ActivityLogsPage from "./pages/ActivityLogsPage";
 import HelpPage from "./pages/HelpPage";
+import PoliciesPage from "./pages/PoliciesPage";
 import TransferRequestsPage from "./pages/TransferRequestsPage";
 import LoanRequestsPage from "./pages/LoanRequestsPage";
 import { Toaster } from "./components/ui/sonner";
@@ -70,6 +71,9 @@ function App() {
             }/>
             <Route path="/help" element={
               <ProtectedRoute><Layout><HelpPage /></Layout></ProtectedRoute>
+            }/>
+            <Route path="/policies" element={
+              <ProtectedRoute><Layout><PoliciesPage /></Layout></ProtectedRoute>
             }/>
           </Routes>
         </BrowserRouter>
