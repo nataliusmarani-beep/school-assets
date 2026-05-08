@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import api, { fmtDate, formatErr } from "../lib/api";
 import { useLang } from "../context/LangContext";
+import { useAuth } from "../context/AuthContext";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "../components/ui/select";
@@ -25,6 +26,8 @@ const SEVERITY_BADGE = {
 
 export default function FaultsPage() {
   const { t } = useLang();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const [faults, setFaults] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all");
@@ -126,20 +129,22 @@ export default function FaultsPage() {
                     </div>
                   )}
                 </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  {f.status === "open" && (
-                    <Button size="sm" variant="outline" className="rounded-none"
-                      onClick={() => updateStatus(f, "in_progress")} data-testid={`fault-progress-${f.id}`}>
-                      {t("mark_in_progress")}
-                    </Button>
-                  )}
-                  {f.status !== "resolved" && (
-                    <Button size="sm" className="rounded-none bg-blue-800 hover:bg-blue-900"
-                      onClick={() => { setResolveTarget(f); setResolveOpen(true); }} data-testid={`fault-resolve-${f.id}`}>
-                      {t("resolve")}
-                    </Button>
-                  )}
-                </div>
+                {isAdmin && (
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {f.status === "open" && (
+                      <Button size="sm" variant="outline" className="rounded-none"
+                        onClick={() => updateStatus(f, "in_progress")} data-testid={`fault-progress-${f.id}`}>
+                        {t("mark_in_progress")}
+                      </Button>
+                    )}
+                    {f.status !== "resolved" && (
+                      <Button size="sm" className="rounded-none bg-blue-800 hover:bg-blue-900"
+                        onClick={() => { setResolveTarget(f); setResolveOpen(true); }} data-testid={`fault-resolve-${f.id}`}>
+                        {t("resolve")}
+                      </Button>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           ))}

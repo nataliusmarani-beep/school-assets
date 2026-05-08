@@ -28,7 +28,7 @@ const NAV_LINKS = [
   { to: "/transfer-requests", labelKey: "nav_transfer_requests", icon: ArrowRightLeft, testid: "nav-transfers", badge: "pendingTransfers" },
   { to: "/loan-requests", labelKey: "nav_loan_requests", icon: BookOpen, testid: "nav-loans", badge: "pendingLoans" },
   { to: "/users", labelKey: "nav_users", icon: Users, testid: "nav-users", adminOnly: true },
-  { to: "/reports", labelKey: "nav_reports", icon: BarChart3, testid: "nav-reports" },
+  { to: "/reports", labelKey: "nav_reports", icon: BarChart3, testid: "nav-reports", adminOnly: true },
   { to: "/activity-logs", labelKey: "nav_activity", icon: History, testid: "nav-activity", adminOnly: true },
   { to: "/help", labelKey: "nav_help", icon: HelpCircle, testid: "nav-help" },
 ];

@@ -7,7 +7,7 @@ import { Button } from "../components/ui/button";
 import { Textarea } from "../components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { toast } from "sonner";
-import { ArrowRightLeft, CheckCircle2, XCircle, Clock } from "lucide-react";
+import { ArrowRightLeft, CheckCircle2, XCircle, Clock, Plus } from "lucide-react";
 
 const STATUS_META = {
   pending:  { bg: "bg-amber-50 text-amber-700 border-amber-200" },
@@ -140,9 +140,15 @@ export default function TransferRequestsPage() {
     return (
       <div className="p-6 lg:p-10 max-w-[800px] mx-auto">
         <div className="label-mono mb-2">{t("assets")}</div>
-        <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight text-slate-900 mb-1">
-          {t("tr_my_requests")}
-        </h1>
+        <div className="flex items-start justify-between gap-4 mb-1 flex-wrap">
+          <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight text-slate-900">
+            {t("tr_my_requests")}
+          </h1>
+          <Link to="/assets"
+            className="inline-flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-sm px-4 py-2.5 flex-shrink-0">
+            <Plus className="w-4 h-4" strokeWidth={1.75} /> {t("request_transfer")}
+          </Link>
+        </div>
         <p className="text-sm text-slate-500 mb-6">{t("tr_my_subtitle")}</p>
 
         <div className="space-y-3">

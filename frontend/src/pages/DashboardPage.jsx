@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import api, { fmtCurrency, fmtDate } from "../lib/api";
 import { useLang } from "../context/LangContext";
+import { useAuth } from "../context/AuthContext";
 import {
   Boxes, CircleDollarSign, TrendingDown, Wrench,
   ShieldAlert, CalendarClock, ArrowUpRight,
@@ -26,6 +27,8 @@ function MetricCard({ label, value, hint, icon: Icon, testid }) {
 
 export default function DashboardPage() {
   const { t } = useLang();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -47,10 +50,12 @@ export default function DashboardPage() {
             {t("asset_dashboard")}
           </h1>
         </div>
-        <Link to="/assets/new" data-testid="dashboard-add-asset"
-          className="hidden md:inline-flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-sm px-4 py-2">
-          {t("add_asset")} <ArrowUpRight className="w-4 h-4" strokeWidth={1.75} />
-        </Link>
+        {isAdmin && (
+          <Link to="/assets/new" data-testid="dashboard-add-asset"
+            className="hidden md:inline-flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-sm px-4 py-2">
+            {t("add_asset")} <ArrowUpRight className="w-4 h-4" strokeWidth={1.75} />
+          </Link>
+        )}
       </div>
 
       {/* KPI Row */}
