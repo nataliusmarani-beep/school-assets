@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
 import api, { fmtDate, formatErr } from "../lib/api";
 import { useLang } from "../context/LangContext";
+import { useAuth } from "../context/AuthContext";
 import { Button } from "../components/ui/button";
 import { Textarea } from "../components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
@@ -16,6 +17,8 @@ const STATUS_META = {
 
 export default function TransferRequestsPage() {
   const { t } = useLang();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("pending");
@@ -143,7 +146,7 @@ export default function TransferRequestsPage() {
                 </div>
 
                 {/* Actions */}
-                {req.status === "pending" && (
+                {req.status === "pending" && isAdmin && (
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <Button size="sm" variant="outline"
                       className="rounded-none border-rose-300 text-rose-600 hover:bg-rose-50"

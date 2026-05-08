@@ -63,10 +63,10 @@ function App() {
               <ProtectedRoute adminOnly><Layout><ActivityLogsPage /></Layout></ProtectedRoute>
             }/>
             <Route path="/transfer-requests" element={
-              <ProtectedRoute adminOnly><Layout><TransferRequestsPage /></Layout></ProtectedRoute>
+              <ProtectedRoute><Layout><TransferRequestsPage /></Layout></ProtectedRoute>
             }/>
             <Route path="/loan-requests" element={
-              <ProtectedRoute adminOnly><Layout><LoanRequestsPage /></Layout></ProtectedRoute>
+              <ProtectedRoute><Layout><LoanRequestsPage /></Layout></ProtectedRoute>
             }/>
             <Route path="/help" element={
               <ProtectedRoute><Layout><HelpPage /></Layout></ProtectedRoute>

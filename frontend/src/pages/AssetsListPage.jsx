@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import api, { fmtCurrency, fmtDate } from "../lib/api";
 import { useLang } from "../context/LangContext";
+import { useAuth } from "../context/AuthContext";
 import { CATEGORY_VALUES, CATEGORY_KEYS, STATUS_KEYS } from "../i18n";
 import { Input } from "../components/ui/input";
 import {
@@ -29,6 +30,8 @@ const STATUS_CLS = {
 
 export default function AssetsListPage() {
   const { t } = useLang();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const [assets, setAssets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -64,13 +67,15 @@ export default function AssetsListPage() {
             {t("assets")}
           </h1>
         </div>
-        <Link
-          to="/assets/new"
-          data-testid="add-asset-button"
-          className="inline-flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-sm px-4 py-2.5"
-        >
-          <Plus className="w-4 h-4" strokeWidth={1.75} /> {t("add_asset")}
-        </Link>
+        {isAdmin && (
+          <Link
+            to="/assets/new"
+            data-testid="add-asset-button"
+            className="inline-flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-sm px-4 py-2.5"
+          >
+            <Plus className="w-4 h-4" strokeWidth={1.75} /> {t("add_asset")}
+          </Link>
+        )}
       </div>
 
       {/* Filters */}
