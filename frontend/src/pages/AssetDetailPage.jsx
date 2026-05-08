@@ -98,9 +98,11 @@ export default function AssetDetailPage() {
     setTransferTo(val);
     if (val.trim().length === 0) { setUserResults([]); setShowUserDropdown(false); return; }
     const q = val.toLowerCase();
-    const matches = allUsers.filter((u) =>
-      u.name.toLowerCase().includes(q) || (u.department || "").toLowerCase().includes(q)
-    );
+    const campusFilter = !isAdmin && user?.campus ? user.campus : null;
+    const matches = allUsers.filter((u) => {
+      if (campusFilter && u.campus !== campusFilter) return false;
+      return u.name.toLowerCase().includes(q) || (u.department || "").toLowerCase().includes(q);
+    });
     setUserResults(matches);
     setShowUserDropdown(matches.length > 0);
   };
