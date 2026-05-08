@@ -74,6 +74,8 @@ export default function AssetDetailPage() {
   };
 
   const isAdmin = user?.role === "admin";
+  // Staff can only act on assets in their own campus
+  const canActOnAsset = isAdmin || !asset || !user?.campus || !asset.campus || user.campus === asset.campus;
 
   // Load users when transfer dialog opens
   useEffect(() => {
@@ -182,7 +184,7 @@ export default function AssetDetailPage() {
           <div className="text-sm text-slate-500 mt-2">{asset.description}</div>
         </div>
         <div className="flex items-center gap-2">
-          <Dialog open={faultOpen} onOpenChange={setFaultOpen}>
+          {canActOnAsset && <Dialog open={faultOpen} onOpenChange={setFaultOpen}>
             <DialogTrigger asChild>
               <Button variant="outline" className="rounded-none" data-testid="report-fault-button">
                 <Wrench className="w-4 h-4 mr-2" strokeWidth={1.75}/> {t("report_fault")}
@@ -213,9 +215,9 @@ export default function AssetDetailPage() {
                 </Button>
               </DialogFooter>
             </DialogContent>
-          </Dialog>
+          </Dialog>}
 
-          <Dialog open={transferOpen} onOpenChange={setTransferOpen}>
+          {canActOnAsset && <Dialog open={transferOpen} onOpenChange={setTransferOpen}>
             <DialogTrigger asChild>
               <Button variant="outline" className="rounded-none" data-testid="transfer-button">
                 <ArrowRightLeft className="w-4 h-4 mr-2" strokeWidth={1.75}/> {t("transfer")}
@@ -296,9 +298,9 @@ export default function AssetDetailPage() {
                 </Button>
               </DialogFooter>
             </DialogContent>
-          </Dialog>
+          </Dialog>}
 
-          <Dialog open={loanOpen} onOpenChange={setLoanOpen}>
+          {canActOnAsset && <Dialog open={loanOpen} onOpenChange={setLoanOpen}>
             <DialogTrigger asChild>
               <Button variant="outline" className="rounded-none" data-testid="loan-request-button">
                 <BookOpen className="w-4 h-4 mr-2" strokeWidth={1.75}/> {t("loan_request")}
@@ -338,7 +340,7 @@ export default function AssetDetailPage() {
                 </Button>
               </DialogFooter>
             </DialogContent>
-          </Dialog>
+          </Dialog>}
 
           {user?.role === "admin" && (
             <Link to={`/assets/${id}/edit`}>

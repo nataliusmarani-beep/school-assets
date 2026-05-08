@@ -413,6 +413,7 @@ async def login(body: LoginIn, response: Response):
     return {
         "id": user["id"], "email": user["email"], "name": user["name"],
         "role": user["role"], "department": user.get("department"),
+        "campus": user.get("campus"),
         "token": token,
     }
 
