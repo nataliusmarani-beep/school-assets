@@ -240,12 +240,12 @@ export default function UsersPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200">
+                <th className="text-left label-mono py-3 px-4">{t("col_employee_id")}</th>
                 <th className="text-left label-mono py-3 px-4">{t("col_name")}</th>
                 <th className="text-left label-mono py-3 px-4">{t("email")}</th>
                 <th className="text-left label-mono py-3 px-4">{t("role")}</th>
                 <th className="text-left label-mono py-3 px-4">{t("department")}</th>
                 <th className="text-left label-mono py-3 px-4">{t("col_campus")}</th>
-                <th className="text-left label-mono py-3 px-4">{t("supervisor_email")}</th>
                 <th className="text-left label-mono py-3 px-4">{t("col_joined")}</th>
                 <th className="text-right label-mono py-3 px-4">{t("col_actions")}</th>
               </tr>
@@ -255,6 +255,7 @@ export default function UsersPage() {
                 <tr><td colSpan={8} className="text-center text-slate-500 py-12">{t("loading")}</td></tr>
               ) : users.map((u) => (
                 <tr key={u.id} className="border-b border-slate-100 hover:bg-slate-50" data-testid={`user-row-${u.id}`}>
+                  <td className="py-3 px-4 text-slate-600 font-mono text-xs">{u.employee_id || "—"}</td>
                   <td className="py-3 px-4 font-medium text-slate-900">{u.name}</td>
                   <td className="py-3 px-4 text-slate-700">{u.email}</td>
                   <td className="py-3 px-4">
@@ -271,7 +272,6 @@ export default function UsersPage() {
                       </span>
                     ) : "—"}
                   </td>
-                  <td className="py-3 px-4 text-slate-700 text-xs">{u.supervisor || "—"}</td>
                   <td className="py-3 px-4 text-slate-500 text-xs">{fmtDate(u.created_at)}</td>
                   <td className="py-3 px-4 text-right">
                     <div className="flex items-center justify-end gap-2">
