@@ -28,6 +28,12 @@ export default function AssetDetailPage() {
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferTo, setTransferTo] = useState("");
   const [transferNote, setTransferNote] = useState("");
+  const [transferCampus, setTransferCampus] = useState("");
+  const [transferRoom, setTransferRoom] = useState("");
+  const [userSearch, setUserSearch] = useState("");
+  const [userResults, setUserResults] = useState([]);
+  const [allUsers, setAllUsers] = useState([]);
+  const [showUserDropdown, setShowUserDropdown] = useState(false);
 
   const [faultOpen, setFaultOpen] = useState(false);
   const [faultTitle, setFaultTitle] = useState("");
@@ -64,18 +70,59 @@ export default function AssetDetailPage() {
 
   const isAdmin = user?.role === "admin";
 
+  // Load users when transfer dialog opens
+  useEffect(() => {
+    if (!transferOpen) return;
+    api.get("/users").then((r) => setAllUsers(r.data)).catch(() => {});
+  }, [transferOpen]);
+
+  const handleUserSearch = (val) => {
+    setUserSearch(val);
+    setTransferTo(val);
+    if (val.trim().length === 0) { setUserResults([]); setShowUserDropdown(false); return; }
+    const q = val.toLowerCase();
+    const matches = allUsers.filter((u) =>
+      u.name.toLowerCase().includes(q) || (u.department || "").toLowerCase().includes(q)
+    );
+    setUserResults(matches);
+    setShowUserDropdown(matches.length > 0);
+  };
+
+  const selectUser = (u) => {
+    setTransferTo(u.name);
+    setUserSearch(u.name);
+    if (u.campus) setTransferCampus(u.campus);
+    setUserResults([]);
+    setShowUserDropdown(false);
+  };
+
+  const buildOwnerLabel = () => {
+    const parts = [transferTo.trim()];
+    if (transferRoom.trim()) parts.push(transferRoom.trim());
+    if (transferCampus) parts.push(transferCampus);
+    return parts.join(" — ");
+  };
+
+  const resetTransferForm = () => {
+    setTransferTo(""); setTransferNote(""); setTransferCampus("");
+    setTransferRoom(""); setUserSearch(""); setUserResults([]);
+    setShowUserDropdown(false);
+  };
+
   const submitTransfer = async () => {
+    const ownerLabel = buildOwnerLabel();
+    if (!ownerLabel.trim()) return toast.error(t("transfer_owner_required"));
     try {
       if (isAdmin) {
-        await api.post(`/assets/${id}/transfer`, { new_owner_name: transferTo, note: transferNote });
+        await api.post(`/assets/${id}/transfer`, { new_owner_name: ownerLabel, note: transferNote });
         toast.success(t("asset_transferred"));
       } else {
-        await api.post(`/transfer-requests`, { new_owner_name: transferTo, note: transferNote }, {
+        await api.post(`/transfer-requests`, { new_owner_name: ownerLabel, note: transferNote }, {
           params: { asset_id: id },
         });
         toast.success(t("transfer_request_submitted"));
       }
-      setTransferOpen(false); setTransferTo(""); setTransferNote("");
+      setTransferOpen(false); resetTransferForm();
       load();
     } catch (e) { toast.error(formatErr(e)); }
   };
@@ -169,13 +216,66 @@ export default function AssetDetailPage() {
                 <p className="text-sm text-slate-500">{t("transfer_request_hint")}</p>
               )}
               <div className="space-y-4">
-                <div><Label className="label-mono">{t("new_owner_label")}</Label>
-                  <Input value={transferTo} onChange={(e)=>setTransferTo(e.target.value)}
+                {/* Searchable user picker */}
+                <div className="relative">
+                  <Label className="label-mono">{t("new_owner_label")}</Label>
+                  <Input
+                    value={userSearch}
+                    onChange={(e) => handleUserSearch(e.target.value)}
                     placeholder={t("new_owner_placeholder")}
-                    className="mt-2 rounded-none" data-testid="transfer-to-input"/></div>
-                <div><Label className="label-mono">{t("note")}</Label>
+                    className="mt-2 rounded-none"
+                    data-testid="transfer-to-input"
+                    autoComplete="off"
+                  />
+                  {showUserDropdown && (
+                    <div className="absolute z-50 left-0 right-0 bg-white border border-slate-200 shadow-md mt-1 max-h-48 overflow-y-auto">
+                      {userResults.map((u) => (
+                        <button
+                          key={u.id}
+                          type="button"
+                          className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 border-b border-slate-100 last:border-0"
+                          onMouseDown={(e) => { e.preventDefault(); selectUser(u); }}
+                        >
+                          <div className="font-medium text-slate-900">{u.name}</div>
+                          <div className="text-xs text-slate-500">{[u.department, u.campus].filter(Boolean).join(" · ")}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Campus select */}
+                <div>
+                  <Label className="label-mono">{t("campus")}</Label>
+                  <Select value={transferCampus} onValueChange={setTransferCampus}>
+                    <SelectTrigger className="mt-2 rounded-none">
+                      <SelectValue placeholder={t("select_campus")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="YPJ Kuala Kencana">YPJ Kuala Kencana</SelectItem>
+                      <SelectItem value="YPJ Tembagapura">YPJ Tembagapura</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Room number */}
+                <div>
+                  <Label className="label-mono">{t("col_room")}</Label>
+                  <Input
+                    value={transferRoom}
+                    onChange={(e) => setTransferRoom(e.target.value)}
+                    placeholder={t("room_placeholder")}
+                    className="mt-2 rounded-none"
+                    data-testid="transfer-room-input"
+                  />
+                </div>
+
+                {/* Note */}
+                <div>
+                  <Label className="label-mono">{t("note")}</Label>
                   <Textarea value={transferNote} onChange={(e)=>setTransferNote(e.target.value)}
-                    rows={2} className="mt-2 rounded-none" data-testid="transfer-note-input"/></div>
+                    rows={2} className="mt-2 rounded-none" data-testid="transfer-note-input"/>
+                </div>
               </div>
               <DialogFooter>
                 <Button onClick={submitTransfer} className="rounded-none bg-slate-900" data-testid="submit-transfer-button">
