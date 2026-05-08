@@ -18,7 +18,7 @@ export default function UsersPage() {
   const [open, setOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
-  const [editForm, setEditForm] = useState({ name: "", email: "", role: "staff", department: "", campus: "", supervisor: "", password: "" });
+  const [editForm, setEditForm] = useState({ name: "", email: "", role: "staff", department: "", campus: "", supervisor: "", employee_id: "", password: "" });
   const [form, setForm] = useState({ name: "", email: "", password: "", role: "staff", department: "", campus: "", supervisor: "" });
 
   const load = () => {
@@ -40,7 +40,7 @@ export default function UsersPage() {
 
   const openEdit = (u) => {
     setEditTarget(u);
-    setEditForm({ name: u.name, email: u.email, role: u.role, department: u.department || "", campus: u.campus || "", supervisor: u.supervisor || "", password: "" });
+    setEditForm({ name: u.name, email: u.email, role: u.role, department: u.department || "", campus: u.campus || "", supervisor: u.supervisor || "", employee_id: u.employee_id || "", password: "" });
     setEditOpen(true);
   };
 
@@ -220,6 +220,9 @@ export default function UsersPage() {
             <div><Label className="label-mono">{t("col_supervisor")}</Label>
               <Input type="email" value={editForm.supervisor} onChange={(e)=>setEditForm({...editForm,supervisor:e.target.value})}
                 placeholder={t("supervisor_placeholder")} className="mt-2 rounded-none"/></div>
+            <div><Label className="label-mono">{t("col_employee_id")}</Label>
+              <Input value={editForm.employee_id} onChange={(e)=>setEditForm({...editForm,employee_id:e.target.value})}
+                placeholder="e.g. 0000910439" className="mt-2 rounded-none font-mono"/></div>
             <div><Label className="label-mono">{t("new_password_optional")}</Label>
               <Input type="password" minLength={6} value={editForm.password} onChange={(e)=>setEditForm({...editForm,password:e.target.value})}
                 placeholder={t("leave_blank_unchanged")} className="mt-2 rounded-none"/></div>
