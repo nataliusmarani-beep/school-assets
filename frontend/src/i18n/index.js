@@ -37,8 +37,8 @@ export const translations = {
     create_staff: "Create staff account",
     footer_copy: "YPJ School Assets Management",
     login_hero_label: "Built for schools",
-    login_hero_quote: '"We replaced four spreadsheets and a clipboard. Inventory now closes in hours, not weeks."',
-    login_hero_attr: "Operations Director — Westwood Preparatory",
+    login_hero_quote: "An Innovative and Progressive School with Empathy, Integrity and Open Minded",
+    login_hero_attr: "YPJ School",
 
     // Assets list
     inventory: "Inventory",
@@ -441,8 +441,8 @@ export const translations = {
     create_staff: "Buat akun staf",
     footer_copy: "Manajemen Aset Sekolah YPJ",
     login_hero_label: "Dibuat untuk sekolah",
-    login_hero_quote: '"Kami mengganti empat spreadsheet dan sebuah clipboard. Inventaris kini selesai dalam hitungan jam, bukan minggu."',
-    login_hero_attr: "Direktur Operasional — Westwood Preparatory",
+    login_hero_quote: "Sekolah yang Inovatif dan Progresif dengan Empati, Integritas, dan Pikiran Terbuka",
+    login_hero_attr: "YPJ School",
 
     // Assets list
     inventory: "Inventaris",

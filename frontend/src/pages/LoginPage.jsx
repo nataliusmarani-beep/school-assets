@@ -113,8 +113,8 @@ export default function LoginPage() {
       {/* Right: Hero */}
       <div className="hidden lg:block relative overflow-hidden">
         <img
-          src="https://images.unsplash.com/photo-1759299615947-bc798076b479?crop=entropy&cs=srgb&fm=jpg&q=85"
-          alt="School campus"
+          src={require("../ypj-hero.jpg")}
+          alt="YPJ School"
           className="absolute inset-0 w-full h-full object-cover"
         />
         <div className="absolute inset-0 bg-slate-900/60" />
