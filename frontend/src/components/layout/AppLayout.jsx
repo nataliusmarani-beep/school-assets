@@ -13,8 +13,9 @@ import {
   History,
   HelpCircle,
   DatabaseBackup,
+  ArrowRightLeft,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import api from "../../lib/api";
 import { toast } from "sonner";
 
@@ -23,6 +24,7 @@ const NAV_LINKS = [
   { to: "/assets", labelKey: "nav_assets", icon: Boxes, testid: "nav-assets" },
   { to: "/faults", labelKey: "nav_faults", icon: Wrench, testid: "nav-faults" },
   { to: "/compliance", labelKey: "nav_compliance", icon: ShieldCheck, testid: "nav-compliance" },
+  { to: "/transfer-requests", labelKey: "nav_transfer_requests", icon: ArrowRightLeft, testid: "nav-transfers", adminOnly: true, badge: "pendingTransfers" },
   { to: "/users", labelKey: "nav_users", icon: Users, testid: "nav-users", adminOnly: true },
   { to: "/reports", labelKey: "nav_reports", icon: BarChart3, testid: "nav-reports" },
   { to: "/activity-logs", labelKey: "nav_activity", icon: History, testid: "nav-activity", adminOnly: true },
@@ -35,6 +37,15 @@ export default function AppLayout({ children }) {
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [backing, setBacking] = useState(false);
+  const [pendingTransfers, setPendingTransfers] = useState(0);
+
+  useEffect(() => {
+    if (user?.role !== "admin") return;
+    const fetch = () => api.get("/transfer-requests/pending-count").then((r) => setPendingTransfers(r.data.count)).catch(() => {});
+    fetch();
+    const interval = setInterval(fetch, 60000);
+    return () => clearInterval(interval);
+  }, [user]);
 
   const visibleLinks = NAV_LINKS.filter((l) => !l.adminOnly || user?.role === "admin");
 
@@ -109,7 +120,12 @@ export default function AppLayout({ children }) {
               }
             >
               <l.icon className="w-4 h-4" strokeWidth={1.75} />
-              <span>{t(l.labelKey)}</span>
+              <span className="flex-1">{t(l.labelKey)}</span>
+              {l.badge === "pendingTransfers" && pendingTransfers > 0 && (
+                <span className="text-[10px] font-bold bg-amber-400 text-slate-900 rounded-full w-4 h-4 flex items-center justify-center flex-shrink-0">
+                  {pendingTransfers > 9 ? "9+" : pendingTransfers}
+                </span>
+              )}
             </NavLink>
           ))}
         </div>

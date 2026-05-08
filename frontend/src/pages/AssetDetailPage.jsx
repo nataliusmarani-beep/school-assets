@@ -62,10 +62,19 @@ export default function AssetDetailPage() {
     } catch (e) { toast.error(formatErr(e)); }
   };
 
+  const isAdmin = user?.role === "admin";
+
   const submitTransfer = async () => {
     try {
-      await api.post(`/assets/${id}/transfer`, { new_owner_name: transferTo, note: transferNote });
-      toast.success(t("asset_transferred"));
+      if (isAdmin) {
+        await api.post(`/assets/${id}/transfer`, { new_owner_name: transferTo, note: transferNote });
+        toast.success(t("asset_transferred"));
+      } else {
+        await api.post(`/transfer-requests`, { new_owner_name: transferTo, note: transferNote }, {
+          params: { asset_id: id },
+        });
+        toast.success(t("transfer_request_submitted"));
+      }
       setTransferOpen(false); setTransferTo(""); setTransferNote("");
       load();
     } catch (e) { toast.error(formatErr(e)); }
@@ -153,7 +162,12 @@ export default function AssetDetailPage() {
               </Button>
             </DialogTrigger>
             <DialogContent className="rounded-none">
-              <DialogHeader><DialogTitle>{t("transfer_ownership")}</DialogTitle></DialogHeader>
+              <DialogHeader>
+                <DialogTitle>{isAdmin ? t("transfer_ownership") : t("request_transfer")}</DialogTitle>
+              </DialogHeader>
+              {!isAdmin && (
+                <p className="text-sm text-slate-500">{t("transfer_request_hint")}</p>
+              )}
               <div className="space-y-4">
                 <div><Label className="label-mono">{t("new_owner_label")}</Label>
                   <Input value={transferTo} onChange={(e)=>setTransferTo(e.target.value)}
@@ -165,7 +179,7 @@ export default function AssetDetailPage() {
               </div>
               <DialogFooter>
                 <Button onClick={submitTransfer} className="rounded-none bg-slate-900" data-testid="submit-transfer-button">
-                  {t("confirm_transfer")}
+                  {isAdmin ? t("confirm_transfer") : t("submit_request")}
                 </Button>
               </DialogFooter>
             </DialogContent>

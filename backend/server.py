@@ -137,6 +137,24 @@ def init_db():
         is_deleted INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS transfer_requests (
+        id TEXT PRIMARY KEY,
+        asset_id TEXT NOT NULL,
+        asset_name TEXT NOT NULL,
+        asset_tag TEXT NOT NULL,
+        from_name TEXT,
+        to_name TEXT NOT NULL,
+        note TEXT DEFAULT '',
+        requested_by TEXT NOT NULL,
+        requested_by_name TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        reviewed_by TEXT,
+        reviewed_by_name TEXT,
+        reviewed_at TEXT,
+        reject_reason TEXT,
+        created_at TEXT NOT NULL
+    );
     """)
     conn.commit()
     # Migrations for existing databases
@@ -934,6 +952,104 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
         "compliance_upcoming": upcoming,
         "depreciation_timeline": timeline,
     }
+
+
+# ---- Transfer requests ----
+class TransferRequestIn(BaseModel):
+    new_owner_name: str
+    note: Optional[str] = ""
+
+
+@api.post("/transfer-requests")
+async def create_transfer_request(asset_id: str, body: TransferRequestIn, user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    asset = conn.execute("SELECT id, name, asset_tag, assigned_to_name FROM assets WHERE id = ?", (asset_id,)).fetchone()
+    if not asset:
+        conn.close()
+        raise HTTPException(404, "Asset not found")
+    rid = str(uuid.uuid4())
+    conn.execute("""
+        INSERT INTO transfer_requests
+            (id, asset_id, asset_name, asset_tag, from_name, to_name, note,
+             requested_by, requested_by_name, status, created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,'pending',?)
+    """, (rid, asset_id, asset["name"], asset["asset_tag"], asset["assigned_to_name"],
+          body.new_owner_name, body.note or "", user["id"], user["name"], now_iso()))
+    conn.commit()
+    row = conn.execute("SELECT * FROM transfer_requests WHERE id = ?", (rid,)).fetchone()
+    conn.close()
+    return dict(row)
+
+
+@api.get("/transfer-requests")
+async def list_transfer_requests(user: dict = Depends(get_current_user), status: Optional[str] = None):
+    conn = get_conn()
+    if user["role"] == "admin":
+        base = "SELECT * FROM transfer_requests"
+        rows = conn.execute(base + (" WHERE status = ?" if status else "") + " ORDER BY created_at DESC",
+                            ([status] if status else [])).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM transfer_requests WHERE requested_by = ? ORDER BY created_at DESC", (user["id"],)
+        ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@api.get("/transfer-requests/pending-count")
+async def pending_count(_: dict = Depends(admin_required)):
+    conn = get_conn()
+    n = conn.execute("SELECT COUNT(*) FROM transfer_requests WHERE status = 'pending'").fetchone()[0]
+    conn.close()
+    return {"count": n}
+
+
+@api.put("/transfer-requests/{rid}/approve")
+async def approve_transfer(rid: str, user: dict = Depends(admin_required)):
+    conn = get_conn()
+    req = conn.execute("SELECT * FROM transfer_requests WHERE id = ?", (rid,)).fetchone()
+    if not req:
+        conn.close()
+        raise HTTPException(404, "Request not found")
+    req = dict(req)
+    if req["status"] != "pending":
+        conn.close()
+        raise HTTPException(400, "Request is not pending")
+    ts = now_iso()
+    # Perform the actual ownership transfer
+    log_id = str(uuid.uuid4())
+    conn.execute("""
+        INSERT INTO ownership_logs (id,asset_id,from_name,from_user_id,to_name,to_user_id,note,by,by_name,at)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
+    """, (log_id, req["asset_id"], req["from_name"], None, req["to_name"], None,
+          req["note"], user["id"], user["name"], ts))
+    conn.execute("UPDATE assets SET assigned_to_name=?, updated_at=? WHERE id=?",
+                 (req["to_name"], ts, req["asset_id"]))
+    conn.execute("""
+        UPDATE transfer_requests SET status='approved', reviewed_by=?, reviewed_by_name=?, reviewed_at=? WHERE id=?
+    """, (user["id"], user["name"], ts, rid))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@api.put("/transfer-requests/{rid}/reject")
+async def reject_transfer(rid: str, reason: Optional[str] = None, user: dict = Depends(admin_required)):
+    conn = get_conn()
+    req = conn.execute("SELECT * FROM transfer_requests WHERE id = ?", (rid,)).fetchone()
+    if not req:
+        conn.close()
+        raise HTTPException(404, "Request not found")
+    if dict(req)["status"] != "pending":
+        conn.close()
+        raise HTTPException(400, "Request is not pending")
+    ts = now_iso()
+    conn.execute("""
+        UPDATE transfer_requests SET status='rejected', reviewed_by=?, reviewed_by_name=?, reviewed_at=?, reject_reason=? WHERE id=?
+    """, (user["id"], user["name"], ts, reason or "", rid))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
 
 
 def _xlsx_response(wb, filename: str) -> StreamingResponse:
