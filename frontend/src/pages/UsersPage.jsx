@@ -13,10 +13,42 @@ import { Plus, Trash2, Pencil } from "lucide-react";
 const EMPTY_FORM = { name: "", email: "", password: "", role: "staff", department: "", campus: "", supervisor_name: "", supervisor: "", employee_id: "" };
 const EMPTY_EDIT = { name: "", email: "", role: "staff", department: "", campus: "", supervisor_name: "", supervisor: "", employee_id: "", password: "" };
 
+/* Free-text field with dropdown suggestions from a string list */
+function SuggestField({ value, onChange, suggestions, placeholder, className = "", required = false, testid }) {
+  const [show, setShow] = useState(false);
+  const results = suggestions.filter((s) => s.toLowerCase().includes(value.toLowerCase()) && s !== value).slice(0, 8);
+  return (
+    <div className="relative">
+      <Input
+        required={required}
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => { onChange(e.target.value); setShow(true); }}
+        onFocus={() => setShow(true)}
+        onBlur={() => setTimeout(() => setShow(false), 150)}
+        className={`mt-2 rounded-none ${className}`}
+        autoComplete="off"
+        data-testid={testid}
+      />
+      {show && results.length > 0 && (
+        <div className="absolute z-50 left-0 right-0 bg-white border border-slate-200 shadow-md mt-1 max-h-40 overflow-y-auto">
+          {results.map((s) => (
+            <button key={s} type="button"
+              className="w-full text-left px-3 py-2 text-sm text-slate-900 hover:bg-slate-50 border-b border-slate-100 last:border-0"
+              onMouseDown={(e) => { e.preventDefault(); onChange(s); setShow(false); }}>
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* Supervisor name field — shows users, also fills email on select */
 function SupervisorNameField({ value, onChangeName, onChangeEmail, users }) {
   const [show, setShow] = useState(false);
   const results = value ? users.filter((u) => u.name.toLowerCase().includes(value.toLowerCase())).slice(0, 8) : [];
-
   return (
     <div className="relative">
       <Input
@@ -31,17 +63,9 @@ function SupervisorNameField({ value, onChangeName, onChangeEmail, users }) {
       {show && results.length > 0 && (
         <div className="absolute z-50 left-0 right-0 bg-white border border-slate-200 shadow-md mt-1 max-h-40 overflow-y-auto">
           {results.map((u) => (
-            <button
-              key={u.id}
-              type="button"
+            <button key={u.id} type="button"
               className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 border-b border-slate-100 last:border-0"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                onChangeName(u.name);
-                onChangeEmail(u.email);
-                setShow(false);
-              }}
-            >
+              onMouseDown={(e) => { e.preventDefault(); onChangeName(u.name); onChangeEmail(u.email); setShow(false); }}>
               <div className="font-medium text-slate-900">{u.name}</div>
               <div className="text-xs text-slate-500">{u.email}</div>
             </button>
@@ -112,11 +136,18 @@ export default function UsersPage() {
     catch (e) { toast.error(formatErr(e)); }
   };
 
+  const allNames = users.map((u) => u.name);
+  const allDepts = [...new Set(users.map((u) => u.department).filter(Boolean))];
+
   const FormFields = ({ values, set, isEdit }) => (
     <div className="space-y-4">
       <div><Label className="label-mono">{t("full_name")}</Label>
-        <Input required value={values.name} onChange={(e) => set({ ...values, name: e.target.value })}
-          className="mt-2 rounded-none" data-testid="user-name-input" /></div>
+        <SuggestField required value={values.name} onChange={(v) => set({ ...values, name: v })}
+          suggestions={allNames} testid="user-name-input" /></div>
+
+      <div><Label className="label-mono">{t("col_employee_id")}</Label>
+        <Input value={values.employee_id} onChange={(e) => set({ ...values, employee_id: e.target.value })}
+          placeholder="e.g. 0000910439" className="mt-2 rounded-none font-mono" /></div>
 
       <div><Label className="label-mono">{t("email")}</Label>
         <Input type="email" required placeholder="user@fmi.com" value={values.email}
@@ -140,8 +171,8 @@ export default function UsersPage() {
             </SelectContent>
           </Select></div>
         <div><Label className="label-mono">{t("department")}</Label>
-          <Input value={values.department} onChange={(e) => set({ ...values, department: e.target.value })}
-            className="mt-2 rounded-none" /></div>
+          <SuggestField value={values.department} onChange={(v) => set({ ...values, department: v })}
+            suggestions={allDepts} /></div>
       </div>
 
       <div><Label className="label-mono">{t("col_campus")}</Label>
@@ -165,10 +196,6 @@ export default function UsersPage() {
         <Input type="email" value={values.supervisor}
           onChange={(e) => set({ ...values, supervisor: e.target.value })}
           placeholder="@fmi.com" className="mt-2 rounded-none" /></div>
-
-      <div><Label className="label-mono">{t("col_employee_id")}</Label>
-        <Input value={values.employee_id} onChange={(e) => set({ ...values, employee_id: e.target.value })}
-          placeholder="e.g. 0000910439" className="mt-2 rounded-none font-mono" /></div>
 
       {isEdit && (
         <div><Label className="label-mono">{t("new_password_optional")}</Label>
