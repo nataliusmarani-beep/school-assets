@@ -175,6 +175,9 @@ def init_db():
     if "employee_id" not in user_cols:
         conn.execute("ALTER TABLE users ADD COLUMN employee_id TEXT DEFAULT ''")
         conn.commit()
+    if "supervisor_name" not in user_cols:
+        conn.execute("ALTER TABLE users ADD COLUMN supervisor_name TEXT DEFAULT ''")
+        conn.commit()
     conn.close()
 
 
@@ -250,6 +253,7 @@ class UserCreate(BaseModel):
     department: Optional[str] = None
     campus: Optional[str] = ""
     supervisor: Optional[str] = ""
+    supervisor_name: Optional[str] = ""
     employee_id: Optional[str] = ""
 
 
@@ -367,8 +371,8 @@ async def register(body: UserCreate, response: Response):
         raise HTTPException(400, "Email already registered")
     uid = str(uuid.uuid4())
     conn.execute(
-        "INSERT INTO users (id,email,name,role,department,campus,supervisor,employee_id,password_hash,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-        (uid, email, body.name, body.role, body.department, body.campus or "", body.supervisor or "", body.employee_id or "", hash_password(body.password), now_iso()),
+        "INSERT INTO users (id,email,name,role,department,campus,supervisor,supervisor_name,employee_id,password_hash,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (uid, email, body.name, body.role, body.department, body.campus or "", body.supervisor or "", body.supervisor_name or "", body.employee_id or "", hash_password(body.password), now_iso()),
     )
     conn.commit()
     conn.close()
@@ -410,7 +414,7 @@ async def me(user: dict = Depends(get_current_user)):
 @api.get("/users")
 async def list_users(user: dict = Depends(get_current_user)):
     conn = get_conn()
-    rows = conn.execute("SELECT id,email,name,role,department,campus,supervisor,employee_id,created_at FROM users ORDER BY created_at DESC").fetchall()
+    rows = conn.execute("SELECT id,email,name,role,department,campus,supervisor,supervisor_name,employee_id,created_at FROM users ORDER BY created_at DESC").fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -438,6 +442,7 @@ class UserPatch(BaseModel):
     department: Optional[str] = None
     campus: Optional[str] = None
     supervisor: Optional[str] = None
+    supervisor_name: Optional[str] = None
     employee_id: Optional[str] = None
     password: Optional[str] = None
 
@@ -457,7 +462,7 @@ async def update_user(uid: str, body: UserPatch, _: dict = Depends(admin_require
         conn.close()
         raise HTTPException(404, "User not found")
     conn.commit()
-    row = conn.execute("SELECT id,email,name,role,department,campus,supervisor,employee_id,created_at FROM users WHERE id = ?", (uid,)).fetchone()
+    row = conn.execute("SELECT id,email,name,role,department,campus,supervisor,supervisor_name,employee_id,created_at FROM users WHERE id = ?", (uid,)).fetchone()
     conn.close()
     return dict(row)
 
