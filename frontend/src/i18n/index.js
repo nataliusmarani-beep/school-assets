@@ -23,7 +23,7 @@ export const translations = {
     // Login
     welcome_back: "Welcome back",
     login_tagline: "Manage every asset, from classroom to campus.",
-    login_sub: "One source of truth for inventory, ownership, warranty, faults & compliance — with depreciation tracked automatically.",
+    login_sub: "Centralize every school asset across all campuses — track ownership, maintenance, and compliance from one place.",
     tab_signin: "Sign in",
     tab_register: "Create account",
     email: "Email",
@@ -467,7 +467,7 @@ export const translations = {
     // Login
     welcome_back: "Selamat datang kembali",
     login_tagline: "Kelola setiap aset, dari ruang kelas hingga kampus.",
-    login_sub: "Satu sumber kebenaran untuk inventaris, kepemilikan, garansi, kerusakan & kepatuhan — dengan penyusutan yang terlacak otomatis.",
+    login_sub: "Kelola seluruh aset sekolah di semua kampus — pantau kepemilikan, pemeliharaan, dan kepatuhan dari satu tempat.",
     tab_signin: "Masuk",
     tab_register: "Buat akun",
     email: "Email",
