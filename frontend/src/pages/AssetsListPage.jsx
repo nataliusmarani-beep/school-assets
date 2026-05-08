@@ -145,7 +145,7 @@ export default function AssetsListPage() {
                 <th className="text-left font-medium label-mono py-3 px-4">{t("col_room")}</th>
                 <th className="text-left font-medium label-mono py-3 px-4">{t("col_assigned")}</th>
                 <th className="text-left font-medium label-mono py-3 px-4">{t("col_status")}</th>
-                <th className="text-right font-medium label-mono py-3 px-4">{t("col_book_value")}</th>
+                <th className="text-left font-medium label-mono py-3 px-4">{t("col_asset_property_of")}</th>
               </tr>
             </thead>
             <tbody>
@@ -186,10 +186,7 @@ export default function AssetsListPage() {
                         {t(STATUS_KEYS[a.status] || "status_active")}
                       </span>
                     </td>
-                    <td className="py-3 px-4 text-right font-mono">
-                      {fmtCurrency(a.depreciation?.current_value)}
-                      <div className="text-xs text-slate-400">of {fmtCurrency(a.purchase_price)}</div>
-                    </td>
+                    <td className="py-3 px-4 text-slate-700 text-sm">{a.asset_type || "—"}</td>
                   </tr>
                 );
               })}
