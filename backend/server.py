@@ -445,7 +445,8 @@ def send_return_reminders():
         email = req.get("borrower_email", "")
         if not email:
             continue
-        subject = f"[YPJ Assets] Reminder: Please return "{req['asset_name']}" tomorrow"
+        asset_name = req['asset_name']
+        subject = f'[YPJ Assets] Reminder: Please return "{asset_name}" tomorrow'
         body = f"""
         <p>Hi {req['requested_by_name']},</p>
         <p>This is a reminder that the asset <strong>{req['asset_name']}</strong>
