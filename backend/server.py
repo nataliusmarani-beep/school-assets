@@ -44,6 +44,21 @@ SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
 SMTP_FROM     = os.environ.get("SMTP_FROM", SMTP_USER)
 APP_URL       = os.environ.get("APP_URL", "https://your-app.railway.app")
 
+# Loan notification recipients (set in Railway environment variables)
+# General inbox that receives new-request and return-complete alerts
+LOAN_NOTIFY_EMAIL  = os.environ.get("LOAN_NOTIFY_EMAIL", "")
+# Campus heads — keyed by campus slug (KK = Kuala Kencana, TB = Tembagapura)
+HEAD_KK_EMAIL       = os.environ.get("HEAD_KK_EMAIL", "")        # Head of Campus – YPJ Kuala Kencana
+HEAD_TB_EMAIL       = os.environ.get("HEAD_TB_EMAIL", "")        # Head of Campus – YPJ Tembagapura
+HEAD_ADMIN_KK_EMAIL = os.environ.get("HEAD_ADMIN_KK_EMAIL", "")  # Head of Administration – YPJ Kuala Kencana
+HEAD_ADMIN_TB_EMAIL = os.environ.get("HEAD_ADMIN_TB_EMAIL", "")  # Head of Administration – YPJ Tembagapura
+
+# Map campus name → (head-of-campus email, head-of-admin email)
+CAMPUS_HEAD_EMAILS: dict = {
+    "YPJ Kuala Kencana": [HEAD_KK_EMAIL, HEAD_ADMIN_KK_EMAIL],
+    "YPJ Tembagapura":   [HEAD_TB_EMAIL, HEAD_ADMIN_TB_EMAIL],
+}
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -406,29 +421,98 @@ def calc_depreciation(purchase_price: float, purchase_date: str, useful_life_yea
 
 
 # ---- Email helper ----
-def send_email(to_addr: str, subject: str, body_html: str):
+def send_email(to_addr: str, subject: str, body_html: str, cc: list = None):
+    """Send an HTML email; cc is an optional list of additional recipients."""
     if not SMTP_HOST or not SMTP_USER:
         logger.warning("Email not configured — skipping send to %s", to_addr)
         return
     try:
+        clean_cc = [a for a in (cc or []) if a and a != to_addr]
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
-        msg["From"] = SMTP_FROM or SMTP_USER
-        msg["To"] = to_addr
+        msg["From"]    = SMTP_FROM or SMTP_USER
+        msg["To"]      = to_addr
+        if clean_cc:
+            msg["Cc"] = ", ".join(clean_cc)
         msg.attach(MIMEText(body_html, "html"))
+        all_recipients = [to_addr] + clean_cc
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
             s.ehlo()
             s.starttls()
             s.login(SMTP_USER, SMTP_PASSWORD)
-            s.sendmail(SMTP_FROM or SMTP_USER, [to_addr], msg.as_string())
-        logger.info("Email sent to %s — %s", to_addr, subject)
+            s.sendmail(SMTP_FROM or SMTP_USER, all_recipients, msg.as_string())
+        logger.info("Email sent to %s (CC: %s) — %s", to_addr, clean_cc, subject)
     except Exception as exc:
         logger.error("Email send failed: %s", exc)
 
 
+def get_loan_cc(req: dict, conn, extra: list = None) -> list:
+    """
+    Build the CC list for a loan-related email.
+
+    Includes:
+      - The borrower's supervisor (stored in users.supervisor)
+      - Head of campus and head of administration for the asset's campus
+      - Any extra addresses (e.g. LOAN_NOTIFY_EMAIL for new-request / return alerts)
+    """
+    cc = list(extra or [])
+
+    # Supervisor of the borrower
+    u = conn.execute("SELECT supervisor FROM users WHERE id=?", (req["requested_by"],)).fetchone()
+    if u and u["supervisor"]:
+        cc.append(u["supervisor"])
+
+    # Campus heads based on the asset's campus
+    asset = conn.execute("SELECT campus FROM assets WHERE id=?", (req["asset_id"],)).fetchone()
+    campus = (asset["campus"] if asset else "") or ""
+    for addr in CAMPUS_HEAD_EMAILS.get(campus, []):
+        if addr:
+            cc.append(addr)
+
+    # Deduplicate, preserve order, drop blanks
+    seen: set = set()
+    result = []
+    for a in cc:
+        if a and a not in seen:
+            seen.add(a)
+            result.append(a)
+    return result
+
+
+def _loan_html(req: dict, heading: str, detail_lines: list, footer: str = "") -> str:
+    """Generic HTML body for loan notification emails."""
+    rows = "".join(
+        f"<tr><td style='padding:4px 8px;color:#64748b;'>{k}</td>"
+        f"<td style='padding:4px 8px;font-weight:500;'>{v}</td></tr>"
+        for k, v in detail_lines
+    )
+    return f"""
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
+      <div style="background:#0f172a;color:#fff;padding:16px 24px;">
+        <strong>YPJ School Assets Management</strong>
+      </div>
+      <div style="padding:24px;">
+        <h2 style="margin-top:0;">{heading}</h2>
+        <table style="border-collapse:collapse;width:100%;margin-bottom:16px;">
+          {rows}
+        </table>
+        {footer}
+        <p style="margin-top:24px;">
+          <a href="{APP_URL}" style="background:#0f172a;color:#fff;padding:10px 20px;text-decoration:none;">
+            Open Asset Registry
+          </a>
+        </p>
+      </div>
+      <div style="background:#f8fafc;padding:12px 24px;font-size:12px;color:#94a3b8;">
+        YPJ School Assets Management &mdash; automated notification
+      </div>
+    </div>
+    """
+
+
 # ---- Scheduler: return-date reminders ----
 def send_return_reminders():
-    """Runs daily at 08:00; emails borrowers whose return date is tomorrow."""
+    """Runs daily at 08:00; emails borrowers whose return date is tomorrow, with CC chain."""
     tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).date().isoformat()
     conn = get_conn()
     rows = conn.execute(
@@ -439,24 +523,21 @@ def send_return_reminders():
              AND substr(lr.end_date, 1, 10) = ?""",
         (tomorrow,),
     ).fetchall()
-    conn.close()
     for r in rows:
         req = dict(r)
         email = req.get("borrower_email", "")
         if not email:
             continue
-        asset_name = req['asset_name']
+        asset_name = req["asset_name"]
         subject = f'[YPJ Assets] Reminder: Please return "{asset_name}" tomorrow'
-        body = f"""
-        <p>Hi {req['requested_by_name']},</p>
-        <p>This is a reminder that the asset <strong>{req['asset_name']}</strong>
-           (tag: {req['asset_tag']}) is due to be returned tomorrow
-           (<strong>{tomorrow}</strong>).</p>
-        <p>Please return it to the admin before the end of the day.</p>
-        <p><a href="{APP_URL}">Open Asset Registry</a></p>
-        <p>Thanks,<br>YPJ School Assets Management</p>
-        """
-        send_email(email, subject, body)
+        body = _loan_html(req, "Return Reminder", [
+            ("Asset",     f"{req['asset_name']} ({req['asset_tag']})"),
+            ("Borrower",  req["requested_by_name"]),
+            ("Return by", tomorrow),
+        ], "<p>Please return the asset to the admin before the end of the day.</p>")
+        cc = get_loan_cc(req, conn, extra=[LOAN_NOTIFY_EMAIL] if LOAN_NOTIFY_EMAIL else [])
+        send_email(email, subject, body, cc=cc)
+    conn.close()
     logger.info("Return reminders checked — %d sent", len(rows))
 
 
@@ -1405,17 +1486,33 @@ async def create_loan_request(aid: str, body: LoanRequestIn, user: dict = Depend
         conn.close()
         raise HTTPException(404, "Asset not found")
     rid = str(uuid.uuid4())
+    ts = now_iso()
     conn.execute(
         """INSERT INTO loan_requests
            (id,asset_id,asset_name,asset_tag,requested_by,requested_by_name,purpose,start_date,end_date,status,created_at)
            VALUES (?,?,?,?,?,?,?,?,?,'pending',?)""",
         (rid, aid, asset["name"], asset["asset_tag"], user["id"], user["name"],
-         body.purpose or "", body.start_date, body.end_date, now_iso()),
+         body.purpose or "", body.start_date, body.end_date, ts),
     )
     conn.commit()
     row = conn.execute("SELECT * FROM loan_requests WHERE id = ?", (rid,)).fetchone()
+    req = dict(row)
+
+    # Email: confirmation to borrower, CC supervisor + campus heads + notify inbox
+    subject = f'[YPJ Assets] Loan request submitted: {req["asset_name"]}'
+    body_html = _loan_html(req, "Loan Request Submitted", [
+        ("Asset",      f'{req["asset_name"]} ({req["asset_tag"]})'),
+        ("Requested by", req["requested_by_name"]),
+        ("Purpose",    req.get("purpose") or "—"),
+        ("From",       req.get("start_date") or "—"),
+        ("Until",      req.get("end_date") or "—"),
+        ("Status",     "Pending approval"),
+    ], "<p>Your request has been submitted and is awaiting admin approval.</p>")
+    cc = get_loan_cc(req, conn, extra=[LOAN_NOTIFY_EMAIL] if LOAN_NOTIFY_EMAIL else [])
+    send_email(user["email"], subject, body_html, cc=cc)
+
     conn.close()
-    return dict(row)
+    return req
 
 
 @api.get("/loan-requests")
@@ -1460,8 +1557,24 @@ async def approve_loan(rid: str, user: dict = Depends(admin_required)):
     )
     conn.commit()
     row = conn.execute("SELECT * FROM loan_requests WHERE id=?", (rid,)).fetchone()
+    req = dict(row)
+
+    # Email borrower; CC supervisor + campus heads
+    borrower = conn.execute("SELECT email FROM users WHERE id=?", (req["requested_by"],)).fetchone()
+    if borrower:
+        subject = f'[YPJ Assets] Loan approved: {req["asset_name"]}'
+        body_html = _loan_html(req, "Loan Request Approved", [
+            ("Asset",       f'{req["asset_name"]} ({req["asset_tag"]})'),
+            ("Borrower",    req["requested_by_name"]),
+            ("Approved by", req["reviewed_by_name"]),
+            ("From",        req.get("start_date") or "—"),
+            ("Until",       req.get("end_date") or "—"),
+        ], "<p>Your loan request has been approved. The asset will be delivered to you soon.</p>")
+        cc = get_loan_cc(req, conn)
+        send_email(borrower["email"], subject, body_html, cc=cc)
+
     conn.close()
-    return dict(row)
+    return req
 
 
 @api.put("/loan-requests/{rid}/reject")
@@ -1477,8 +1590,27 @@ async def reject_loan(rid: str, reason: Optional[str] = None, user: dict = Depen
     )
     conn.commit()
     row = conn.execute("SELECT * FROM loan_requests WHERE id=?", (rid,)).fetchone()
+    req = dict(row)
+
+    # Email borrower; CC supervisor only (campus heads not needed for rejections)
+    borrower = conn.execute("SELECT email FROM users WHERE id=?", (req["requested_by"],)).fetchone()
+    if borrower:
+        subject = f'[YPJ Assets] Loan request not approved: {req["asset_name"]}'
+        reason_line = req.get("reject_reason") or ""
+        detail = [
+            ("Asset",       f'{req["asset_name"]} ({req["asset_tag"]})'),
+            ("Rejected by", req["reviewed_by_name"]),
+        ]
+        if reason_line:
+            detail.append(("Reason", reason_line))
+        body_html = _loan_html(req, "Loan Request Not Approved", detail,
+                               "<p>Please contact the admin if you have questions.</p>")
+        u = conn.execute("SELECT supervisor FROM users WHERE id=?", (req["requested_by"],)).fetchone()
+        cc = [u["supervisor"]] if u and u["supervisor"] else []
+        send_email(borrower["email"], subject, body_html, cc=cc)
+
     conn.close()
-    return dict(row)
+    return req
 
 
 @api.put("/loan-requests/{rid}/deliver")
@@ -1522,8 +1654,25 @@ async def deliver_loan(
     )
     conn.commit()
     row = conn.execute("SELECT * FROM loan_requests WHERE id=?", (rid,)).fetchone()
+    req = dict(row)
+
+    # Email borrower; CC supervisor + campus heads
+    borrower = conn.execute("SELECT email FROM users WHERE id=?", (req["requested_by"],)).fetchone()
+    if borrower:
+        cond_labels = {"good": "Good", "trouble": "Has issues", "broken": "Broken", "missing": "Missing"}
+        subject = f'[YPJ Assets] Asset delivered: {req["asset_name"]}'
+        body_html = _loan_html(req, "Asset Delivered", [
+            ("Asset",       f'{req["asset_name"]} ({req["asset_tag"]})'),
+            ("Borrower",    req["requested_by_name"]),
+            ("Condition",   cond_labels.get(condition, condition)),
+            ("Note",        note or "—"),
+            ("Return by",   req.get("end_date") or "—"),
+        ], "<p>The asset is now in your care. Please return it by the agreed date in the same or better condition.</p>")
+        cc = get_loan_cc(req, conn)
+        send_email(borrower["email"], subject, body_html, cc=cc)
+
     conn.close()
-    return dict(row)
+    return req
 
 
 @api.put("/loan-requests/{rid}/return")
@@ -1567,8 +1716,25 @@ async def return_loan(
     )
     conn.commit()
     row = conn.execute("SELECT * FROM loan_requests WHERE id=?", (rid,)).fetchone()
+    req = dict(row)
+
+    # Email borrower (confirmation) + CC supervisor + campus heads + loan notify inbox
+    borrower = conn.execute("SELECT email FROM users WHERE id=?", (req["requested_by"],)).fetchone()
+    if borrower:
+        cond_labels = {"good": "Good", "trouble": "Has issues", "broken": "Broken", "missing": "Missing"}
+        subject = f'[YPJ Assets] Return recorded: {req["asset_name"]}'
+        body_html = _loan_html(req, "Asset Return Recorded", [
+            ("Asset",            f'{req["asset_name"]} ({req["asset_tag"]})'),
+            ("Borrower",         req["requested_by_name"]),
+            ("Return condition", cond_labels.get(condition, condition)),
+            ("Note",             note or "—"),
+            ("Returned at",      req.get("returned_at") or "—"),
+        ], "<p>Thank you for returning the asset. The loan is now closed.</p>")
+        cc = get_loan_cc(req, conn, extra=[LOAN_NOTIFY_EMAIL] if LOAN_NOTIFY_EMAIL else [])
+        send_email(borrower["email"], subject, body_html, cc=cc)
+
     conn.close()
-    return dict(row)
+    return req
 
 
 # ---- Mount ----
