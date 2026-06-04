@@ -10,16 +10,20 @@ import sqlite3
 import json
 import logging
 import io
+import smtplib
 import bcrypt
 import jwt
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Literal
 
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, UploadFile, File, Query
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response, UploadFile, File, Query, Form
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, EmailStr
+from apscheduler.schedulers.background import BackgroundScheduler
 
 
 # ---- Config ----
@@ -31,6 +35,14 @@ JWT_SECRET = os.environ.get("JWT_SECRET", "dev-secret-change-me")
 JWT_ALGO = "HS256"
 UPLOADS_DIR = DATA_DIR / "uploads"
 UPLOADS_DIR.mkdir(exist_ok=True)
+
+# Email config (set in Railway environment variables)
+SMTP_HOST     = os.environ.get("SMTP_HOST", "")
+SMTP_PORT     = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USER     = os.environ.get("SMTP_USER", "")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+SMTP_FROM     = os.environ.get("SMTP_FROM", SMTP_USER)
+APP_URL       = os.environ.get("APP_URL", "https://your-app.railway.app")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -196,6 +208,21 @@ def init_db():
     if "supervisor_name" not in user_cols:
         conn.execute("ALTER TABLE users ADD COLUMN supervisor_name TEXT DEFAULT ''")
         conn.commit()
+    # Loan request workflow columns (deliver / return / reminder)
+    loan_cols = [r[1] for r in conn.execute("PRAGMA table_info(loan_requests)").fetchall()]
+    for col, defn in [
+        ("pre_condition",      "TEXT DEFAULT ''"),
+        ("pre_condition_note", "TEXT DEFAULT ''"),
+        ("pre_image_path",     "TEXT DEFAULT ''"),
+        ("post_condition",     "TEXT DEFAULT ''"),
+        ("post_condition_note","TEXT DEFAULT ''"),
+        ("post_image_path",    "TEXT DEFAULT ''"),
+        ("delivered_at",       "TEXT"),
+        ("returned_at",        "TEXT"),
+    ]:
+        if col not in loan_cols:
+            conn.execute(f"ALTER TABLE loan_requests ADD COLUMN {col} {defn}")
+    conn.commit()
     conn.close()
 
 
@@ -376,6 +403,60 @@ def calc_depreciation(purchase_price: float, purchase_date: str, useful_life_yea
         "annual": round(annual, 2),
         "age_years": round(age, 2),
     }
+
+
+# ---- Email helper ----
+def send_email(to_addr: str, subject: str, body_html: str):
+    if not SMTP_HOST or not SMTP_USER:
+        logger.warning("Email not configured — skipping send to %s", to_addr)
+        return
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = SMTP_FROM or SMTP_USER
+        msg["To"] = to_addr
+        msg.attach(MIMEText(body_html, "html"))
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
+            s.ehlo()
+            s.starttls()
+            s.login(SMTP_USER, SMTP_PASSWORD)
+            s.sendmail(SMTP_FROM or SMTP_USER, [to_addr], msg.as_string())
+        logger.info("Email sent to %s — %s", to_addr, subject)
+    except Exception as exc:
+        logger.error("Email send failed: %s", exc)
+
+
+# ---- Scheduler: return-date reminders ----
+def send_return_reminders():
+    """Runs daily at 08:00; emails borrowers whose return date is tomorrow."""
+    tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).date().isoformat()
+    conn = get_conn()
+    rows = conn.execute(
+        """SELECT lr.*, u.email AS borrower_email
+           FROM loan_requests lr
+           LEFT JOIN users u ON u.id = lr.requested_by
+           WHERE lr.status = 'active'
+             AND substr(lr.end_date, 1, 10) = ?""",
+        (tomorrow,),
+    ).fetchall()
+    conn.close()
+    for r in rows:
+        req = dict(r)
+        email = req.get("borrower_email", "")
+        if not email:
+            continue
+        subject = f"[YPJ Assets] Reminder: Please return "{req['asset_name']}" tomorrow"
+        body = f"""
+        <p>Hi {req['requested_by_name']},</p>
+        <p>This is a reminder that the asset <strong>{req['asset_name']}</strong>
+           (tag: {req['asset_tag']}) is due to be returned tomorrow
+           (<strong>{tomorrow}</strong>).</p>
+        <p>Please return it to the admin before the end of the day.</p>
+        <p><a href="{APP_URL}">Open Asset Registry</a></p>
+        <p>Thanks,<br>YPJ School Assets Management</p>
+        """
+        send_email(email, subject, body)
+    logger.info("Return reminders checked — %d sent", len(rows))
 
 
 # ---- Auth endpoints ----
@@ -1340,9 +1421,14 @@ async def create_loan_request(aid: str, body: LoanRequestIn, user: dict = Depend
 async def list_loan_requests(user: dict = Depends(get_current_user), status: Optional[str] = None):
     conn = get_conn()
     if user["role"] == "admin":
-        base = "SELECT * FROM loan_requests"
-        rows = conn.execute(base + (" WHERE status=?" if status and status != "all" else " ORDER BY created_at DESC"),
-                            (status,) if status and status != "all" else ()).fetchall()
+        if status and status != "all":
+            rows = conn.execute(
+                "SELECT * FROM loan_requests WHERE status=? ORDER BY created_at DESC", (status,)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM loan_requests ORDER BY created_at DESC"
+            ).fetchall()
     else:
         rows = conn.execute(
             "SELECT * FROM loan_requests WHERE requested_by=? ORDER BY created_at DESC", (user["id"],)
@@ -1387,6 +1473,96 @@ async def reject_loan(rid: str, reason: Optional[str] = None, user: dict = Depen
     conn.execute(
         "UPDATE loan_requests SET status='rejected',reviewed_by=?,reviewed_by_name=?,reviewed_at=?,reject_reason=? WHERE id=?",
         (user["id"], user["name"], now_iso(), reason or "", rid),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM loan_requests WHERE id=?", (rid,)).fetchone()
+    conn.close()
+    return dict(row)
+
+
+@api.put("/loan-requests/{rid}/deliver")
+async def deliver_loan(
+    rid: str,
+    condition: str = Form(...),
+    note: str = Form(""),
+    image: Optional[UploadFile] = File(None),
+    user: dict = Depends(admin_required),
+):
+    """Record pre-check condition and optionally upload an image, then mark as active."""
+    conn = get_conn()
+    req = conn.execute("SELECT * FROM loan_requests WHERE id=?", (rid,)).fetchone()
+    if not req:
+        conn.close()
+        raise HTTPException(404, "Loan request not found")
+    if dict(req)["status"] != "approved":
+        conn.close()
+        raise HTTPException(400, "Loan must be in 'approved' status to deliver")
+
+    img_path = ""
+    if image and image.filename:
+        ext = image.filename.rsplit(".", 1)[-1].lower() if "." in image.filename else "bin"
+        file_id = str(uuid.uuid4())
+        rel_path = f"loans/{rid}/pre_{file_id}.{ext}"
+        dest = UPLOADS_DIR / "loans" / rid
+        dest.mkdir(parents=True, exist_ok=True)
+        data = await image.read()
+        (dest / f"pre_{file_id}.{ext}").write_bytes(data)
+        img_path = rel_path
+        conn.execute(
+            "INSERT INTO files (id,storage_path,original_filename,content_type,size,uploaded_by,is_deleted,created_at) VALUES (?,?,?,?,?,?,0,?)",
+            (file_id, rel_path, image.filename, image.content_type or "application/octet-stream", len(data), user["id"], now_iso()),
+        )
+
+    conn.execute(
+        """UPDATE loan_requests
+           SET status='active', pre_condition=?, pre_condition_note=?, pre_image_path=?, delivered_at=?
+           WHERE id=?""",
+        (condition, note, img_path, now_iso(), rid),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM loan_requests WHERE id=?", (rid,)).fetchone()
+    conn.close()
+    return dict(row)
+
+
+@api.put("/loan-requests/{rid}/return")
+async def return_loan(
+    rid: str,
+    condition: str = Form(...),
+    note: str = Form(""),
+    image: Optional[UploadFile] = File(None),
+    user: dict = Depends(admin_required),
+):
+    """Record post-check condition and optionally upload an image, then mark as returned."""
+    conn = get_conn()
+    req = conn.execute("SELECT * FROM loan_requests WHERE id=?", (rid,)).fetchone()
+    if not req:
+        conn.close()
+        raise HTTPException(404, "Loan request not found")
+    if dict(req)["status"] != "active":
+        conn.close()
+        raise HTTPException(400, "Loan must be in 'active' status to return")
+
+    img_path = ""
+    if image and image.filename:
+        ext = image.filename.rsplit(".", 1)[-1].lower() if "." in image.filename else "bin"
+        file_id = str(uuid.uuid4())
+        rel_path = f"loans/{rid}/post_{file_id}.{ext}"
+        dest = UPLOADS_DIR / "loans" / rid
+        dest.mkdir(parents=True, exist_ok=True)
+        data = await image.read()
+        (dest / f"post_{file_id}.{ext}").write_bytes(data)
+        img_path = rel_path
+        conn.execute(
+            "INSERT INTO files (id,storage_path,original_filename,content_type,size,uploaded_by,is_deleted,created_at) VALUES (?,?,?,?,?,?,0,?)",
+            (file_id, rel_path, image.filename, image.content_type or "application/octet-stream", len(data), user["id"], now_iso()),
+        )
+
+    conn.execute(
+        """UPDATE loan_requests
+           SET status='returned', post_condition=?, post_condition_note=?, post_image_path=?, returned_at=?
+           WHERE id=?""",
+        (condition, note, img_path, now_iso(), rid),
     )
     conn.commit()
     row = conn.execute("SELECT * FROM loan_requests WHERE id=?", (rid,)).fetchone()
@@ -1543,5 +1719,9 @@ def seed_data():
 async def on_startup():
     init_db()
     seed_data()
+    # Start background scheduler for daily return reminders
+    scheduler = BackgroundScheduler(timezone="Asia/Jakarta")
+    scheduler.add_job(send_return_reminders, "cron", hour=8, minute=0)
+    scheduler.start()
     mode = "production" if BUILD_DIR.exists() else "development"
     logger.info(f"Startup complete [{mode}] — DB: {DB_PATH}")
