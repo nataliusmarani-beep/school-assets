@@ -81,12 +81,13 @@ export default function AssetFormPage() {
     return res.data;
   };
 
-  const MAX_FILE_BYTES = 200 * 1024; // 200 KB
+  const MAX_PHOTO_BYTES = 500 * 1024;       // 500 KB
+  const MAX_DOC_BYTES   = 2 * 1024 * 1024; // 2 MB
 
   const handlePhoto = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > MAX_FILE_BYTES) {
+    if (file.size > MAX_PHOTO_BYTES) {
       toast.error(t("photo_too_large"));
       e.target.value = "";
       return;
@@ -107,7 +108,7 @@ export default function AssetFormPage() {
   const handlePdf = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > MAX_FILE_BYTES) {
+    if (file.size > MAX_DOC_BYTES) {
       toast.error(t("doc_too_large"));
       e.target.value = "";
       return;
@@ -336,7 +337,7 @@ export default function AssetFormPage() {
                 <div className="mt-2">{pdfUploading ? t("uploading") : t("attach_doc")}</div>
                 <input type="file" onChange={handlePdf} className="hidden" data-testid="document-upload-input"/>
               </label>
-              <p className="mt-1.5 text-xs text-slate-400">{t("upload_size_limit")}</p>
+              <p className="mt-1.5 text-xs text-slate-400">{t("upload_doc_size_limit")}</p>
             </div>
           </div>
 
