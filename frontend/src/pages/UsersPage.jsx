@@ -76,70 +76,9 @@ function SupervisorNameField({ value, onChangeName, onChangeEmail, users }) {
   );
 }
 
-export default function UsersPage() {
-  const { t } = useLang();
-  const { user } = useAuth();
-  const [users, setUsers] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [open, setOpen] = useState(false);
-  const [editOpen, setEditOpen] = useState(false);
-  const [editTarget, setEditTarget] = useState(null);
-  const [form, setForm] = useState(EMPTY_FORM);
-  const [editForm, setEditForm] = useState(EMPTY_EDIT);
-
-  const load = () => {
-    setLoading(true);
-    api.get("/users").then((r) => setUsers(r.data)).finally(() => setLoading(false));
-  };
-  useEffect(() => { load(); }, []);
-
-  const submit = async (e) => {
-    e.preventDefault();
-    try {
-      await api.post("/users", form);
-      toast.success(t("user_created_ok"));
-      setOpen(false);
-      setForm(EMPTY_FORM);
-      load();
-    } catch (err) { toast.error(formatErr(err)); }
-  };
-
-  const openEdit = (u) => {
-    setEditTarget(u);
-    setEditForm({
-      name: u.name, email: u.email, role: u.role,
-      department: u.department || "", campus: u.campus || "",
-      supervisor_name: u.supervisor_name || "",
-      supervisor: u.supervisor || "",
-      employee_id: u.employee_id || "",
-      password: "",
-    });
-    setEditOpen(true);
-  };
-
-  const submitEdit = async (e) => {
-    e.preventDefault();
-    const payload = { ...editForm };
-    if (!payload.password) delete payload.password;
-    try {
-      await api.put(`/users/${editTarget.id}`, payload);
-      toast.success(t("user_updated_ok"));
-      setEditOpen(false);
-      load();
-    } catch (err) { toast.error(formatErr(err)); }
-  };
-
-  const remove = async (u) => {
-    if (u.id === user.id) return toast.error(t("cant_delete_self"));
-    if (!window.confirm(t("delete_user_confirm").replace("{{name}}", u.name))) return;
-    try { await api.delete(`/users/${u.id}`); load(); }
-    catch (e) { toast.error(formatErr(e)); }
-  };
-
-  const allNames = users.map((u) => u.name);
-  const allDepts = [...new Set(users.map((u) => u.department).filter(Boolean))];
-
-  const FormFields = ({ values, set, isEdit }) => (
+/* ── FormFields lifted out of UsersPage so React never remounts it on re-render ── */
+function FormFields({ values, set, isEdit, t, allNames, allDepts, users }) {
+  return (
     <div className="space-y-4">
       <div><Label className="label-mono">{t("full_name")}</Label>
         <SuggestField required value={values.name} onChange={(v) => set({ ...values, name: v })}
@@ -205,6 +144,70 @@ export default function UsersPage() {
       )}
     </div>
   );
+}
+
+export default function UsersPage() {
+  const { t } = useLang();
+  const { user } = useAuth();
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [open, setOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState(null);
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [editForm, setEditForm] = useState(EMPTY_EDIT);
+
+  const load = () => {
+    setLoading(true);
+    api.get("/users").then((r) => setUsers(r.data)).finally(() => setLoading(false));
+  };
+  useEffect(() => { load(); }, []);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    try {
+      await api.post("/users", form);
+      toast.success(t("user_created_ok"));
+      setOpen(false);
+      setForm(EMPTY_FORM);
+      load();
+    } catch (err) { toast.error(formatErr(err)); }
+  };
+
+  const openEdit = (u) => {
+    setEditTarget(u);
+    setEditForm({
+      name: u.name, email: u.email, role: u.role,
+      department: u.department || "", campus: u.campus || "",
+      supervisor_name: u.supervisor_name || "",
+      supervisor: u.supervisor || "",
+      employee_id: u.employee_id || "",
+      password: "",
+    });
+    setEditOpen(true);
+  };
+
+  const submitEdit = async (e) => {
+    e.preventDefault();
+    const payload = { ...editForm };
+    if (!payload.password) delete payload.password;
+    try {
+      await api.put(`/users/${editTarget.id}`, payload);
+      toast.success(t("user_updated_ok"));
+      setEditOpen(false);
+      load();
+    } catch (err) { toast.error(formatErr(err)); }
+  };
+
+  const remove = async (u) => {
+    if (u.id === user.id) return toast.error(t("cant_delete_self"));
+    if (!window.confirm(t("delete_user_confirm").replace("{{name}}", u.name))) return;
+    try { await api.delete(`/users/${u.id}`); load(); }
+    catch (e) { toast.error(formatErr(e)); }
+  };
+
+  const allNames = users.map((u) => u.name);
+  const allDepts = [...new Set(users.map((u) => u.department).filter(Boolean))];
 
   return (
     <div className="p-6 lg:p-10 max-w-[1600px] mx-auto" data-testid="users-page">
@@ -224,7 +227,7 @@ export default function UsersPage() {
           <DialogContent className="rounded-none max-h-[90vh] overflow-y-auto">
             <DialogHeader><DialogTitle>{t("create_user")}</DialogTitle></DialogHeader>
             <form onSubmit={submit}>
-              <FormFields values={form} set={setForm} isEdit={false} />
+              <FormFields values={form} set={setForm} isEdit={false} t={t} allNames={allNames} allDepts={allDepts} users={users} />
               <DialogFooter className="mt-6">
                 <Button type="submit" className="rounded-none bg-slate-900" data-testid="submit-user-button">
                   {t("create_user")}
@@ -297,7 +300,7 @@ export default function UsersPage() {
         <DialogContent className="rounded-none max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>{t("edit_user")}</DialogTitle></DialogHeader>
           <form onSubmit={submitEdit}>
-            <FormFields values={editForm} set={setEditForm} isEdit={true} />
+            <FormFields values={editForm} set={setEditForm} isEdit={true} t={t} allNames={allNames} allDepts={allDepts} users={users} />
             <DialogFooter className="mt-6">
               <Button variant="outline" className="rounded-none" type="button" onClick={() => setEditOpen(false)}>{t("cancel")}</Button>
               <Button type="submit" className="rounded-none bg-slate-900">{t("save_changes")}</Button>
