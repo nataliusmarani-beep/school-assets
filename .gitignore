@@ -10,7 +10,7 @@ backend/uploads/
 
 # Node
 frontend/node_modules/
-frontend/build/
+# frontend/build/ — committed so Railway serves pre-built files directly
 
 # Env
 .env
