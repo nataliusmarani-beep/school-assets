@@ -10,6 +10,7 @@ import sqlite3
 import json
 import logging
 import io
+import csv
 import smtplib
 import bcrypt
 import jwt
@@ -769,6 +770,224 @@ async def create_asset(body: AssetIn, user: dict = Depends(get_current_user)):
     doc = row_to_dict(row)
     doc["depreciation"] = calc_depreciation(doc["purchase_price"], doc["purchase_date"], doc.get("useful_life_years", 5))
     return doc
+
+
+IMPORT_COLUMNS = [
+    "name", "asset_tag", "category", "asset_type", "description",
+    "campus", "location", "status", "purchase_price", "purchase_date",
+    "useful_life_years", "warranty_end_date", "serial_number", "supplier",
+    "assigned_to_name",
+]
+
+VALID_CATEGORIES = [
+    "IT Equipment", "AV Equipment", "Furniture", "Lab Equipment",
+    "Vehicles", "Books", "Sports", "Music Equipment", "Other",
+]
+VALID_STATUSES = ["active", "in_repair", "retired", "lost"]
+VALID_CAMPUSES = ["YPJ Kuala Kencana", "YPJ Tembagapura", ""]
+
+
+def _validate_import_row(row: dict, row_num: int, seen_tags: set) -> list:
+    """Return a list of error strings for this row (empty = valid)."""
+    errors = []
+    name = (row.get("name") or "").strip()
+    tag  = (row.get("asset_tag") or "").strip()
+    cat  = (row.get("category") or "").strip()
+    loc  = (row.get("location") or "").strip()
+    status = (row.get("status") or "active").strip()
+    campus = (row.get("campus") or "").strip()
+
+    if not name:
+        errors.append("name is required")
+    if not tag:
+        errors.append("asset_tag is required")
+    elif tag in seen_tags:
+        errors.append(f'duplicate asset_tag "{tag}" within file')
+    if not cat:
+        errors.append("category is required")
+    elif cat not in VALID_CATEGORIES:
+        errors.append(f'unknown category "{cat}" — must be one of: {", ".join(VALID_CATEGORIES)}')
+    if not loc:
+        errors.append("location is required")
+    if status not in VALID_STATUSES:
+        errors.append(f'invalid status "{status}" — must be: active, in_repair, retired, lost')
+    if campus and campus not in VALID_CAMPUSES:
+        errors.append(f'unknown campus "{campus}"')
+
+    price_str = (row.get("purchase_price") or "").strip()
+    if price_str:
+        try:
+            float(price_str)
+        except ValueError:
+            errors.append(f'purchase_price "{price_str}" is not a number')
+
+    life_str = (row.get("useful_life_years") or "").strip()
+    if life_str:
+        try:
+            int(life_str)
+        except ValueError:
+            errors.append(f'useful_life_years "{life_str}" must be an integer')
+
+    for date_col in ("purchase_date", "warranty_end_date"):
+        val = (row.get(date_col) or "").strip()
+        if val:
+            try:
+                datetime.strptime(val, "%Y-%m-%d")
+            except ValueError:
+                errors.append(f'{date_col} "{val}" must be YYYY-MM-DD')
+
+    return errors
+
+
+def _parse_import_file(content: bytes, filename: str) -> list:
+    """
+    Parse CSV or XLSX bytes. Returns list of dicts, each with the IMPORT_COLUMNS keys.
+    Raises HTTPException 400 for unparseable files.
+    """
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext in ("xlsx", "xls"):
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+            ws = wb.active
+            rows_iter = ws.iter_rows(values_only=True)
+            header = [str(c).strip() if c else "" for c in next(rows_iter, [])]
+            rows = []
+            for r in rows_iter:
+                rows.append({header[i]: (str(r[i]).strip() if r[i] is not None else "") for i in range(len(header))})
+        except Exception as exc:
+            raise HTTPException(400, f"Could not parse Excel file: {exc}")
+    else:
+        try:
+            text = content.decode("utf-8-sig")
+            reader = csv.DictReader(io.StringIO(text))
+            rows = [dict(r) for r in reader]
+        except Exception as exc:
+            raise HTTPException(400, f"Could not parse CSV file: {exc}")
+    return rows
+
+
+@api.get("/assets/import-template")
+async def download_import_template(_: dict = Depends(admin_required)):
+    header = ",".join(IMPORT_COLUMNS)
+    example = (
+        'Dell Latitude 5430,IT-LAP-0001,IT Equipment,School Asset,'
+        'Example laptop,YPJ Kuala Kencana,Computer Lab A,active,'
+        '1250.00,2023-08-15,4,2026-08-15,DL5430X01,Dell Technologies,Maria Hernandez'
+    )
+    buf = io.BytesIO(f"{header}\n{example}\n".encode())
+    headers = {"Content-Disposition": 'attachment; filename="asset-import-template.csv"'}
+    return StreamingResponse(buf, media_type="text/csv", headers=headers)
+
+
+@api.post("/assets/import")
+async def bulk_import_assets(
+    file: UploadFile = File(...),
+    dry_run: bool = Query(True),
+    user: dict = Depends(admin_required),
+):
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(400, "File too large (max 5 MB)")
+
+    rows = _parse_import_file(content, file.filename or "upload.csv")
+    if not rows:
+        raise HTTPException(400, "File is empty or has no data rows")
+
+    # --- validate ---
+    conn = get_conn()
+    existing_tags = {
+        r[0] for r in conn.execute("SELECT asset_tag FROM assets").fetchall()
+    }
+
+    seen_tags: set = set()
+    preview = []
+    for i, row in enumerate(rows, start=2):  # row 1 = header
+        errs = _validate_import_row(row, i, seen_tags)
+        tag = (row.get("asset_tag") or "").strip()
+        if tag and tag in existing_tags:
+            errs.append(f'asset_tag "{tag}" already exists in the database')
+        if tag:
+            seen_tags.add(tag)
+        preview.append({
+            "row": i,
+            "name": (row.get("name") or "").strip(),
+            "asset_tag": tag,
+            "category": (row.get("category") or "").strip(),
+            "campus": (row.get("campus") or "").strip(),
+            "location": (row.get("location") or "").strip(),
+            "status": (row.get("status") or "active").strip(),
+            "errors": errs,
+        })
+
+    total   = len(preview)
+    invalid = sum(1 for p in preview if p["errors"])
+    valid   = total - invalid
+
+    if dry_run:
+        conn.close()
+        return {"dry_run": True, "total": total, "valid": valid, "invalid": invalid, "preview": preview}
+
+    # --- actual import ---
+    ts = now_iso()
+    imported = 0
+    skipped  = 0
+    import_errors = []
+
+    for i, row in enumerate(rows, start=2):
+        p = preview[i - 2]
+        if p["errors"]:
+            skipped += 1
+            import_errors.append({"row": i, "errors": p["errors"]})
+            continue
+        try:
+            aid = str(uuid.uuid4())
+            name      = (row.get("name") or "").strip()
+            tag       = (row.get("asset_tag") or "").strip()
+            cat       = (row.get("category") or "").strip()
+            atype     = (row.get("asset_type") or "School Asset").strip()
+            desc      = (row.get("description") or "").strip()
+            campus    = (row.get("campus") or "").strip()
+            loc       = (row.get("location") or "").strip()
+            status    = (row.get("status") or "active").strip()
+            price_s   = (row.get("purchase_price") or "0").strip()
+            price     = float(price_s) if price_s else 0.0
+            pdate     = (row.get("purchase_date") or "").strip() or None
+            life_s    = (row.get("useful_life_years") or "5").strip()
+            life      = int(life_s) if life_s else 5
+            wdate     = (row.get("warranty_end_date") or "").strip() or None
+            serial    = (row.get("serial_number") or "").strip()
+            supplier  = (row.get("supplier") or "").strip()
+            owner     = (row.get("assigned_to_name") or "").strip()
+
+            conn.execute("""
+                INSERT INTO assets
+                  (id,name,asset_tag,category,asset_type,description,campus,location,status,
+                   purchase_price,purchase_date,useful_life_years,warranty_end_date,
+                   serial_number,supplier,assigned_to_user_id,assigned_to_name,
+                   photo_path,documents,created_at,updated_at,created_by)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """, (
+                aid, name, tag, cat, atype, desc, campus, loc, status,
+                price, pdate, life, wdate, serial, supplier,
+                None, owner or None,
+                None, "[]", ts, ts, user["id"],
+            ))
+            if owner:
+                conn.execute("""
+                    INSERT INTO ownership_logs
+                      (id,asset_id,from_name,from_user_id,to_name,to_user_id,note,by,by_name,at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?)
+                """, (str(uuid.uuid4()), aid, None, None, owner, None,
+                      "Bulk import", user["id"], user["name"], ts))
+            imported += 1
+        except Exception as exc:
+            skipped += 1
+            import_errors.append({"row": i, "errors": [str(exc)]})
+
+    conn.commit()
+    conn.close()
+    return {"dry_run": False, "imported": imported, "skipped": skipped, "errors": import_errors}
 
 
 @api.get("/assets/{aid}")
