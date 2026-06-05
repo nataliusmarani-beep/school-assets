@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../components/ui/select";
-import { Search, Plus, Filter, Upload, Download, CheckCircle2, XCircle, FileText } from "lucide-react";
+import { Search, Plus, Filter, Upload, Download, CheckCircle2, XCircle, FileText, FileSpreadsheet } from "lucide-react";
 
 const CAMPUSES = ["YPJ Kuala Kencana", "YPJ Tembagapura"];
 
@@ -320,6 +320,30 @@ export default function AssetsListPage() {
   const [category, setCategory] = useState("all");
   const [status, setStatus] = useState("all");
   const [showImport, setShowImport] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  const doExport = async () => {
+    setExporting(true);
+    try {
+      const params = {};
+      if (search) params.search = search;
+      if (campus !== "all") params.campus = campus;
+      if (category !== "all") params.category = category;
+      if (status !== "all") params.status = status;
+      const res = await api.get("/assets/export", { params, responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a");
+      a.href = url;
+      const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+      a.download = `assets-export-${today}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error("Export failed", e);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const load = () => {
     setLoading(true);
@@ -349,23 +373,33 @@ export default function AssetsListPage() {
             {t("assets")}
           </h1>
         </div>
-        {isAdmin && (
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setShowImport(true)}
-              className="inline-flex items-center gap-2 border border-slate-300 hover:border-slate-500 text-slate-700 hover:text-slate-900 text-sm px-4 py-2.5"
-            >
-              <Upload className="w-4 h-4" strokeWidth={1.75} /> {t("import_assets")}
-            </button>
-            <Link
-              to="/assets/new"
-              data-testid="add-asset-button"
-              className="inline-flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-sm px-4 py-2.5"
-            >
-              <Plus className="w-4 h-4" strokeWidth={1.75} /> {t("add_asset")}
-            </Link>
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={doExport}
+            disabled={exporting}
+            className="inline-flex items-center gap-2 border border-slate-300 hover:border-slate-500 text-slate-700 hover:text-slate-900 disabled:opacity-50 text-sm px-4 py-2.5"
+          >
+            <FileSpreadsheet className="w-4 h-4" strokeWidth={1.75} />
+            {exporting ? t("exporting") : t("export_excel")}
+          </button>
+          {isAdmin && (
+            <>
+              <button
+                onClick={() => setShowImport(true)}
+                className="inline-flex items-center gap-2 border border-slate-300 hover:border-slate-500 text-slate-700 hover:text-slate-900 text-sm px-4 py-2.5"
+              >
+                <Upload className="w-4 h-4" strokeWidth={1.75} /> {t("import_assets")}
+              </button>
+              <Link
+                to="/assets/new"
+                data-testid="add-asset-button"
+                className="inline-flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-sm px-4 py-2.5"
+              >
+                <Plus className="w-4 h-4" strokeWidth={1.75} /> {t("add_asset")}
+              </Link>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Filters */}

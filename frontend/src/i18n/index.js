@@ -213,6 +213,9 @@ export const translations = {
     loan_delivered_at: "Delivered",
     loan_returned_at: "Returned",
 
+    export_excel: "Export to Excel",
+    exporting: "Exporting…",
+
     // Bulk import
     import_assets: "Import assets",
     import_modal_title: "Bulk import assets",
@@ -783,6 +786,9 @@ export const translations = {
     loan_post_check: "Pemeriksaan pengembalian",
     loan_delivered_at: "Diserahkan",
     loan_returned_at: "Dikembalikan",
+
+    export_excel: "Ekspor ke Excel",
+    exporting: "Mengekspor…",
 
     // Bulk import
     import_assets: "Impor aset",

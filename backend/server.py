@@ -867,6 +867,76 @@ def _parse_import_file(content: bytes, filename: str) -> list:
     return rows
 
 
+@api.get("/assets/export")
+async def export_assets(
+    user: dict = Depends(get_current_user),
+    search:      Optional[str] = None,
+    category:    Optional[str] = None,
+    status:      Optional[str] = None,
+    campus:      Optional[str] = None,
+    location:    Optional[str] = None,
+    assigned_to: Optional[str] = None,
+):
+    import openpyxl
+    conn = get_conn()
+    conditions, params = [], []
+    if category:    conditions.append("category = ?");              params.append(category)
+    if status:      conditions.append("status = ?");                params.append(status)
+    if campus:      conditions.append("campus = ?");                params.append(campus)
+    if location:    conditions.append("location = ?");              params.append(location)
+    if assigned_to: conditions.append("assigned_to_user_id = ?");   params.append(assigned_to)
+    if search:
+        conditions.append("(name LIKE ? OR asset_tag LIKE ? OR serial_number LIKE ?)")
+        like = f"%{search}%"
+        params.extend([like, like, like])
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    rows = conn.execute(
+        f"SELECT * FROM assets {where} ORDER BY name", params
+    ).fetchall()
+    conn.close()
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Assets"
+    headers = [
+        "Tag", "Asset Name", "Serial Number", "Category", "Asset Type",
+        "Campus", "Room / Location", "Status", "Assigned To",
+        "Purchase Price (USD)", "Purchase Date", "Useful Life (yrs)",
+        "Warranty End", "Supplier", "Description", "Created At",
+    ]
+    ws.append(headers)
+    _style_header(ws)
+
+    for r in rows:
+        d = dict(r)
+        ws.append([
+            d.get("asset_tag") or "",
+            d.get("name") or "",
+            d.get("serial_number") or "",
+            d.get("category") or "",
+            d.get("asset_type") or "",
+            d.get("campus") or "",
+            d.get("location") or "",
+            d.get("status") or "",
+            d.get("assigned_to_name") or "",
+            d.get("purchase_price") or 0,
+            d["purchase_date"][:10] if d.get("purchase_date") else "",
+            d.get("useful_life_years") or "",
+            d["warranty_end_date"][:10] if d.get("warranty_end_date") else "",
+            d.get("supplier") or "",
+            d.get("description") or "",
+            d["created_at"][:10] if d.get("created_at") else "",
+        ])
+
+    # Auto-size columns
+    for col in ws.columns:
+        max_len = max((len(str(c.value or "")) for c in col), default=10)
+        ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 40)
+
+    today = datetime.now().strftime("%Y%m%d")
+    return _xlsx_response(wb, f"assets-export-{today}.xlsx")
+
+
 @api.get("/assets/import-template")
 async def download_import_template(_: dict = Depends(admin_required)):
     header = ",".join(IMPORT_COLUMNS)
