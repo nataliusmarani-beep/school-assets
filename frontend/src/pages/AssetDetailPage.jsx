@@ -13,6 +13,7 @@ import { useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
 import { isAdminRole } from "../lib/roles";
 import { ownerName } from "../lib/format";
+import PhotoZoomDialog from "../components/assets/PhotoZoomDialog";
 import {
   ArrowLeft, ArrowRightLeft, Wrench, Edit, Trash2, Download,
   FileText, Calendar, ShieldCheck, Building2, User as UserIcon, Tag, BookOpen,
@@ -26,6 +27,7 @@ export default function AssetDetailPage() {
   const [asset, setAsset] = useState(null);
   const [loading, setLoading] = useState(true);
   const [photoUrl, setPhotoUrl] = useState(null);
+  const [zoomOpen, setZoomOpen] = useState(false);
 
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferTo, setTransferTo] = useState("");
@@ -429,11 +431,13 @@ export default function AssetDetailPage() {
         </div>
       </div>
 
+      {photoUrl && <PhotoZoomDialog open={zoomOpen} onOpenChange={setZoomOpen} src={photoUrl} title={asset.name} />}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-1 space-y-6">
           <div className="bg-white border border-slate-200 aspect-video overflow-hidden">
             {photoUrl ? (
-              <img src={photoUrl} alt={asset.name} className="w-full h-full object-cover" />
+              <img src={photoUrl} alt={asset.name} className="w-full h-full object-cover cursor-zoom-in" onClick={() => setZoomOpen(true)} data-testid="asset-photo" />
             ) : (
               <div className="w-full h-full flex items-center justify-center bg-slate-50 text-xs text-slate-400">
                 No photo
