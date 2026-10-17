@@ -1673,10 +1673,13 @@ async def list_assets(
         params.extend(sp)
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     rows = conn.execute(f"SELECT * FROM assets {where} ORDER BY created_at DESC", params).fetchall()
-    conn.close()
     assets = [row_to_dict(r) for r in rows]
+    pend = {r["asset_id"]: {"to_name": r["to_name"], "created_at": r["created_at"]}
+            for r in conn.execute("SELECT asset_id, to_name, created_at FROM assignments WHERE status = 'pending'")}
+    conn.close()
     for a in assets:
         a["depreciation"] = calc_depreciation(a["purchase_price"], a["purchase_date"], a.get("useful_life_years", 5), a.get("residual_value") or 0)
+        a["pending_assignment"] = pend.get(a["id"])
     return assets
 
 

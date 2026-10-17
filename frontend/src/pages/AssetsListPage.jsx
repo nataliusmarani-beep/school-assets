@@ -358,6 +358,8 @@ export default function AssetsListPage() {
     }
   };
 
+  const selectable = assets.filter((a) => !a.pending_assignment);
+
   const load = () => {
     setLoading(true);
     const params = {};
@@ -491,8 +493,8 @@ export default function AssetsListPage() {
                 {isAdmin && (
                   <th className="py-3 px-4 w-8">
                     <input type="checkbox" data-testid="select-all-assets"
-                      checked={assets.length > 0 && assets.every((a) => selected.has(a.id))}
-                      onChange={(e) => setSelected(e.target.checked ? new Set(assets.map((a) => a.id)) : new Set())} />
+                      checked={selectable.length > 0 && selectable.every((a) => selected.has(a.id))}
+                      onChange={(e) => setSelected(e.target.checked ? new Set(selectable.map((a) => a.id)) : new Set())} />
                   </th>
                 )}
                 <th className="text-left font-medium label-mono py-3 px-4">{t("col_tag")}</th>
@@ -522,7 +524,8 @@ export default function AssetsListPage() {
                   <tr key={a.id} className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer" data-testid={`asset-row-${a.id}`}>
                     {isAdmin && (
                       <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
-                        <input type="checkbox" data-testid={`asset-select-${a.id}`} checked={selected.has(a.id)}
+                        <input type="checkbox" data-testid={`asset-select-${a.id}`} checked={selected.has(a.id)} disabled={!!a.pending_assignment}
+                          title={a.pending_assignment ? t("pending_banner").replace("{name}", a.pending_assignment.to_name) : undefined}
                           onChange={() => setSelected((s) => { const n = new Set(s); n.has(a.id) ? n.delete(a.id) : n.add(a.id); return n; })} />
                       </td>
                     )}
@@ -543,7 +546,17 @@ export default function AssetsListPage() {
                       ) : "—"}
                     </td>
                     <td className="py-3 px-4 text-slate-700">{a.location}</td>
-                    <td className="py-3 px-4 text-slate-700">{ownerName(a.assigned_to_name) || "—"}</td>
+                    <td className="py-3 px-4 text-slate-700">
+                      {ownerName(a.assigned_to_name) || "—"}
+                      {a.pending_assignment && (
+                        <div className="mt-1" data-testid={`awaiting-${a.id}`}>
+                          <span className="inline-flex items-center px-2 py-0.5 text-xs border bg-amber-50 text-amber-800 border-amber-300"
+                            title={t("pending_banner").replace("{name}", a.pending_assignment.to_name)}>
+                            {t("awaiting_confirmation")} · {ownerName(a.pending_assignment.to_name)}
+                          </span>
+                        </div>
+                      )}
+                    </td>
                     <td className="py-3 px-4">
                       <span className={`inline-flex items-center px-2 py-0.5 text-xs border ${cls}`}>
                         {t(STATUS_KEYS[a.status] || "status_active")}
