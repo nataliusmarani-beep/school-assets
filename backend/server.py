@@ -11,6 +11,9 @@ import json
 import logging
 import io
 import csv
+import time
+import threading
+import urllib.request
 import smtplib
 import bcrypt
 import jwt
@@ -769,6 +772,65 @@ async def list_due_reminders(days: int = 30, _: dict = Depends(admin_required)):
 @api.post("/reminders/send-now")
 async def send_reminders_now(_: dict = Depends(admin_required)):
     return send_asset_due_reminders(force=True)
+
+
+# ---- Exchange rate (USD -> IDR) for the Indonesian-language view ----
+# Amounts are stored in USD; the UI multiplies by this rate when the language is ID.
+# Live source: ExchangeRate-API open endpoint (no key, refreshed daily). Cached for 12 h;
+# if it cannot be reached we keep the last good rate, else USD_IDR_RATE, else a built-in estimate.
+FX_API_URL = os.environ.get("FX_API_URL", "https://open.er-api.com/v6/latest/USD")
+FX_CACHE_TTL = 12 * 3600        # seconds a fetched rate is considered fresh
+FX_RETRY_AFTER = 15 * 60        # seconds to wait before retrying after a failed fetch
+try:
+    FX_FALLBACK_RATE = float(os.environ.get("USD_IDR_RATE") or 17950)
+except ValueError:
+    FX_FALLBACK_RATE = 17950.0
+_fx_cache = {"rate": None, "as_of": None, "fetched_at": 0.0, "last_attempt": 0.0}
+_fx_lock = threading.Lock()
+
+
+def _fetch_live_usd_idr() -> tuple:
+    """Return (rate, as_of 'YYYY-MM-DD'). Raises on any problem."""
+    req = urllib.request.Request(FX_API_URL, headers={"User-Agent": "ypj-school-assets/1.0"})
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    if data.get("result") != "success":
+        raise ValueError(f"unexpected response: {data.get('result')}")
+    rate = float(data["rates"]["IDR"])
+    if not (5000 < rate < 50000):                      # sanity check
+        raise ValueError(f"implausible IDR rate {rate}")
+    as_of = None
+    try:
+        as_of = datetime.strptime(data["time_last_update_utc"], "%a, %d %b %Y %H:%M:%S %z").date().isoformat()
+    except Exception:
+        as_of = datetime.now(timezone.utc).date().isoformat()
+    return rate, as_of
+
+
+def get_usd_idr_rate(now: float = None) -> dict:
+    now = time.time() if now is None else now
+    with _fx_lock:
+        c = _fx_cache
+        fresh = c["rate"] is not None and now - c["fetched_at"] < FX_CACHE_TTL
+        may_retry = now - c["last_attempt"] >= FX_RETRY_AFTER
+        if not fresh and may_retry:
+            c["last_attempt"] = now
+            try:
+                c["rate"], c["as_of"] = _fetch_live_usd_idr()
+                c["fetched_at"] = now
+                fresh = True
+            except Exception as exc:
+                logger.warning("USD/IDR rate fetch failed: %s", exc)
+        if c["rate"] is not None:
+            return {"currency": "IDR", "rate": round(c["rate"], 2), "as_of": c["as_of"],
+                    "source": "live" if fresh else "cached"}
+    return {"currency": "IDR", "rate": FX_FALLBACK_RATE, "as_of": None, "source": "fallback"}
+
+
+@api.get("/fx")
+def get_fx_rate():
+    """Public (no secrets). Sync def so FastAPI runs the blocking fetch in a worker thread."""
+    return get_usd_idr_rate()
 
 
 # ---- Auth endpoints ----

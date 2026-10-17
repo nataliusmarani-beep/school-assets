@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import api, { fmtCurrency, fmtDate, formatErr } from "../lib/api";
+import api, { fmtCurrency, fmtAxisCurrency, fmtDate, formatErr } from "../lib/api";
 import { Button } from "../components/ui/button";
 import { toast } from "sonner";
 import { useLang } from "../context/LangContext";
@@ -28,7 +28,7 @@ function MetricCard({ label, value, hint, icon: Icon, testid }) {
 }
 
 export default function DashboardPage() {
-  const { t } = useLang();
+  const { t, lang, fx } = useLang();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   const [stats, setStats] = useState(null);
@@ -89,6 +89,16 @@ export default function DashboardPage() {
           icon={Wrench} hint={`${stats.compliance_overdue} ${t("compliance_overdue")}`} />
       </div>
 
+      {lang === "ID" && (
+        <p className="text-xs text-slate-500 -mt-5 mb-8" data-testid="fx-note">
+          {(fx.source === "fallback" ? t("fx_note_fallback") : t("fx_note"))
+            .replace("{rate}", new Intl.NumberFormat("id-ID", { maximumFractionDigits: 0 }).format(fx.rate))
+            .replace("{date}", fx.as_of
+              ? new Date(fx.as_of).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })
+              : "-")}
+        </p>
+      )}
+
       {/* Chart + Compliance */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
         <div className="lg:col-span-2 bg-white border border-slate-200 p-6">
@@ -109,7 +119,7 @@ export default function DashboardPage() {
                 </defs>
                 <CartesianGrid stroke="#e2e8f0" vertical={false} />
                 <XAxis dataKey="year" stroke="#64748b" fontSize={12} tickLine={false} />
-                <YAxis stroke="#64748b" fontSize={12} tickLine={false} tickFormatter={(v) => `$${(v/1000).toFixed(0)}k`} />
+                <YAxis stroke="#64748b" fontSize={12} tickLine={false} width={lang === "ID" ? 78 : 60} tickFormatter={fmtAxisCurrency} />
                 <Tooltip formatter={(v) => fmtCurrency(v)} contentStyle={{ background:"white", border:"1px solid #e2e8f0", borderRadius:0, fontSize:12 }} />
                 <Area type="monotone" dataKey="value" stroke="#047857" strokeWidth={2} fill="url(#dep)" />
               </AreaChart>

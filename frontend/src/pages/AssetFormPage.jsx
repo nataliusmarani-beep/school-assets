@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import api, { formatErr } from "../lib/api";
 import { Input } from "../components/ui/input";
@@ -51,6 +51,48 @@ function TextField({ label, value, onChange, testid, mono, required, placeholder
       <Input type={type} step={step} min={min} value={value ?? ""} required={required}
         placeholder={placeholder} onChange={(e) => onChange(e.target.value)}
         className={`${FIELD_CLS} ${mono ? "font-mono" : ""}`} data-testid={testid} />
+    </div>
+  );
+}
+
+// Money input. The form always holds USD (what the API stores); in ID mode the user types
+// and sees Rupiah, converted with the current rate. Untouched values are never re-converted.
+function MoneyField({ label, usd, onChangeUsd, required, testid, min, span2 }) {
+  const { lang, fx } = useLang();
+  const idr = lang === "ID";
+  const toText = (u) => {
+    if (u === "" || u == null || Number.isNaN(Number(u))) return "";
+    const n = Number(u);
+    return idr ? String(Math.round(n * fx.rate)) : String(n);
+  };
+  const [text, setText] = useState(() => toText(usd));
+  const lastUsd = useRef(usd);
+
+  // value changed from outside (e.g. asset loaded for editing)
+  useEffect(() => {
+    if (usd !== lastUsd.current) { lastUsd.current = usd; setText(toText(usd)); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usd]);
+  // language or rate changed -> re-render the same USD value in the other currency
+  useEffect(() => {
+    setText(toText(usd));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idr, fx.rate]);
+
+  const onChange = (e) => {
+    const v = e.target.value;
+    setText(v);
+    const n = parseFloat(v);
+    const u = v === "" || Number.isNaN(n) ? "" : (idr ? n / fx.rate : n);
+    lastUsd.current = u;
+    onChangeUsd(u);
+  };
+
+  return (
+    <div className={span2 ? "md:col-span-2" : ""}>
+      <Label className="label-mono">{label}</Label>
+      <Input type="number" step={idr ? "1" : "0.01"} min={min} value={text} required={required}
+        onChange={onChange} className={`${FIELD_CLS} font-mono`} data-testid={testid} />
     </div>
   );
 }
@@ -322,8 +364,8 @@ export default function AssetFormPage() {
             testid="asset-supplier-input"/>
           <TextField label={t("po_number")} value={form.po_number} onChange={(v)=>update("po_number",v)}
             placeholder={t("po_placeholder")} mono testid="asset-po-input"/>
-          <TextField label={t("purchase_price")} type="number" step="0.01" value={form.purchase_price}
-            onChange={(v)=>update("purchase_price",v)} required mono testid="asset-price-input"/>
+          <MoneyField label={t("purchase_price")} usd={form.purchase_price}
+            onChangeUsd={(v)=>update("purchase_price",v)} required testid="asset-price-input"/>
           <TextField label={t("funding_source")} value={form.funding_source} onChange={(v)=>update("funding_source",v)}
             placeholder={t("funding_placeholder")} testid="asset-funding-input"/>
         </Section>
@@ -367,8 +409,8 @@ export default function AssetFormPage() {
             onChange={(v)=>update("last_maintenance_date",v)} testid="asset-last-maintenance-input"/>
           <TextField label={t("next_maintenance")} type="date" value={form.next_maintenance_date}
             onChange={(v)=>update("next_maintenance_date",v)} testid="asset-next-maintenance-input"/>
-          <TextField label={t("maintenance_cost")} type="number" step="0.01" min="0" value={form.maintenance_cost}
-            onChange={(v)=>update("maintenance_cost",v)} mono testid="asset-maintenance-cost-input"/>
+          <MoneyField label={t("maintenance_cost")} usd={form.maintenance_cost} min="0"
+            onChangeUsd={(v)=>update("maintenance_cost",v)} testid="asset-maintenance-cost-input"/>
         </Section>
 
         {/* Section 6: Warranty */}
@@ -385,8 +427,8 @@ export default function AssetFormPage() {
         <Section title={t("section_financials")}>
           <TextField label={t("useful_life")} type="number" min="1" value={form.useful_life_years}
             onChange={(v)=>update("useful_life_years",v)} required testid="asset-life-input"/>
-          <TextField label={t("residual_value")} type="number" step="0.01" min="0" value={form.residual_value}
-            onChange={(v)=>update("residual_value",v)} mono testid="asset-residual-input"/>
+          <MoneyField label={t("residual_value")} usd={form.residual_value} min="0"
+            onChangeUsd={(v)=>update("residual_value",v)} testid="asset-residual-input"/>
         </Section>
 
         {/* Section 8: Media */}

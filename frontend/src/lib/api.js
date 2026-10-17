@@ -30,12 +30,44 @@ export function formatErr(err) {
   return JSON.stringify(detail);
 }
 
+// ---- Currency ----
+// Amounts are stored in USD. When the UI language is Indonesian (ID) they are shown in
+// Rupiah using the current USD->IDR rate (fetched from /api/fx by LangProvider).
+export const FX_FALLBACK_RATE = 17950;
+const fxState = { lang: "EN", rate: FX_FALLBACK_RATE };
+
+export function setCurrencyContext(lang, rate) {
+  fxState.lang = lang;
+  if (rate > 0) fxState.rate = rate;
+}
+
+export const isRupiah = () => fxState.lang === "ID";
+
 export function fmtCurrency(v) {
+  const n = Number(v) || 0;
+  if (isRupiah()) {
+    return new Intl.NumberFormat("id-ID", {
+      style: "currency",
+      currency: "IDR",
+      maximumFractionDigits: 0,
+    }).format(n * fxState.rate);
+  }
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
     maximumFractionDigits: 0,
-  }).format(v || 0);
+  }).format(n);
+}
+
+// Short label for chart axes: $12k  /  Rp 1,2 M
+export function fmtAxisCurrency(v) {
+  const n = Number(v) || 0;
+  if (isRupiah()) {
+    const short = new Intl.NumberFormat("id-ID", { notation: "compact", maximumFractionDigits: 1 })
+      .format(n * fxState.rate);
+    return `Rp ${short}`;
+  }
+  return `$${(n / 1000).toFixed(0)}k`;
 }
 
 export function fmtDate(iso) {
