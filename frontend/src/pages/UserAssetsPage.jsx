@@ -7,6 +7,7 @@ import AssetBundle from "../components/assets/AssetBundle";
 import HandoverDialog from "../components/assets/HandoverDialog";
 import { toast } from "sonner";
 import { Users, Boxes, PackageX, Clock, ArrowRightLeft } from "lucide-react";
+import { ownerName } from "../lib/format";
 
 function Kpi({ label, value, icon: Icon, testid }) {
   return (
@@ -84,7 +85,7 @@ export default function UserAssetsPage() {
                   <span className="font-medium text-slate-900">{p.asset_name}</span>
                   <span className="font-mono text-xs text-slate-500 ml-2">({p.asset_tag})</span>
                   <div className="text-xs text-slate-500">
-                    {(p.from_name || t("ma_new_asset"))} → <span className="text-slate-800 font-medium">{p.to_name}</span> · {fmtDate(p.created_at)}
+                    {(ownerName(p.from_name) || t("ma_new_asset"))} → <span className="text-slate-800 font-medium">{ownerName(p.to_name)}</span> · {fmtDate(p.created_at)}
                   </div>
                 </div>
                 <span className="text-xs px-2 py-0.5 border bg-slate-50 text-slate-600 border-slate-200">

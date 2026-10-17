@@ -14,6 +14,7 @@ import {
 } from "../components/ui/select";
 import { Search, Plus, Filter, Upload, Download, CheckCircle2, XCircle, FileText, FileSpreadsheet } from "lucide-react";
 import { isAdminRole } from "../lib/roles";
+import { ownerName } from "../lib/format";
 
 const CAMPUSES = ["YPJ Kuala Kencana", "YPJ Tembagapura"];
 
@@ -518,7 +519,7 @@ export default function AssetsListPage() {
                       ) : "—"}
                     </td>
                     <td className="py-3 px-4 text-slate-700">{a.location}</td>
-                    <td className="py-3 px-4 text-slate-700">{a.assigned_to_name || "—"}</td>
+                    <td className="py-3 px-4 text-slate-700">{ownerName(a.assigned_to_name) || "—"}</td>
                     <td className="py-3 px-4">
                       <span className={`inline-flex items-center px-2 py-0.5 text-xs border ${cls}`}>
                         {t(STATUS_KEYS[a.status] || "status_active")}

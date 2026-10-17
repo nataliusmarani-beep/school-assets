@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { toast } from "sonner";
 import { ArrowRightLeft, CheckCircle2, XCircle } from "lucide-react";
 import { isAdminRole } from "../lib/roles";
+import { ownerName } from "../lib/format";
 
 const STATUS_META = {
   pending:  { bg: "bg-amber-50 text-amber-700 border-amber-200" },
@@ -39,9 +40,9 @@ function RequestCard({ req, t, isAdmin, onApprove, onReject }) {
           </div>
 
           <div className="flex items-center gap-2 text-sm text-slate-600 mb-2">
-            <span className="text-slate-400">{req.from_name || t("tr_unassigned")}</span>
+            <span className="text-slate-400">{ownerName(req.from_name) || t("tr_unassigned")}</span>
             <ArrowRightLeft className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" strokeWidth={1.75} />
-            <span className="font-medium text-slate-900">{req.to_name}</span>
+            <span className="font-medium text-slate-900">{ownerName(req.to_name)}</span>
           </div>
 
           {req.note && (

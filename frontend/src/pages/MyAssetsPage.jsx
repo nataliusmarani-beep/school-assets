@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import AssetBundle from "../components/assets/AssetBundle";
 import { toast } from "sonner";
 import { Boxes, Users, Clock, Wallet, PackageCheck } from "lucide-react";
+import { ownerName } from "../lib/format";
 
 function Kpi({ label, value, icon: Icon, testid, accent }) {
   return (
@@ -106,7 +107,7 @@ export default function MyAssetsPage() {
                   <div className="text-xs text-slate-500 mt-1 flex gap-x-3 gap-y-1 flex-wrap">
                     {p.location && <span>{p.location}</span>}
                     <span>{t("ma_by")} <span className="text-slate-700">{p.created_by_name}</span></span>
-                    <span>{t("ma_from")} <span className="text-slate-700">{p.from_name || t("ma_new_asset")}</span></span>
+                    <span>{t("ma_from")} <span className="text-slate-700">{ownerName(p.from_name) || t("ma_new_asset")}</span></span>
                     <span>{t("ma_waiting_days").replace("{n}", daysSince(p.created_at))}</span>
                   </div>
                   {p.note && <div className="text-xs text-slate-500 italic mt-1">"{p.note}"</div>}

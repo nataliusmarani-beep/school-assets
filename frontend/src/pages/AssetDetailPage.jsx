@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
 import { isAdminRole } from "../lib/roles";
+import { ownerName } from "../lib/format";
 import {
   ArrowLeft, ArrowRightLeft, Wrench, Edit, Trash2, Download,
   FileText, Calendar, ShieldCheck, Building2, User as UserIcon, Tag, BookOpen,
@@ -444,7 +445,7 @@ export default function AssetDetailPage() {
             <div className="label-mono">{t("quick_facts")}</div>
             <Detail icon={Building2} label={t("campus")} value={asset.campus || "—"}/>
             <Detail icon={Building2} label={t("col_room")} value={asset.location}/>
-            <Detail icon={UserIcon} label={t("assigned_to")} value={asset.assigned_to_name || "—"}/>
+            <Detail icon={UserIcon} label={t("assigned_to")} value={ownerName(asset.assigned_to_name) || "—"}/>
             <Detail icon={Calendar} label={t("purchased")} value={fmtDate(asset.purchase_date)}/>
             <Detail icon={ShieldCheck} label={t("warranty_until")} value={fmtDate(asset.warranty_end_date)}/>
           </div>
@@ -483,7 +484,7 @@ export default function AssetDetailPage() {
                 <Field label={t("unit")} value={opt("unit", asset.unit)}/>
                 <Field label={t("building")} value={asset.building || "—"}/>
                 <Field label={t("room_location")} value={asset.location || "—"}/>
-                <Field label={t("initial_owner")} value={asset.assigned_to_name || "—"}/>
+                <Field label={t("initial_owner")} value={ownerName(asset.assigned_to_name) || "—"}/>
                 <Field label={t("asset_department")} value={asset.department || "—"}/>
                 <Field label={t("user_type")} value={opt("ut", asset.user_type)}/>
               </DetailGroup>
@@ -542,10 +543,10 @@ export default function AssetDetailPage() {
                     <li key={h.id} className="pl-6 relative">
                       <div className="absolute -left-[7px] top-1 w-3 h-3 bg-blue-700"/>
                       <div className="text-sm font-medium text-slate-900">
-                        {t("transferred_to")} <span className="text-blue-800">{h.to_name}</span>
+                        {t("transferred_to")} <span className="text-blue-800">{ownerName(h.to_name)}</span>
                       </div>
                       <div className="text-xs text-slate-500 mt-1">
-                        {h.from_name || "—"} · {h.by_name} · {fmtDate(h.at)}
+                        {ownerName(h.from_name) || "—"} · {h.by_name} · {fmtDate(h.at)}
                       </div>
                       {h.note && <div className="text-sm text-slate-600 mt-2 italic">"{h.note}"</div>}
                     </li>

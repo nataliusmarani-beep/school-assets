@@ -4,6 +4,7 @@ import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../ui/dialog";
 import { toast } from "sonner";
+import { ownerName } from "../../lib/format";
 
 const SEL = "mt-2 w-full h-10 px-3 text-sm border border-slate-300 bg-white rounded-none";
 
@@ -105,7 +106,7 @@ export default function HandoverDialog({ open, onOpenChange, t, onDone }) {
                         </span>
                         <span className="text-xs text-slate-500">
                           {pendingIds.has(a.id) ? t("ho_waiting")
-                            : a.assigned_to_name ? t("ho_current").replace("{name}", a.assigned_to_name) : ""}
+                            : a.assigned_to_name ? t("ho_current").replace("{name}", ownerName(a.assigned_to_name)) : ""}
                         </span>
                       </label>
                     );
