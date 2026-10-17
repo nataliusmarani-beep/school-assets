@@ -548,6 +548,9 @@ export default function AssetsListPage() {
                     <td className="py-3 px-4 text-slate-700">{a.location}</td>
                     <td className="py-3 px-4 text-slate-700">
                       {ownerName(a.assigned_to_name) || "—"}
+                      {a.handover_flag === "discrepancy" && (
+                        <div className="mt-1"><span className="inline-flex items-center px-2 py-0.5 text-xs border bg-rose-50 text-rose-700 border-rose-200">{t("cr_discrepancy")}</span></div>
+                      )}
                       {a.pending_assignment && (
                         <div className="mt-1" data-testid={`awaiting-${a.id}`}>
                           <span className="inline-flex items-center px-2 py-0.5 text-xs border bg-amber-50 text-amber-800 border-amber-300"

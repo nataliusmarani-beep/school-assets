@@ -339,6 +339,33 @@ def init_db():
         created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_pwtok_user ON password_tokens(user_id);
+    CREATE TABLE IF NOT EXISTS classrooms (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        campus TEXT NOT NULL DEFAULT '',
+        room_type TEXT NOT NULL DEFAULT 'kelas',
+        responsible_user_id TEXT,
+        responsible_name TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS classroom_handovers (
+        id TEXT PRIMARY KEY,
+        classroom_id TEXT NOT NULL,
+        classroom_name TEXT NOT NULL,
+        from_user_id TEXT,
+        from_name TEXT,
+        to_user_id TEXT NOT NULL,
+        to_name TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        note TEXT DEFAULT '',
+        created_by TEXT NOT NULL,
+        created_by_name TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        completed_at TEXT,
+        accepted_count INTEGER DEFAULT 0,
+        discrepancy_count INTEGER DEFAULT 0
+    );
     CREATE INDEX IF NOT EXISTS idx_assign_to ON assignments(to_user_id, status);
     CREATE INDEX IF NOT EXISTS idx_assign_asset ON assignments(asset_id, status);
     """)
@@ -390,6 +417,11 @@ def init_db():
     asset_cols = [r[1] for r in conn.execute("PRAGMA table_info(assets)").fetchall()]
     if "assignment_kind" not in asset_cols:
         conn.execute("ALTER TABLE assets ADD COLUMN assignment_kind TEXT NOT NULL DEFAULT 'personal'")
+    if "handover_flag" not in asset_cols:
+        conn.execute("ALTER TABLE assets ADD COLUMN handover_flag TEXT NOT NULL DEFAULT ''")
+    as_cols = [r[1] for r in conn.execute("PRAGMA table_info(assignments)").fetchall()]
+    if "applied" not in as_cols:
+        conn.execute("ALTER TABLE assignments ADD COLUMN applied INTEGER NOT NULL DEFAULT 1")
     tr_cols = [r[1] for r in conn.execute("PRAGMA table_info(transfer_requests)").fetchall()]
     if "to_user_id" not in tr_cols:
         conn.execute("ALTER TABLE transfer_requests ADD COLUMN to_user_id TEXT")
@@ -397,6 +429,7 @@ def init_db():
     backfill_assignee_user_ids(conn)
     reset_free_text_owners(conn)
     migrate_money_to_idr(conn)
+    sync_classrooms(conn)
     conn.close()
 
 
@@ -1629,7 +1662,7 @@ def asset_permissions(conn, user: dict, asset: dict) -> dict:
     holder = asset.get("assigned_to_user_id") == user["id"]
     return {
         "can_report": admin or holder or has_active_loan(conn, user, asset["id"]),
-        "can_transfer": admin or holder,
+        "can_transfer": admin or (holder and (asset.get("assignment_kind") or "personal") != "class"),
         "can_loan": loan_block_reason(user, asset) is None,
         "loan_block_reason": loan_block_reason(user, asset),
     }
@@ -1675,7 +1708,8 @@ async def list_assets(
     rows = conn.execute(f"SELECT * FROM assets {where} ORDER BY created_at DESC", params).fetchall()
     assets = [row_to_dict(r) for r in rows]
     pend = {r["asset_id"]: {"to_name": r["to_name"], "created_at": r["created_at"]}
-            for r in conn.execute("SELECT asset_id, to_name, created_at FROM assignments WHERE status = 'pending'")}
+            for r in conn.execute("SELECT asset_id, to_name, created_at FROM assignments "
+                                  "WHERE status = 'pending' OR (status = 'accepted' AND applied = 0)")}
     conn.close()
     for a in assets:
         a["depreciation"] = calc_depreciation(a["purchase_price"], a["purchase_date"], a.get("useful_life_years", 5), a.get("residual_value") or 0)
@@ -2531,10 +2565,13 @@ class TransferRequestIn(BaseModel):
 @api.post("/transfer-requests")
 async def create_transfer_request(asset_id: str, body: TransferRequestIn, user: dict = Depends(get_current_user)):
     conn = get_conn()
-    asset = conn.execute("SELECT id, name, asset_tag, assigned_to_name, assigned_to_user_id FROM assets WHERE id = ?", (asset_id,)).fetchone()
+    asset = conn.execute("SELECT id, name, asset_tag, assigned_to_name, assigned_to_user_id, assignment_kind FROM assets WHERE id = ?", (asset_id,)).fetchone()
     if not asset:
         conn.close()
         raise HTTPException(404, "Asset not found")
+    if not is_admin_user(user) and asset["assignment_kind"] == "class":
+        conn.close()
+        raise HTTPException(403, "Aset kelas hanya dapat dipindahkan oleh Admin lewat serah terima kelas.")
     if not is_admin_user(user) and asset["assigned_to_user_id"] != user["id"]:
         conn.close()
         raise HTTPException(403, "Anda hanya dapat meminta transfer untuk aset yang di-assign kepada Anda.")
@@ -2696,7 +2733,8 @@ def _supervisor_cc(conn, user_ids, exclude=()) -> list:
 
 
 def pending_assignment(conn, asset_id):
-    r = conn.execute("SELECT * FROM assignments WHERE asset_id = ? AND status = 'pending'", (asset_id,)).fetchone()
+    r = conn.execute("SELECT * FROM assignments WHERE asset_id = ? AND (status = 'pending' OR (status = 'accepted' AND applied = 0))",
+                     (asset_id,)).fetchone()
     return dict(r) if r else None
 
 
@@ -2738,8 +2776,12 @@ def apply_assignment(conn, a: dict, ts: str):
           label, a["to_user_id"], ((a.get("note") or "") + " — dikonfirmasi penerima").strip(" —"),
           a["created_by"], a["created_by_name"], ts))
     conn.execute(
-        "UPDATE assets SET assigned_to_name=?, assigned_to_user_id=?, assignment_kind=?, updated_at=? WHERE id=?",
+        "UPDATE assets SET assigned_to_name=?, assigned_to_user_id=?, assignment_kind=?, handover_flag='', updated_at=? WHERE id=?",
         (label, a["to_user_id"], a["kind"], ts, a["asset_id"]))
+    if a["kind"] == "class" and (asset.get("location") or "").strip():
+        # first confirmed class holder of a room that has no responsible teacher yet becomes its responsible teacher
+        conn.execute("""UPDATE classrooms SET responsible_user_id=?, responsible_name=?, updated_at=? WHERE campus=? AND LOWER(name)=? AND responsible_user_id IS NULL""",
+                     (a["to_user_id"], a["to_name"], ts, asset.get("campus") or "", _room_key(asset["location"])))
 
 
 # ---- E-mails ----
@@ -2759,10 +2801,14 @@ def _assignment_items_html(items: list) -> str:
             f"{rows}</table>")
 
 
-def _assignment_request_html(to_name: str, items: list, by_name: str, note: str = "", reminder: bool = False) -> str:
+def _assignment_request_html(to_name: str, items: list, by_name: str, note: str = "", reminder: bool = False,
+                             room_name: str = None) -> str:
     import html as _h
     n = len(items)
-    lead = ("Pengingat: ada serah terima aset yang <strong>belum Anda konfirmasi</strong>." if reminder else
+    what = f"serah terima kelas <strong>{_h.escape(room_name)}</strong>" if room_name else "serah terima aset"
+    lead = (f"Pengingat: ada {what} yang <strong>belum Anda periksa</strong>." if reminder and room_name else
+            "Pengingat: ada serah terima aset yang <strong>belum Anda konfirmasi</strong>." if reminder else
+            f"<strong>{_h.escape(by_name)}</strong> menunjuk Anda sebagai penanggung jawab kelas <strong>{_h.escape(room_name)}</strong> ({n} aset)." if room_name else
             f"<strong>{_h.escape(by_name)}</strong> menyerahkan {n} aset kepada Anda.")
     note_html = (f"<p style='font-size:13px;color:#475569;'>Catatan: {_h.escape(note)}</p>" if note else "")
     return _email_shell(f"""
@@ -2773,8 +2819,9 @@ def _assignment_request_html(to_name: str, items: list, by_name: str, note: str 
         {note_html}
         <div style="border-left:3px solid #f2c14e;background:#fffbeb;padding:10px 14px;font-size:13px;color:#78350f;">
           Aset baru tercatat atas nama Anda setelah Anda memeriksa fisik barangnya dan menekan <strong>Terima</strong>.
-          Jika ada yang tidak sesuai, tekan <strong>Tolak</strong> dan tulis alasannya.
-        </div>""", eyebrow="Serah terima aset", cta_label="Tinjau & konfirmasi", cta_url=f"{APP_URL}/my-assets")
+          Jika ada yang tidak sesuai (tidak ada / rusak), tekan <strong>Tolak</strong> dan tulis alasannya.
+          {'Penanggung jawab kelas baru berlaku setelah <strong>semua aset</strong> diperiksa; sebelum itu guru sebelumnya tetap bertanggung jawab.' if room_name else ''}
+        </div>""", eyebrow="Serah terima kelas" if room_name else "Serah terima aset", cta_label="Tinjau & konfirmasi", cta_url=f"{APP_URL}/my-assets")
 
 
 def _assignment_response_html(a_list: list, accepted: bool, by_name: str, reason: str = "") -> str:
@@ -2812,9 +2859,15 @@ def notify_assignees(assignments: list, reminder: bool = False):
             by = ", ".join(sorted({a["created_by_name"] for a in group}))
             n = len(group)
             subject = (f"[YPJ Assets] {'Pengingat: ' if reminder else ''}Konfirmasi penerimaan {n} aset")
+            room_name = None
+            if group[0].get("source") == "class_handover":
+                hr = conn.execute("SELECT classroom_name FROM classroom_handovers WHERE id = ?", (group[0]["batch_id"],)).fetchone()
+                room_name = hr["classroom_name"] if hr else None
+                if room_name:
+                    subject = (f"[YPJ Assets] {'Pengingat: ' if reminder else ''}Serah terima kelas {room_name} — periksa {n} aset")
             cc = _supervisor_cc(conn, [uid] + [a.get("from_user_id") for a in group], exclude=[email])
             send_email(email, subject,
-                       _assignment_request_html(name, group, by, group[0].get("note") or "", reminder), cc=cc)
+                       _assignment_request_html(name, group, by, group[0].get("note") or "", reminder, room_name), cc=cc)
     finally:
         conn.close()
 
@@ -3037,7 +3090,7 @@ async def respond_assignments(body: RespondIn, user: dict = Depends(get_current_
         raise HTTPException(400, "Please give a reason for rejecting")
     conn = get_conn()
     ts = now_iso()
-    done, errors = [], []
+    done, errors, class_batches = [], [], []
     for rid in dict.fromkeys(body.ids):
         r = conn.execute("SELECT * FROM assignments WHERE id = ?", (rid,)).fetchone()
         if not r:
@@ -3047,18 +3100,30 @@ async def respond_assignments(body: RespondIn, user: dict = Depends(get_current_
             errors.append({"id": rid, "error": "not_recipient"}); continue
         if a["status"] != "pending":
             errors.append({"id": rid, "error": "not_pending"}); continue
+        is_class = a.get("source") == "class_handover"
         if body.action == "accept":
-            apply_assignment(conn, a, ts)
-            conn.execute("UPDATE assignments SET status='accepted', responded_at=? WHERE id=?", (ts, rid))
+            if is_class:  # takes effect when the whole class hand-over is checked
+                conn.execute("UPDATE assignments SET status='accepted', responded_at=?, applied=0 WHERE id=?", (ts, rid))
+            else:
+                apply_assignment(conn, a, ts)
+                conn.execute("UPDATE assignments SET status='accepted', responded_at=? WHERE id=?", (ts, rid))
         else:
             conn.execute("UPDATE assignments SET status='rejected', responded_at=?, reject_reason=? WHERE id=?",
                          (ts, reason, rid))
-        done.append(a)
+            if is_class:
+                conn.execute("UPDATE assets SET handover_flag='discrepancy', updated_at=? WHERE id=?", (ts, a["asset_id"]))
+        if is_class:
+            class_batches.append(a["batch_id"])
+        else:
+            done.append(a)
+    finished = finish_class_handovers(conn, class_batches)
     conn.commit()
     conn.close()
     if done:
         notify_responses(done, body.action == "accept", user["name"], reason)
-    return {"done": len(done), "errors": errors}
+    if finished:
+        notify_class_handover_done(finished)
+    return {"done": len(done) + len(class_batches), "errors": errors}
 
 
 @api.put("/assignments/{rid}/cancel")
@@ -3076,8 +3141,11 @@ async def cancel_assignment(rid: str, user: dict = Depends(get_current_user)):
         conn.close()
         raise HTTPException(400, "Assignment is not pending")
     conn.execute("UPDATE assignments SET status='cancelled', responded_at=? WHERE id=?", (now_iso(), rid))
+    finished = finish_class_handovers(conn, [a["batch_id"]]) if a.get("source") == "class_handover" else []
     conn.commit()
     conn.close()
+    if finished:
+        notify_class_handover_done(finished)
     return {"ok": True}
 
 
@@ -3586,6 +3654,392 @@ async def return_loan(
 
     conn.close()
     return req
+
+
+# ===================================================================
+# Classrooms: class assets belong to the room, not to the teacher
+# ===================================================================
+# A classroom is matched to assets by (campus, location). The responsible teacher changes through a
+# hand-over: the new teacher checks every asset (accept / missing-or-damaged) and the change only takes
+# effect once all items are checked. Items marked missing stay with the previous holder, flagged as a discrepancy.
+ROOM_TYPES = ("kelas", "lab", "kantor", "lainnya")
+ROOM_TYPE_LABEL_ID = {"kelas": "Kelas", "lab": "Laboratorium", "kantor": "Kantor", "lainnya": "Lainnya"}
+
+
+def _guess_room_type(name: str) -> str:
+    n = (name or "").casefold()
+    if "lab" in n:
+        return "lab"
+    if any(w in n for w in ("kantor", "office", "ruang guru", "tata usaha", "perpus", "library")):
+        return "kantor"
+    return "kelas"
+
+
+def _room_key(s) -> str:
+    return " ".join((s or "").split()).casefold()
+
+
+def sync_classrooms(conn):
+    """Make sure every (campus, location) used by an asset has a classroom. Idempotent."""
+    have = {(_room_key(r["campus"]), _room_key(r["name"])) for r in conn.execute("SELECT campus, name FROM classrooms")}
+    ts = now_iso()
+    added = False
+    for r in conn.execute("""SELECT campus, location FROM assets WHERE TRIM(location) != ''
+                             GROUP BY campus, location ORDER BY campus, location""").fetchall():
+        key = (_room_key(r["campus"]), _room_key(r["location"]))
+        if key in have:
+            continue
+        have.add(key)
+        name = " ".join(r["location"].split())
+        holders = conn.execute("""SELECT assigned_to_user_id uid, assigned_to_name nm, COUNT(*) n FROM assets
+            WHERE campus = ? AND LOWER(TRIM(location)) = ? AND assignment_kind = 'class' AND assigned_to_user_id IS NOT NULL
+            GROUP BY assigned_to_user_id ORDER BY n DESC LIMIT 1""", (r["campus"], key[1])).fetchone()
+        conn.execute("""INSERT INTO classrooms (id,name,campus,room_type,responsible_user_id,responsible_name,created_at,updated_at)
+                        VALUES (?,?,?,?,?,?,?,?)""",
+                     (str(uuid.uuid4()), name, r["campus"] or "", _guess_room_type(name),
+                      holders["uid"] if holders else None, ownerName_plain(holders["nm"]) if holders else None, ts, ts))
+        added = True
+    if added:
+        conn.commit()
+
+
+def ownerName_plain(label) -> str:
+    return (label or "").split(" — ")[0].strip()
+
+
+def _room_assets(conn, room: dict) -> list:
+    rows = conn.execute("""SELECT * FROM assets WHERE campus = ? AND LOWER(TRIM(location)) = ? ORDER BY name""",
+                        (room["campus"], _room_key(room["name"]))).fetchall()
+    return [row_to_dict(r) for r in rows]
+
+
+def _is_class_asset(a: dict) -> bool:
+    """Held by the room: marked class, or nobody holds it yet. Personal items of a teacher are not."""
+    return (a.get("assignment_kind") == "class") or not (a.get("assigned_to_user_id") or (a.get("assigned_to_name") or "").strip())
+
+
+def _active_handover(conn, classroom_id):
+    r = conn.execute("SELECT * FROM classroom_handovers WHERE classroom_id = ? AND status = 'pending'", (classroom_id,)).fetchone()
+    return dict(r) if r else None
+
+
+def _handover_progress(conn, h: dict) -> dict:
+    rows = [dict(r) for r in conn.execute("SELECT status, applied FROM assignments WHERE batch_id = ?", (h["id"],)).fetchall()]
+    rows = [r for r in rows if r["status"] != "cancelled"]
+    return {"total": len(rows),
+            "checked": sum(1 for r in rows if r["status"] in ("accepted", "rejected")),
+            "accepted": sum(1 for r in rows if r["status"] == "accepted"),
+            "rejected": sum(1 for r in rows if r["status"] == "rejected")}
+
+
+def _room_summary(conn, room: dict) -> dict:
+    assets = _room_assets(conn, room)
+    live = [a for a in assets if a["status"] not in INACTIVE_STATUSES]
+    out = dict(room)
+    out["asset_count"] = len(live)
+    out["class_count"] = len([a for a in live if _is_class_asset(a)])
+    out["personal_count"] = len(live) - out["class_count"]
+    out["purchase_value"] = sum(a["purchase_price"] or 0 for a in live)
+    out["discrepancy_count"] = len([a for a in live if a.get("handover_flag") == "discrepancy"])
+    h = _active_handover(conn, room["id"])
+    out["handover"] = ({**h, **_handover_progress(conn, h)} if h else None)
+    return out
+
+
+class ClassroomIn(BaseModel):
+    name: str
+    campus: Optional[str] = ""
+    room_type: Optional[str] = "kelas"
+    responsible_user_id: Optional[str] = None
+
+
+class ClassroomUpdateIn(BaseModel):
+    name: Optional[str] = None
+    room_type: Optional[str] = None
+    responsible_user_id: Optional[str] = None
+
+
+class ClassHandoverIn(BaseModel):
+    to_user_id: str
+    asset_ids: Optional[List[str]] = None
+    note: Optional[str] = ""
+
+
+class ResolveIn(BaseModel):
+    asset_ids: List[str]
+
+
+def _get_room(conn, cid):
+    r = conn.execute("SELECT * FROM classrooms WHERE id = ?", (cid,)).fetchone()
+    if not r:
+        conn.close()
+        raise HTTPException(404, "Classroom not found")
+    return dict(r)
+
+
+def _room_visible(user: dict, room: dict) -> bool:
+    if user["role"] in ADMIN_ROLES:
+        return True
+    campus = (user.get("campus") or "").strip()
+    return room.get("responsible_user_id") == user["id"] or bool(campus and room.get("campus") == campus)
+
+
+@api.get("/classrooms")
+async def list_classrooms(user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    sync_classrooms(conn)
+    rooms = [dict(r) for r in conn.execute("SELECT * FROM classrooms ORDER BY campus, name").fetchall()]
+    out = [_room_summary(conn, r) for r in rooms if _room_visible(user, r)]
+    conn.close()
+    return out
+
+
+@api.post("/classrooms")
+async def create_classroom(body: ClassroomIn, _: dict = Depends(admin_required)):
+    name = " ".join((body.name or "").split())
+    if not name:
+        raise HTTPException(400, "Nama kelas wajib diisi")
+    rt = body.room_type if body.room_type in ROOM_TYPES else "kelas"
+    conn = get_conn()
+    sync_classrooms(conn)
+    campus = body.campus or ""
+    if conn.execute("SELECT 1 FROM classrooms WHERE campus = ? AND LOWER(name) = ?", (campus, name.casefold())).fetchone():
+        conn.close()
+        raise HTTPException(409, "Kelas dengan nama ini sudah ada di kampus tersebut")
+    resp = require_user(conn, body.responsible_user_id) if body.responsible_user_id else None
+    cid, ts = str(uuid.uuid4()), now_iso()
+    conn.execute("""INSERT INTO classrooms (id,name,campus,room_type,responsible_user_id,responsible_name,created_at,updated_at)
+                    VALUES (?,?,?,?,?,?,?,?)""", (cid, name, campus, rt, resp["id"] if resp else None,
+                                                  resp["name"] if resp else None, ts, ts))
+    conn.commit()
+    room = _room_summary(conn, _get_room(conn, cid))
+    conn.close()
+    return room
+
+
+@api.put("/classrooms/{cid}")
+async def update_classroom(cid: str, body: ClassroomUpdateIn, _: dict = Depends(admin_required)):
+    conn = get_conn()
+    room = _get_room(conn, cid)
+    ts = now_iso()
+    if body.name is not None:
+        name = " ".join(body.name.split())
+        if not name:
+            conn.close()
+            raise HTTPException(400, "Nama kelas wajib diisi")
+        if _room_key(name) != _room_key(room["name"]) and conn.execute(
+                "SELECT 1 FROM classrooms WHERE campus = ? AND LOWER(name) = ? AND id != ?",
+                (room["campus"], name.casefold(), cid)).fetchone():
+            conn.close()
+            raise HTTPException(409, "Kelas dengan nama ini sudah ada di kampus tersebut")
+        # assets follow the room name (their location text)
+        conn.execute("UPDATE assets SET location = ?, updated_at = ? WHERE campus = ? AND LOWER(TRIM(location)) = ?",
+                     (name, ts, room["campus"], _room_key(room["name"])))
+        conn.execute("UPDATE classrooms SET name = ?, updated_at = ? WHERE id = ?", (name, ts, cid))
+    if body.room_type in ROOM_TYPES:
+        conn.execute("UPDATE classrooms SET room_type = ?, updated_at = ? WHERE id = ?", (body.room_type, ts, cid))
+    if body.responsible_user_id:
+        # only the first assignment is direct; later changes go through a hand-over so the teacher confirms
+        if room.get("responsible_user_id") and room["responsible_user_id"] != body.responsible_user_id:
+            conn.close()
+            raise HTTPException(409, "Penanggung jawab diganti lewat serah terima kelas (dikonfirmasi guru baru)")
+        resp = require_user(conn, body.responsible_user_id)
+        conn.execute("UPDATE classrooms SET responsible_user_id = ?, responsible_name = ?, updated_at = ? WHERE id = ?",
+                     (resp["id"], resp["name"], ts, cid))
+    conn.commit()
+    out = _room_summary(conn, _get_room(conn, cid))
+    conn.close()
+    return out
+
+
+@api.delete("/classrooms/{cid}")
+async def delete_classroom(cid: str, _: dict = Depends(admin_required)):
+    conn = get_conn()
+    room = _get_room(conn, cid)
+    if _room_assets(conn, room):
+        conn.close()
+        raise HTTPException(409, "Kelas masih memiliki aset. Pindahkan asetnya dulu.")
+    conn.execute("DELETE FROM classrooms WHERE id = ?", (cid,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@api.get("/classrooms/{cid}")
+async def classroom_detail(cid: str, user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    room = _get_room(conn, cid)
+    if not _room_visible(user, room):
+        conn.close()
+        raise HTTPException(403, "Not allowed")
+    pend = {r["asset_id"]: dict(r) for r in conn.execute(
+        "SELECT asset_id, to_name, status, source FROM assignments WHERE status = 'pending' OR (status = 'accepted' AND applied = 0)")}
+    assets = []
+    for a in _room_assets(conn, room):
+        a = _slim_asset(a)
+        a["is_class_asset"] = _is_class_asset(a)
+        a["pending_assignment"] = pend.get(a["id"])
+        assets.append(a)
+    out = _room_summary(conn, room)
+    out["assets"] = assets
+    out["history"] = [{**dict(r), **_handover_progress(conn, dict(r))} for r in conn.execute(
+        "SELECT * FROM classroom_handovers WHERE classroom_id = ? ORDER BY created_at DESC LIMIT 20", (cid,)).fetchall()]
+    conn.close()
+    return out
+
+
+@api.post("/classrooms/{cid}/handover")
+async def classroom_handover(cid: str, body: ClassHandoverIn, user: dict = Depends(admin_required)):
+    conn = get_conn()
+    room = _get_room(conn, cid)
+    if _active_handover(conn, cid):
+        conn.close()
+        raise HTTPException(409, "Kelas ini masih punya serah terima yang belum selesai")
+    to_user = resolve_user(conn, user_id=body.to_user_id)
+    if not to_user:
+        conn.close()
+        raise HTTPException(404, "Recipient not found")
+    room_assets = {a["id"]: a for a in _room_assets(conn, room)}
+    ids = body.asset_ids if body.asset_ids else [i for i, a in room_assets.items() if _is_class_asset(a)]
+    hid = str(uuid.uuid4())
+    created, skipped = [], []
+    for aid in dict.fromkeys(ids):
+        asset = room_assets.get(aid)
+        if not asset:
+            skipped.append({"asset_id": aid, "reason": "not_in_room"}); continue
+        if asset["status"] in INACTIVE_STATUSES:
+            skipped.append({"asset_id": aid, "name": asset["name"], "reason": "inactive"}); continue
+        try:
+            created.append(create_assignment(conn, asset, to_user, "class", "class_handover", user,
+                                             note=body.note or "", batch_id=hid, to_label=to_user["name"]))
+        except ValueError as e:
+            skipped.append({"asset_id": aid, "name": asset["name"], "reason": str(e)})
+    if not created:
+        conn.close()
+        raise HTTPException(409, "Tidak ada aset yang dapat diserahterimakan (semua sudah menunggu konfirmasi atau sudah atas nama guru ini)")
+    conn.execute("""INSERT INTO classroom_handovers (id,classroom_id,classroom_name,from_user_id,from_name,to_user_id,to_name,
+                    status,note,created_by,created_by_name,created_at) VALUES (?,?,?,?,?,?,?,'pending',?,?,?,?)""",
+                 (hid, cid, room["name"], room.get("responsible_user_id"), room.get("responsible_name"),
+                  to_user["id"], to_user["name"], body.note or "", user["id"], user["name"], now_iso()))
+    conn.commit()
+    conn.close()
+    notify_assignees(created)
+    return {"created": len(created), "skipped": skipped, "handover_id": hid}
+
+
+def _close_assignments_of(conn, h: dict, ts: str):
+    conn.execute("UPDATE assignments SET status='cancelled', responded_at=? WHERE batch_id = ? AND status = 'pending'",
+                 (ts, h["id"]))
+
+
+@api.post("/classrooms/{cid}/handover/cancel")
+async def classroom_handover_cancel(cid: str, _: dict = Depends(admin_required)):
+    conn = get_conn()
+    _get_room(conn, cid)
+    h = _active_handover(conn, cid)
+    if not h:
+        conn.close()
+        raise HTTPException(404, "Tidak ada serah terima yang berjalan")
+    ts = now_iso()
+    _close_assignments_of(conn, h, ts)
+    # items already checked but not yet applied are dropped too
+    conn.execute("UPDATE assignments SET status='cancelled', responded_at=? WHERE batch_id = ? AND status='accepted' AND applied = 0",
+                 (ts, h["id"]))
+    conn.execute("UPDATE classroom_handovers SET status='cancelled', completed_at=? WHERE id = ?", (ts, h["id"]))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@api.post("/classrooms/{cid}/resolve-discrepancy")
+async def classroom_resolve(cid: str, body: ResolveIn, _: dict = Depends(admin_required)):
+    conn = get_conn()
+    room = _get_room(conn, cid)
+    ids = {a["id"] for a in _room_assets(conn, room)}
+    n = 0
+    for aid in body.asset_ids:
+        if aid in ids:
+            conn.execute("UPDATE assets SET handover_flag = '', updated_at = ? WHERE id = ?", (now_iso(), aid))
+            n += 1
+    conn.commit()
+    conn.close()
+    return {"resolved": n}
+
+
+def finish_class_handovers(conn, batch_ids):
+    """After items were answered/cancelled: close hand-overs with nothing pending and apply the accepted items.
+    Returns the finished hand-over dicts (with counts) so the caller can e-mail after commit."""
+    finished, ts = [], now_iso()
+    for bid in dict.fromkeys(batch_ids):
+        hr = conn.execute("SELECT * FROM classroom_handovers WHERE id = ? AND status = 'pending'", (bid,)).fetchone()
+        if not hr:
+            continue
+        if conn.execute("SELECT 1 FROM assignments WHERE batch_id = ? AND status = 'pending' LIMIT 1", (bid,)).fetchone():
+            continue
+        h = dict(hr)
+        items = [dict(r) for r in conn.execute("SELECT * FROM assignments WHERE batch_id = ? ORDER BY asset_name", (bid,)).fetchall()]
+        accepted = [i for i in items if i["status"] == "accepted"]
+        rejected = [i for i in items if i["status"] == "rejected"]
+        for i in accepted:
+            if not i.get("applied"):
+                apply_assignment(conn, i, ts)
+                conn.execute("UPDATE assignments SET applied = 1 WHERE id = ?", (i["id"],))
+        if accepted:
+            conn.execute("UPDATE classrooms SET responsible_user_id=?, responsible_name=?, updated_at=? WHERE id = ?",
+                         (h["to_user_id"], h["to_name"], ts, h["classroom_id"]))
+        conn.execute("UPDATE classroom_handovers SET status='completed', completed_at=?, accepted_count=?, discrepancy_count=? WHERE id = ?",
+                     (ts, len(accepted), len(rejected), bid))
+        h.update(status="completed", accepted=accepted, rejected=rejected)
+        finished.append(h)
+    return finished
+
+
+def _class_complete_html(h: dict) -> str:
+    import html as _h
+    def rows(items, bad=False):
+        return "".join(
+            f"<tr><td style='padding:6px 8px;border-bottom:1px solid #e2e8f0;'>{_h.escape(i['asset_name'])}<br>"
+            f"<span style='color:#64748b;font-size:12px;'>{_h.escape(i['asset_tag'])}</span></td>"
+            f"<td style='padding:6px 8px;border-bottom:1px solid #e2e8f0;font-size:13px;color:#b91c1c;'>"
+            f"{_h.escape(i.get('reject_reason') or '')}</td></tr>" if bad else
+            f"<tr><td style='padding:6px 8px;border-bottom:1px solid #e2e8f0;'>{_h.escape(i['asset_name'])} "
+            f"<span style='color:#64748b;font-size:12px;'>({_h.escape(i['asset_tag'])})</span></td></tr>" for i in items)
+    ok = h["accepted"]
+    bad = h["rejected"]
+    bad_html = (f"<h3 style='margin:18px 0 6px;font-size:15px;color:#b91c1c;'>Selisih serah terima ({len(bad)})</h3>"
+                "<p style='font-size:13px;color:#475569;margin:0 0 6px;'>Aset berikut ditandai tidak ada / rusak dan "
+                "tetap tercatat pada pemegang sebelumnya sampai Admin menindaklanjuti.</p>"
+                f"<table style='border-collapse:collapse;width:100%;font-size:14px;'>{rows(bad, True)}</table>") if bad else ""
+    ok_html = (f"<h3 style='margin:18px 0 6px;font-size:15px;color:#15803d;'>Diterima ({len(ok)})</h3>"
+               f"<table style='border-collapse:collapse;width:100%;font-size:14px;'>{rows(ok)}</table>") if ok else ""
+    resp = (f"Penanggung jawab kelas kini: <strong>{_h.escape(h['to_name'])}</strong>." if ok
+            else "Tidak ada aset yang diterima, penanggung jawab kelas <strong>tidak berubah</strong>.")
+    return _email_shell(f"""
+        <h2 style="margin:0 0 10px;font-size:22px;color:#0f172a;">Serah terima kelas selesai</h2>
+        <p style="margin:0 0 8px;">Kelas <strong>{_h.escape(h['classroom_name'])}</strong>:
+          {_h.escape(h.get('from_name') or '—')} → <strong>{_h.escape(h['to_name'])}</strong></p>
+        <p style="margin:0 0 8px;">{resp}</p>{ok_html}{bad_html}""",
+        eyebrow="Serah terima kelas", cta_label="Buka kelas", cta_url=f"{APP_URL}/classrooms/{h['classroom_id']}")
+
+
+def notify_class_handover_done(finished: list):
+    """To the previous teacher (or the admin if there was none), CC admin, new teacher and both supervisors."""
+    conn = get_conn()
+    try:
+        for h in finished:
+            to_addr, _n = _user_email(conn, h["from_user_id"]) if h.get("from_user_id") else (None, None)
+            admin_addr, _a = _user_email(conn, h["created_by"])
+            to_addr = to_addr or admin_addr
+            if not to_addr:
+                continue
+            new_addr, _x = _user_email(conn, h["to_user_id"])
+            cc = [e for e in (admin_addr, new_addr, ASSET_REMINDER_EMAIL) if e and e != to_addr]
+            cc += _supervisor_cc(conn, [h.get("from_user_id"), h["to_user_id"]], exclude=[to_addr] + cc)
+            flag = " — ADA SELISIH" if h["rejected"] else ""
+            send_email(to_addr, f"[YPJ Assets] Serah terima kelas {h['classroom_name']} selesai{flag}",
+                       _class_complete_html(h), cc=list(dict.fromkeys(cc)))
+    finally:
+        conn.close()
 
 
 # ---- Mount ----

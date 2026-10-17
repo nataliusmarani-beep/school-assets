@@ -20,6 +20,8 @@ import TransferRequestsPage from "./pages/TransferRequestsPage";
 import LoanRequestsPage from "./pages/LoanRequestsPage";
 import MyAssetsPage from "./pages/MyAssetsPage";
 import UserAssetsPage from "./pages/UserAssetsPage";
+import ClassroomsPage from "./pages/ClassroomsPage";
+import ClassroomDetailPage from "./pages/ClassroomDetailPage";
 import { SetPasswordPage, ForgotPasswordPage } from "./pages/PasswordPages";
 import { Toaster } from "./components/ui/sonner";
 
@@ -58,6 +60,12 @@ function App() {
             } />
             <Route path="/user-assets" element={
               <ProtectedRoute adminOnly><Layout><UserAssetsPage /></Layout></ProtectedRoute>
+            } />
+            <Route path="/classrooms" element={
+              <ProtectedRoute><Layout><ClassroomsPage /></Layout></ProtectedRoute>
+            } />
+            <Route path="/classrooms/:id" element={
+              <ProtectedRoute><Layout><ClassroomDetailPage /></Layout></ProtectedRoute>
             } />
             <Route path="/faults" element={
               <ProtectedRoute><Layout><FaultsPage /></Layout></ProtectedRoute>
