@@ -16,6 +16,8 @@ import {
   ArrowRightLeft,
   BookOpen,
   ScrollText,
+  UserCheck,
+  ListChecks,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import api from "../../lib/api";
@@ -24,6 +26,8 @@ import { toast } from "sonner";
 const NAV_LINKS = [
   { to: "/", labelKey: "nav_dashboard", icon: LayoutDashboard, testid: "nav-dashboard" },
   { to: "/assets", labelKey: "nav_assets", icon: Boxes, testid: "nav-assets" },
+  { to: "/my-assets", labelKey: "nav_my_assets", icon: UserCheck, testid: "nav-my-assets", badge: "pendingMine" },
+  { to: "/user-assets", labelKey: "nav_user_assets", icon: ListChecks, testid: "nav-user-assets", adminOnly: true },
   { to: "/faults", labelKey: "nav_faults", icon: Wrench, testid: "nav-faults" },
   { to: "/compliance", labelKey: "nav_compliance", icon: ShieldCheck, testid: "nav-compliance" },
   { to: "/transfer-requests", labelKey: "nav_transfer_requests", icon: ArrowRightLeft, testid: "nav-transfers", badge: "pendingTransfers" },
@@ -43,6 +47,17 @@ export default function AppLayout({ children }) {
   const [backing, setBacking] = useState(false);
   const [pendingTransfers, setPendingTransfers] = useState(0);
   const [pendingLoans, setPendingLoans] = useState(0);
+  const [pendingMine, setPendingMine] = useState(0);
+
+  // hand-overs waiting for MY confirmation (every user)
+  useEffect(() => {
+    if (!user) return;
+    const fetchMine = () => api.get("/assignments/pending-count").then((r) => setPendingMine(r.data.mine)).catch(() => {});
+    fetchMine();
+    const interval = setInterval(fetchMine, 60000);
+    window.addEventListener("assignments-changed", fetchMine);
+    return () => { clearInterval(interval); window.removeEventListener("assignments-changed", fetchMine); };
+  }, [user]);
 
   useEffect(() => {
     if (user?.role !== "admin") return;
@@ -132,6 +147,11 @@ export default function AppLayout({ children }) {
               {l.badge === "pendingTransfers" && pendingTransfers > 0 && (
                 <span className="text-[10px] font-bold bg-amber-400 text-slate-900 rounded-full w-4 h-4 flex items-center justify-center flex-shrink-0">
                   {pendingTransfers > 9 ? "9+" : pendingTransfers}
+                </span>
+              )}
+              {l.badge === "pendingMine" && pendingMine > 0 && (
+                <span data-testid="badge-my-assets" className="text-[10px] font-bold bg-amber-400 text-slate-900 rounded-full w-4 h-4 flex items-center justify-center flex-shrink-0">
+                  {pendingMine > 9 ? "9+" : pendingMine}
                 </span>
               )}
               {l.badge === "pendingLoans" && pendingLoans > 0 && (

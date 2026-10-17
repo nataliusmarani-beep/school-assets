@@ -302,6 +302,32 @@ def init_db():
         reject_reason TEXT,
         created_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS assignments (
+        id TEXT PRIMARY KEY,
+        batch_id TEXT NOT NULL,
+        asset_id TEXT NOT NULL,
+        asset_name TEXT NOT NULL,
+        asset_tag TEXT NOT NULL,
+        from_user_id TEXT,
+        from_name TEXT,
+        to_user_id TEXT NOT NULL,
+        to_name TEXT NOT NULL,
+        to_label TEXT,
+        kind TEXT NOT NULL DEFAULT 'personal',
+        source TEXT NOT NULL DEFAULT 'transfer',
+        note TEXT DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_by TEXT NOT NULL,
+        created_by_name TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        responded_at TEXT,
+        reject_reason TEXT,
+        last_reminded_at TEXT,
+        transfer_request_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_assign_to ON assignments(to_user_id, status);
+    CREATE INDEX IF NOT EXISTS idx_assign_asset ON assignments(asset_id, status);
     """)
     conn.commit()
     # Migrations for existing databases
@@ -347,8 +373,45 @@ def init_db():
             lit = f"'{default}'" if isinstance(default, str) else str(default)
             conn.execute(f"ALTER TABLE assets ADD COLUMN {col} {sqltype} NOT NULL DEFAULT {lit}")
     conn.commit()
+    # Hand-over confirmation: kind of custody + link transfer requests to a user account
+    asset_cols = [r[1] for r in conn.execute("PRAGMA table_info(assets)").fetchall()]
+    if "assignment_kind" not in asset_cols:
+        conn.execute("ALTER TABLE assets ADD COLUMN assignment_kind TEXT NOT NULL DEFAULT 'personal'")
+    tr_cols = [r[1] for r in conn.execute("PRAGMA table_info(transfer_requests)").fetchall()]
+    if "to_user_id" not in tr_cols:
+        conn.execute("ALTER TABLE transfer_requests ADD COLUMN to_user_id TEXT")
+    conn.commit()
+    backfill_assignee_user_ids(conn)
     migrate_money_to_idr(conn)
     conn.close()
+
+
+def backfill_assignee_user_ids(conn):
+    """One time: link existing owner names (free text) to user accounts so per-user dashboards work.
+    Only unambiguous matches are linked (name or e-mail, before the first ' — '); already-recorded
+    ownership is kept as accepted - no confirmation is requested for historical data."""
+    if conn.execute("SELECT 1 FROM app_meta WHERE key = 'assignee_backfill_v1'").fetchone():
+        return
+    users = [dict(r) for r in conn.execute("SELECT id, name, email FROM users").fetchall()]
+    keys: dict = {}
+    for u in users:
+        for k in (u["name"], u["email"]):
+            k = " ".join((k or "").split()).casefold()
+            if k:
+                keys.setdefault(k, set()).add(u["id"])
+    linked = 0
+    for a in conn.execute("SELECT id, assigned_to_name FROM assets "
+                          "WHERE (assigned_to_user_id IS NULL OR assigned_to_user_id = '') "
+                          "AND assigned_to_name IS NOT NULL AND assigned_to_name != ''").fetchall():
+        k = " ".join((a["assigned_to_name"] or "").split(" — ")[0].split()).casefold()
+        if len(keys.get(k, ())) == 1:
+            conn.execute("UPDATE assets SET assigned_to_user_id = ? WHERE id = ?", (next(iter(keys[k])), a["id"]))
+            linked += 1
+    conn.execute("INSERT OR REPLACE INTO app_meta (key, value) VALUES ('assignee_backfill_v1', ?)",
+                 (datetime.now(timezone.utc).isoformat(),))
+    conn.commit()
+    if linked:
+        logger.warning("Linked %d asset owner name(s) to user accounts", linked)
 
 
 def row_to_dict(row) -> dict:
@@ -637,9 +700,10 @@ def _email_logo_url() -> str:
         return ""
 
 
-def _email_shell(body: str, eyebrow: str = "") -> str:
+def _email_shell(body: str, eyebrow: str = "", cta_label: str = "Buka Asset Registry", cta_url: str = None) -> str:
     """Common look for all emails — matches the SchoolAssets app theme (navy, yellow action, mono labels)."""
     logo = _email_logo_url()
+    url = cta_url or APP_URL
     logo_html = (f'<td style="width:44px;padding-right:12px;vertical-align:middle">'
                  f'<img src="{logo}" width="40" height="40" alt="YPJ" style="display:block;border:0"></td>') if logo else ""
     mono = "'IBM Plex Mono',Menlo,Consolas,monospace"
@@ -659,8 +723,8 @@ def _email_shell(body: str, eyebrow: str = "") -> str:
       <div style="padding:28px 24px">
         {eyebrow_html}
         {body}
-        <p style="margin:28px 0 0"><a href="{APP_URL}" style="display:inline-block;background:#f2c14e;color:#0f172a;padding:11px 22px;text-decoration:none;font-size:14px;font-weight:700;border-radius:4px">Buka Asset Registry &rarr;</a></p>
-        <p style="margin:10px 0 0;font-size:12px;color:#64748b">Atau buka: <a href="{APP_URL}" style="color:#0f3ea3">{APP_URL}</a></p>
+        <p style="margin:28px 0 0"><a href="{url}" style="display:inline-block;background:#f2c14e;color:#0f172a;padding:11px 22px;text-decoration:none;font-size:14px;font-weight:700;border-radius:4px">{cta_label} &rarr;</a></p>
+        <p style="margin:10px 0 0;font-size:12px;color:#64748b">Atau buka: <a href="{url}" style="color:#0f3ea3">{url}</a></p>
       </div>
       <div style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:14px 24px;font-size:12px;color:#94a3b8">
         YPJ Assets Management &mdash; Kuala Kencana Campus &middot; Pesan otomatis, mohon tidak membalas langsung.
@@ -1187,6 +1251,10 @@ async def create_asset(body: AssetIn, user: dict = Depends(get_current_user)):
     aid = str(uuid.uuid4())
     ts = now_iso()
     conn = get_conn()
+    # An owner that is a real user must confirm receipt first; the asset starts unassigned until then.
+    to_user = (resolve_user(conn, body.assigned_to_user_id, body.assigned_to_name)
+               if (body.assigned_to_name or body.assigned_to_user_id) else None)
+    direct_uid, direct_name = (None, None) if to_user else (body.assigned_to_user_id, body.assigned_to_name)
     conn.execute("""
         INSERT INTO assets (id,name,asset_tag,category,asset_type,description,campus,location,status,
             purchase_price,purchase_date,useful_life_years,warranty_end_date,
@@ -1197,7 +1265,7 @@ async def create_asset(body: AssetIn, user: dict = Depends(get_current_user)):
         aid, body.name, body.asset_tag, body.category, body.asset_type or "School Asset",
         body.description or "", body.campus or "", body.location, body.status,
         body.purchase_price, body.purchase_date, body.useful_life_years, body.warranty_end_date,
-        body.serial_number or "", body.supplier or "", body.assigned_to_user_id, body.assigned_to_name,
+        body.serial_number or "", body.supplier or "", direct_uid, direct_name,
         body.photo_path, json.dumps(body.documents), ts, ts, user["id"],
     ))
     extras = {k: getattr(body, k) for k in EXTRA_ASSET_KEYS}
@@ -1209,17 +1277,24 @@ async def create_asset(body: AssetIn, user: dict = Depends(get_current_user)):
         "UPDATE assets SET " + ", ".join(f"{k}=?" for k in extras) + " WHERE id=?",
         list(extras.values()) + [aid],
     )
-    if body.assigned_to_name:
+    if direct_name:
         conn.execute("""
             INSERT INTO ownership_logs (id,asset_id,from_name,from_user_id,to_name,to_user_id,note,by,by_name,at)
             VALUES (?,?,?,?,?,?,?,?,?,?)
-        """, (str(uuid.uuid4()), aid, None, None, body.assigned_to_name,
-              body.assigned_to_user_id, "Initial assignment", user["id"], user["name"], ts))
+        """, (str(uuid.uuid4()), aid, None, None, direct_name,
+              direct_uid, "Initial assignment", user["id"], user["name"], ts))
+    pending = None
+    if to_user:
+        pending = create_assignment(conn, row_to_dict(conn.execute("SELECT * FROM assets WHERE id = ?", (aid,)).fetchone()),
+                                    to_user, "personal", "new", user, to_label=body.assigned_to_name or to_user["name"])
     conn.commit()
     row = conn.execute("SELECT * FROM assets WHERE id = ?", (aid,)).fetchone()
     conn.close()
     doc = row_to_dict(row)
     doc["depreciation"] = calc_depreciation(doc["purchase_price"], doc["purchase_date"], doc.get("useful_life_years", 5), doc.get("residual_value") or 0)
+    if pending:
+        notify_assignees([pending])
+        doc["pending_assignment"] = pending
     return doc
 
 
@@ -1572,6 +1647,7 @@ async def get_asset(aid: str, user: dict = Depends(get_current_user)):
     asset["compliance"] = [
         dict(r) for r in conn.execute("SELECT * FROM compliance WHERE asset_id = ? ORDER BY due_date ASC", (aid,)).fetchall()
     ]
+    asset["pending_assignment"] = pending_assignment(conn, aid)
     conn.close()
     return asset
 
@@ -1604,6 +1680,7 @@ async def delete_asset(aid: str, _: dict = Depends(admin_required)):
     conn = get_conn()
     conn.execute("DELETE FROM assets WHERE id = ?", (aid,))
     conn.execute("DELETE FROM ownership_logs WHERE asset_id = ?", (aid,))
+    conn.execute("DELETE FROM assignments WHERE asset_id = ?", (aid,))
     conn.execute("DELETE FROM faults WHERE asset_id = ?", (aid,))
     conn.commit()
     conn.close()
@@ -1618,6 +1695,19 @@ async def transfer_asset(aid: str, body: TransferIn, user: dict = Depends(get_cu
         conn.close()
         raise HTTPException(404, "Asset not found")
     asset = row_to_dict(row)
+    to_user = resolve_user(conn, body.new_owner_user_id, body.new_owner_name)
+    if to_user:  # the recipient has to confirm before ownership changes
+        try:
+            a = create_assignment(conn, asset, to_user, asset.get("assignment_kind") or "personal", "transfer", user,
+                                  note=body.note or "", to_label=body.new_owner_name)
+        except ValueError as e:
+            conn.close()
+            raise HTTPException(409, "This asset already has a hand-over waiting for confirmation"
+                                if str(e) == "pending" else "Asset is already assigned to this person")
+        conn.commit()
+        conn.close()
+        notify_assignees([a])
+        return {**a, "pending": True}
     log_id = str(uuid.uuid4())
     ts = now_iso()
     conn.execute("""
@@ -1974,6 +2064,7 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
 # ---- Transfer requests ----
 class TransferRequestIn(BaseModel):
     new_owner_name: str
+    new_owner_user_id: Optional[str] = None
     note: Optional[str] = ""
 
 
@@ -1987,11 +2078,11 @@ async def create_transfer_request(asset_id: str, body: TransferRequestIn, user: 
     rid = str(uuid.uuid4())
     conn.execute("""
         INSERT INTO transfer_requests
-            (id, asset_id, asset_name, asset_tag, from_name, to_name, note,
+            (id, asset_id, asset_name, asset_tag, from_name, to_name, to_user_id, note,
              requested_by, requested_by_name, status, created_at)
-        VALUES (?,?,?,?,?,?,?,?,?,'pending',?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?)
     """, (rid, asset_id, asset["name"], asset["asset_tag"], asset["assigned_to_name"],
-          body.new_owner_name, body.note or "", user["id"], user["name"], now_iso()))
+          body.new_owner_name, body.new_owner_user_id, body.note or "", user["id"], user["name"], now_iso()))
     conn.commit()
     row = conn.execute("SELECT * FROM transfer_requests WHERE id = ?", (rid,)).fetchone()
     conn.close()
@@ -2033,6 +2124,23 @@ async def approve_transfer(rid: str, user: dict = Depends(admin_required)):
         conn.close()
         raise HTTPException(400, "Request is not pending")
     ts = now_iso()
+    to_user = resolve_user(conn, req.get("to_user_id"), req["to_name"])
+    if to_user:  # approved by admin; the recipient still has to confirm receipt
+        asset = row_to_dict(conn.execute("SELECT * FROM assets WHERE id = ?", (req["asset_id"],)).fetchone())
+        try:
+            a = create_assignment(conn, asset, to_user, asset.get("assignment_kind") or "personal", "transfer_request",
+                                  user, note=req.get("note") or "", to_label=req["to_name"], transfer_request_id=rid)
+        except ValueError as e:
+            conn.close()
+            raise HTTPException(409, "This asset already has a hand-over waiting for confirmation"
+                                if str(e) == "pending" else "Asset is already assigned to this person")
+        conn.execute("""
+            UPDATE transfer_requests SET status='approved', reviewed_by=?, reviewed_by_name=?, reviewed_at=? WHERE id=?
+        """, (user["id"], user["name"], ts, rid))
+        conn.commit()
+        conn.close()
+        notify_assignees([a])
+        return {"ok": True, "pending_confirmation": True}
     # Perform the actual ownership transfer
     log_id = str(uuid.uuid4())
     conn.execute("""
@@ -2064,6 +2172,419 @@ async def reject_transfer(rid: str, reason: Optional[str] = None, user: dict = D
     conn.execute("""
         UPDATE transfer_requests SET status='rejected', reviewed_by=?, reviewed_by_name=?, reviewed_at=?, reject_reason=? WHERE id=?
     """, (user["id"], user["name"], ts, reason or "", rid))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+# ===================================================================
+# Assignments: hand-over of assets that the recipient must confirm
+# ===================================================================
+# An asset only becomes "owned" by the recipient (and shows up in their asset data) after they confirm.
+# Until then the asset keeps its previous holder (or stays unassigned for a brand-new asset).
+ASSIGNMENT_REMIND_DAYS = 3
+ASSIGN_KINDS = ("personal", "class")
+ASSIGN_KIND_LABEL_ID = {"personal": "Aset pribadi", "class": "Aset kelas"}
+INACTIVE_STATUSES = ("retired", "lost")
+
+
+def _name_key(s) -> str:
+    return " ".join((s or "").split()).casefold()
+
+
+def resolve_user(conn, user_id=None, label=None):
+    """Find the app user a hand-over is addressed to: by id, else by unique name/email in the label."""
+    cols = "id,email,name,role,department,campus"
+    if user_id:
+        r = conn.execute(f"SELECT {cols} FROM users WHERE id = ?", (user_id,)).fetchone()
+        if r:
+            return dict(r)
+    key = _name_key((label or "").split(" — ")[0])
+    if not key:
+        return None
+    hits = [dict(r) for r in conn.execute(f"SELECT {cols} FROM users").fetchall()
+            if _name_key(r["name"]) == key or _name_key(r["email"]) == key]
+    return hits[0] if len(hits) == 1 else None
+
+
+def pending_assignment(conn, asset_id):
+    r = conn.execute("SELECT * FROM assignments WHERE asset_id = ? AND status = 'pending'", (asset_id,)).fetchone()
+    return dict(r) if r else None
+
+
+def create_assignment(conn, asset: dict, to_user: dict, kind: str, source: str, by_user: dict,
+                      note: str = "", batch_id: str = None, to_label: str = None,
+                      transfer_request_id: str = None) -> dict:
+    """Insert a pending assignment (caller commits). Raises ValueError('pending'|'same_holder')."""
+    if kind not in ASSIGN_KINDS:
+        kind = "personal"
+    if pending_assignment(conn, asset["id"]):
+        raise ValueError("pending")
+    if asset.get("assigned_to_user_id") == to_user["id"] and (asset.get("assignment_kind") or "personal") == kind:
+        raise ValueError("same_holder")
+    rid = str(uuid.uuid4())
+    conn.execute("""
+        INSERT INTO assignments
+            (id, batch_id, asset_id, asset_name, asset_tag, from_user_id, from_name,
+             to_user_id, to_name, to_label, kind, source, note, status,
+             created_by, created_by_name, created_at, transfer_request_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?,?,?,?)
+    """, (rid, batch_id or rid, asset["id"], asset["name"], asset["asset_tag"],
+          asset.get("assigned_to_user_id"), asset.get("assigned_to_name"),
+          to_user["id"], to_user["name"], to_label or to_user["name"], kind, source, note or "",
+          by_user["id"], by_user["name"], now_iso(), transfer_request_id))
+    return dict(conn.execute("SELECT * FROM assignments WHERE id = ?", (rid,)).fetchone())
+
+
+def apply_assignment(conn, a: dict, ts: str):
+    """Make the recipient the owner (called when they confirm). Caller commits."""
+    asset = conn.execute("SELECT * FROM assets WHERE id = ?", (a["asset_id"],)).fetchone()
+    if not asset:
+        raise HTTPException(404, "Asset not found")
+    asset = dict(asset)
+    label = a.get("to_label") or a["to_name"]
+    conn.execute("""
+        INSERT INTO ownership_logs (id,asset_id,from_name,from_user_id,to_name,to_user_id,note,by,by_name,at)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
+    """, (str(uuid.uuid4()), a["asset_id"], asset.get("assigned_to_name"), asset.get("assigned_to_user_id"),
+          label, a["to_user_id"], ((a.get("note") or "") + " — dikonfirmasi penerima").strip(" —"),
+          a["created_by"], a["created_by_name"], ts))
+    conn.execute(
+        "UPDATE assets SET assigned_to_name=?, assigned_to_user_id=?, assignment_kind=?, updated_at=? WHERE id=?",
+        (label, a["to_user_id"], a["kind"], ts, a["asset_id"]))
+
+
+# ---- E-mails ----
+def _assignment_items_html(items: list) -> str:
+    import html as _h
+    rows = "".join(
+        "<tr>"
+        f"<td style='padding:6px 8px;border-bottom:1px solid #e2e8f0;'>{_h.escape(i['asset_name'])}<br>"
+        f"<span style='color:#64748b;font-size:12px;'>{_h.escape(i['asset_tag'])}"
+        f"{' · ' + _h.escape(i['location']) if i.get('location') else ''}</span></td>"
+        f"<td style='padding:6px 8px;border-bottom:1px solid #e2e8f0;white-space:nowrap;'>"
+        f"{_h.escape(ASSIGN_KIND_LABEL_ID.get(i['kind'], i['kind']))}</td>"
+        "</tr>" for i in items)
+    return ("<table style='border-collapse:collapse;width:100%;font-size:14px;margin:14px 0;'>"
+            "<tr style='text-align:left;color:#64748b;font-size:11px;letter-spacing:.1em;text-transform:uppercase;"
+            "border-bottom:1px solid #e2e8f0;'><th style='padding:8px;'>Aset</th><th style='padding:8px;'>Jenis</th></tr>"
+            f"{rows}</table>")
+
+
+def _assignment_request_html(to_name: str, items: list, by_name: str, note: str = "", reminder: bool = False) -> str:
+    import html as _h
+    n = len(items)
+    lead = ("Pengingat: ada serah terima aset yang <strong>belum Anda konfirmasi</strong>." if reminder else
+            f"<strong>{_h.escape(by_name)}</strong> menyerahkan {n} aset kepada Anda.")
+    note_html = (f"<p style='font-size:13px;color:#475569;'>Catatan: {_h.escape(note)}</p>" if note else "")
+    return _email_shell(f"""
+        <h2 style="margin:0 0 10px;font-size:22px;color:#0f172a;">Konfirmasi penerimaan aset</h2>
+        <p style="margin:0 0 8px;">Yth. {_h.escape(to_name)},</p>
+        <p style="margin:0 0 8px;">{lead}</p>
+        {_assignment_items_html(items)}
+        {note_html}
+        <div style="border-left:3px solid #f2c14e;background:#fffbeb;padding:10px 14px;font-size:13px;color:#78350f;">
+          Aset baru tercatat atas nama Anda setelah Anda memeriksa fisik barangnya dan menekan <strong>Terima</strong>.
+          Jika ada yang tidak sesuai, tekan <strong>Tolak</strong> dan tulis alasannya.
+        </div>""", eyebrow="Serah terima aset", cta_label="Tinjau & konfirmasi", cta_url=f"{APP_URL}/my-assets")
+
+
+def _assignment_response_html(a_list: list, accepted: bool, by_name: str, reason: str = "") -> str:
+    import html as _h
+    color, word = ("#15803d", "menerima") if accepted else ("#b91c1c", "menolak")
+    reason_html = (f"<p style='font-size:13px;color:#475569;'>Alasan: {_h.escape(reason)}</p>"
+                   if (reason and not accepted) else "")
+    return _email_shell(f"""
+        <h2 style="margin:0 0 10px;font-size:22px;color:#0f172a;">Serah terima {'diterima' if accepted else 'ditolak'}</h2>
+        <p style="margin:0 0 8px;"><strong>{_h.escape(by_name)}</strong>
+          <span style="color:{color};font-weight:700;">{word}</span> {len(a_list)} aset berikut:</p>
+        {_assignment_items_html(a_list)}{reason_html}""",
+        eyebrow="Serah terima aset", cta_label="Buka Asset Registry", cta_url=f"{APP_URL}/user-assets")
+
+
+def _user_email(conn, uid):
+    r = conn.execute("SELECT email, name FROM users WHERE id = ?", (uid,)).fetchone()
+    return (r["email"], r["name"]) if r else (None, None)
+
+
+def notify_assignees(assignments: list, reminder: bool = False):
+    """One e-mail per recipient listing all of their pending items."""
+    conn = get_conn()
+    try:
+        by_user: dict = {}
+        for a in assignments:
+            by_user.setdefault(a["to_user_id"], []).append(a)
+        for uid, group in by_user.items():
+            email, name = _user_email(conn, uid)
+            if not email:
+                continue
+            for a in group:
+                row = conn.execute("SELECT location FROM assets WHERE id = ?", (a["asset_id"],)).fetchone()
+                a["location"] = row["location"] if row else ""
+            by = ", ".join(sorted({a["created_by_name"] for a in group}))
+            n = len(group)
+            subject = (f"[YPJ Assets] {'Pengingat: ' if reminder else ''}Konfirmasi penerimaan {n} aset")
+            send_email(email, subject,
+                       _assignment_request_html(name, group, by, group[0].get("note") or "", reminder))
+    finally:
+        conn.close()
+
+
+def notify_responses(responded: list, accepted: bool, by_name: str, reason: str = ""):
+    """Tell whoever created the hand-over (and the general inbox) what the recipient decided."""
+    conn = get_conn()
+    try:
+        by_creator: dict = {}
+        for a in responded:
+            by_creator.setdefault(a["created_by"], []).append(a)
+        for uid, group in by_creator.items():
+            email, _ = _user_email(conn, uid)
+            if not email:
+                continue
+            for a in group:
+                row = conn.execute("SELECT location FROM assets WHERE id = ?", (a["asset_id"],)).fetchone()
+                a["location"] = row["location"] if row else ""
+            cc = [ASSET_REMINDER_EMAIL] if ASSET_REMINDER_EMAIL else []
+            subject = (f"[YPJ Assets] {by_name} {'menerima' if accepted else 'menolak'} {len(group)} aset")
+            send_email(email, subject, _assignment_response_html(group, accepted, by_name, reason), cc=cc)
+    finally:
+        conn.close()
+
+
+def send_assignment_reminders(now=None) -> dict:
+    """Daily: re-mail recipients whose hand-overs are still unconfirmed after ASSIGNMENT_REMIND_DAYS days."""
+    now = now or datetime.now(timezone.utc)
+    cutoff = (now - timedelta(days=ASSIGNMENT_REMIND_DAYS)).isoformat()
+    conn = get_conn()
+    rows = [dict(r) for r in conn.execute("""
+        SELECT * FROM assignments
+        WHERE status = 'pending' AND created_at <= ? AND (last_reminded_at IS NULL OR last_reminded_at <= ?)
+    """, (cutoff, cutoff)).fetchall()]
+    if rows:
+        ts = now.isoformat()
+        conn.executemany("UPDATE assignments SET last_reminded_at = ? WHERE id = ?", [(ts, r["id"]) for r in rows])
+        conn.commit()
+    conn.close()
+    if rows:
+        notify_assignees(rows, reminder=True)
+    logger.info("Assignment reminders: %d pending item(s) re-sent", len(rows))
+    return {"items": len(rows)}
+
+
+# ---- API ----
+class BulkAssignIn(BaseModel):
+    to_user_id: str
+    asset_ids: List[str]
+    kind: Literal["personal", "class"] = "class"
+    note: Optional[str] = ""
+
+
+class RespondIn(BaseModel):
+    ids: List[str]
+    action: Literal["accept", "reject"]
+    reason: Optional[str] = ""
+
+
+def _slim_asset(d: dict) -> dict:
+    d = dict(d)
+    d.pop("documents", None)
+    d["depreciation"] = calc_depreciation(d["purchase_price"], d["purchase_date"],
+                                          d.get("useful_life_years", 5), d.get("residual_value") or 0)
+    return d
+
+
+def _user_bundle(conn, uid: str) -> dict:
+    rows = [row_to_dict(r) for r in conn.execute(
+        "SELECT * FROM assets WHERE assigned_to_user_id = ? ORDER BY name", (uid,)).fetchall()]
+    assets = [_slim_asset(r) for r in rows]
+    personal = [a for a in assets if (a.get("assignment_kind") or "personal") != "class"]
+    klass = [a for a in assets if a.get("assignment_kind") == "class"]
+    live = [a for a in assets if a["status"] not in INACTIVE_STATUSES]
+    pending = []
+    for r in conn.execute("SELECT * FROM assignments WHERE to_user_id = ? AND status = 'pending' ORDER BY created_at",
+                          (uid,)).fetchall():
+        p = dict(r)
+        ar = conn.execute("SELECT location, campus, category, purchase_price FROM assets WHERE id = ?",
+                          (p["asset_id"],)).fetchone()
+        p.update(dict(ar) if ar else {"location": "", "campus": "", "category": "", "purchase_price": 0})
+        pending.append(p)
+    return {
+        "personal": personal, "class": klass, "pending": pending,
+        "summary": {
+            "personal_count": len([a for a in personal if a["status"] not in INACTIVE_STATUSES]),
+            "class_count": len([a for a in klass if a["status"] not in INACTIVE_STATUSES]),
+            "pending_count": len(pending),
+            "purchase_value": sum(a["purchase_price"] or 0 for a in live),
+            "book_value": sum(a["depreciation"]["current_value"] for a in live),
+        },
+    }
+
+
+@api.get("/my/assets")
+async def my_assets(user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    out = _user_bundle(conn, user["id"])
+    conn.close()
+    return out
+
+
+@api.get("/users/{uid}/assets")
+async def user_assets(uid: str, user: dict = Depends(get_current_user)):
+    if user["role"] != "admin" and user["id"] != uid:
+        raise HTTPException(403, "Not allowed")
+    conn = get_conn()
+    u = conn.execute("SELECT id,name,email,department,campus,role FROM users WHERE id = ?", (uid,)).fetchone()
+    if not u:
+        conn.close()
+        raise HTTPException(404, "User not found")
+    out = _user_bundle(conn, uid)
+    out["user"] = dict(u)
+    conn.close()
+    return out
+
+
+@api.get("/dashboard/users")
+async def dashboard_users(_: dict = Depends(admin_required)):
+    conn = get_conn()
+    users = [dict(r) for r in conn.execute(
+        "SELECT id,name,email,role,department,campus FROM users ORDER BY name").fetchall()]
+    stats = {u["id"]: {"personal_count": 0, "class_count": 0, "pending_count": 0,
+                       "purchase_value": 0, "book_value": 0, "oldest_pending": None} for u in users}
+    unassigned = 0
+    for r in conn.execute("SELECT * FROM assets").fetchall():
+        d = row_to_dict(r)
+        if d["status"] in INACTIVE_STATUSES:
+            continue
+        uid = d.get("assigned_to_user_id")
+        if not uid or uid not in stats:
+            unassigned += 1
+            continue
+        s = stats[uid]
+        s["class_count" if d.get("assignment_kind") == "class" else "personal_count"] += 1
+        s["purchase_value"] += d["purchase_price"] or 0
+        s["book_value"] += calc_depreciation(d["purchase_price"], d["purchase_date"],
+                                             d.get("useful_life_years", 5), d.get("residual_value") or 0)["current_value"]
+    total_pending = 0
+    for r in conn.execute("SELECT to_user_id, COUNT(*) n, MIN(created_at) oldest FROM assignments "
+                          "WHERE status = 'pending' GROUP BY to_user_id").fetchall():
+        total_pending += r["n"]
+        if r["to_user_id"] in stats:
+            stats[r["to_user_id"]]["pending_count"] = r["n"]
+            stats[r["to_user_id"]]["oldest_pending"] = r["oldest"]
+    conn.close()
+    for u in users:
+        u.update(stats[u["id"]])
+    return {"users": users, "totals": {
+        "users": len(users), "unassigned_assets": unassigned, "pending": total_pending,
+        "assets_with_users": sum(s["personal_count"] + s["class_count"] for s in stats.values()),
+    }}
+
+
+@api.get("/assignments")
+async def list_assignments(status: Optional[str] = None, user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    sql, params = "SELECT * FROM assignments", []
+    cond = []
+    if status:
+        cond.append("status = ?"); params.append(status)
+    if user["role"] != "admin":
+        cond.append("(to_user_id = ? OR created_by = ?)"); params += [user["id"], user["id"]]
+    if cond:
+        sql += " WHERE " + " AND ".join(cond)
+    rows = [dict(r) for r in conn.execute(sql + " ORDER BY created_at DESC LIMIT 500", params).fetchall()]
+    conn.close()
+    return rows
+
+
+@api.get("/assignments/pending-count")
+async def assignments_pending_count(user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    mine = conn.execute("SELECT COUNT(*) FROM assignments WHERE status='pending' AND to_user_id = ?",
+                        (user["id"],)).fetchone()[0]
+    total = conn.execute("SELECT COUNT(*) FROM assignments WHERE status='pending'").fetchone()[0] \
+        if user["role"] == "admin" else None
+    conn.close()
+    return {"mine": mine, "total": total}
+
+
+@api.post("/assignments/bulk")
+async def bulk_assign(body: BulkAssignIn, user: dict = Depends(admin_required)):
+    """Hand over several assets (e.g. a whole classroom) to one person; they confirm item by item."""
+    if not body.asset_ids:
+        raise HTTPException(400, "Select at least one asset")
+    conn = get_conn()
+    to_user = resolve_user(conn, user_id=body.to_user_id)
+    if not to_user:
+        conn.close()
+        raise HTTPException(404, "Recipient not found")
+    batch = str(uuid.uuid4())
+    created, skipped = [], []
+    for aid in dict.fromkeys(body.asset_ids):
+        r = conn.execute("SELECT * FROM assets WHERE id = ?", (aid,)).fetchone()
+        if not r:
+            skipped.append({"asset_id": aid, "reason": "not_found"}); continue
+        asset = row_to_dict(r)
+        if asset["status"] in INACTIVE_STATUSES:
+            skipped.append({"asset_id": aid, "name": asset["name"], "reason": "inactive"}); continue
+        try:
+            created.append(create_assignment(conn, asset, to_user, body.kind, "handover", user,
+                                             note=body.note or "", batch_id=batch))
+        except ValueError as e:
+            skipped.append({"asset_id": aid, "name": asset["name"], "reason": str(e)})
+    conn.commit()
+    conn.close()
+    if created:
+        notify_assignees(created)
+    return {"created": len(created), "skipped": skipped, "batch_id": batch}
+
+
+@api.post("/assignments/respond")
+async def respond_assignments(body: RespondIn, user: dict = Depends(get_current_user)):
+    """The recipient accepts or rejects hand-overs addressed to them."""
+    reason = (body.reason or "").strip()
+    if body.action == "reject" and len(reason) < 3:
+        raise HTTPException(400, "Please give a reason for rejecting")
+    conn = get_conn()
+    ts = now_iso()
+    done, errors = [], []
+    for rid in dict.fromkeys(body.ids):
+        r = conn.execute("SELECT * FROM assignments WHERE id = ?", (rid,)).fetchone()
+        if not r:
+            errors.append({"id": rid, "error": "not_found"}); continue
+        a = dict(r)
+        if a["to_user_id"] != user["id"]:
+            errors.append({"id": rid, "error": "not_recipient"}); continue
+        if a["status"] != "pending":
+            errors.append({"id": rid, "error": "not_pending"}); continue
+        if body.action == "accept":
+            apply_assignment(conn, a, ts)
+            conn.execute("UPDATE assignments SET status='accepted', responded_at=? WHERE id=?", (ts, rid))
+        else:
+            conn.execute("UPDATE assignments SET status='rejected', responded_at=?, reject_reason=? WHERE id=?",
+                         (ts, reason, rid))
+        done.append(a)
+    conn.commit()
+    conn.close()
+    if done:
+        notify_responses(done, body.action == "accept", user["name"], reason)
+    return {"done": len(done), "errors": errors}
+
+
+@api.put("/assignments/{rid}/cancel")
+async def cancel_assignment(rid: str, user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    r = conn.execute("SELECT * FROM assignments WHERE id = ?", (rid,)).fetchone()
+    if not r:
+        conn.close()
+        raise HTTPException(404, "Assignment not found")
+    a = dict(r)
+    if user["role"] != "admin" and a["created_by"] != user["id"]:
+        conn.close()
+        raise HTTPException(403, "Not allowed")
+    if a["status"] != "pending":
+        conn.close()
+        raise HTTPException(400, "Assignment is not pending")
+    conn.execute("UPDATE assignments SET status='cancelled', responded_at=? WHERE id=?", (now_iso(), rid))
     conn.commit()
     conn.close()
     return {"ok": True}
@@ -2725,6 +3246,7 @@ async def on_startup():
     scheduler = BackgroundScheduler(timezone="Asia/Jakarta")
     scheduler.add_job(send_return_reminders, "cron", hour=8, minute=0)
     scheduler.add_job(send_asset_due_reminders, "cron", hour=8, minute=5)
+    scheduler.add_job(send_assignment_reminders, "cron", hour=8, minute=10)
     scheduler.start()
     mode = "production" if BUILD_DIR.exists() else "development"
     logger.info(f"Startup complete [{mode}] — DB: {DB_PATH}")

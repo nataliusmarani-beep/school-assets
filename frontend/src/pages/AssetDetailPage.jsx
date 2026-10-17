@@ -27,6 +27,7 @@ export default function AssetDetailPage() {
 
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferTo, setTransferTo] = useState("");
+  const [transferUserId, setTransferUserId] = useState(null);
   const [transferNote, setTransferNote] = useState("");
 
   const [loanOpen, setLoanOpen] = useState(false);
@@ -96,6 +97,7 @@ export default function AssetDetailPage() {
   const handleUserSearch = (val) => {
     setUserSearch(val);
     setTransferTo(val);
+    setTransferUserId(null);
     if (val.trim().length === 0) { setUserResults([]); setShowUserDropdown(false); return; }
     const q = val.toLowerCase();
     const campusFilter = !isAdmin && user?.campus ? user.campus : null;
@@ -109,6 +111,7 @@ export default function AssetDetailPage() {
 
   const selectUser = (u) => {
     setTransferTo(u.name);
+    setTransferUserId(u.id);
     setUserSearch(u.name);
     if (u.campus) setTransferCampus(u.campus);
     setUserResults([]);
@@ -138,7 +141,7 @@ export default function AssetDetailPage() {
   };
 
   const resetTransferForm = () => {
-    setTransferTo(""); setTransferNote(""); setTransferCampus("");
+    setTransferTo(""); setTransferUserId(null); setTransferNote(""); setTransferCampus("");
     setTransferRoom(""); setUserSearch(""); setUserResults([]);
     setShowUserDropdown(false); setRoomResults([]); setShowRoomDropdown(false);
   };
@@ -148,10 +151,10 @@ export default function AssetDetailPage() {
     if (!ownerLabel.trim()) return toast.error(t("transfer_owner_required"));
     try {
       if (isAdmin) {
-        await api.post(`/assets/${id}/transfer`, { new_owner_name: ownerLabel, note: transferNote });
-        toast.success(t("asset_transferred"));
+        const r = await api.post(`/assets/${id}/transfer`, { new_owner_name: ownerLabel, new_owner_user_id: transferUserId, note: transferNote });
+        toast.success(r.data?.pending ? t("transfer_pending_toast").replace("{name}", r.data.to_name) : t("asset_transferred"));
       } else {
-        await api.post(`/transfer-requests`, { new_owner_name: ownerLabel, note: transferNote }, {
+        await api.post(`/transfer-requests`, { new_owner_name: ownerLabel, new_owner_user_id: transferUserId, note: transferNote }, {
           params: { asset_id: id },
         });
         toast.success(t("transfer_request_submitted"));
@@ -201,6 +204,12 @@ export default function AssetDetailPage() {
         data-testid="back-to-assets">
         <ArrowLeft className="w-3.5 h-3.5"/> {t("back_to_assets")}
       </button>
+
+      {asset.pending_assignment && (
+        <div className="mb-6 border-l-4 border-amber-400 bg-amber-50 px-4 py-3 text-sm text-amber-900" data-testid="pending-assignment-banner">
+          {t("pending_banner").replace("{name}", asset.pending_assignment.to_name)}
+        </div>
+      )}
 
       <div className="flex items-start justify-between flex-wrap gap-4 mb-8">
         <div>

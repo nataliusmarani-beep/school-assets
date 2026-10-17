@@ -147,9 +147,14 @@ export default function AssetFormPage() {
     campus: "", location: "", status: "active", purchase_price: "",
     purchase_date: new Date().toISOString().split("T")[0],
     useful_life_years: DEFAULT_USEFUL_LIFE["IT Equipment"], warranty_end_date: "", serial_number: "",
-    supplier: "", assigned_to_name: "", photo_path: null, documents: [],
+    supplier: "", assigned_to_name: "", assigned_to_user_id: null, photo_path: null, documents: [],
     ...extrasFromAsset({}),
   });
+
+  const [owners, setOwners] = useState([]);
+  useEffect(() => {
+    if (!isEdit) api.get("/users").then((r) => setOwners(r.data)).catch(() => {});
+  }, [isEdit]);
 
   useEffect(() => {
     if (isEdit) {
@@ -265,7 +270,11 @@ export default function AssetFormPage() {
       } else {
         res = await api.post("/assets", payload);
       }
-      toast.success(isEdit ? "Asset updated" : "Asset created");
+      if (!isEdit && res.data.pending_assignment) {
+        toast.success(t("asset_created_pending").replace("{name}", res.data.pending_assignment.to_name));
+      } else {
+        toast.success(isEdit ? "Asset updated" : "Asset created");
+      }
       navigate(`/assets/${res.data.id}`);
     } catch (err) {
       setError(formatErr(err));
@@ -358,8 +367,30 @@ export default function AssetFormPage() {
             placeholder={t("building_placeholder")} testid="asset-building-input"/>
           <TextField label={t("room_location")} value={form.location} onChange={(v)=>update("location",v)}
             required placeholder={t("room_placeholder")} testid="asset-location-input"/>
-          <TextField label={t("initial_owner")} value={form.assigned_to_name} onChange={(v)=>update("assigned_to_name",v)}
-            placeholder={t("initial_owner_placeholder")} testid="asset-assigned-input"/>
+          <div>
+            <Label className="label-mono">{t("initial_owner")}</Label>
+            {isEdit ? (
+              <>
+                <div className="mt-2 px-3 py-2 border border-slate-200 bg-slate-50 text-sm text-slate-700" data-testid="asset-assigned-readonly">
+                  {form.assigned_to_name || "—"}
+                </div>
+                <p className="mt-1.5 text-xs text-slate-400">{t("owner_edit_hint")}</p>
+              </>
+            ) : (
+              <>
+                <select value={form.assigned_to_user_id || ""} data-testid="asset-assigned-input"
+                  className="mt-2 w-full h-10 px-3 text-sm border border-slate-300 bg-white rounded-none"
+                  onChange={(e) => {
+                    const u = owners.find((x) => x.id === e.target.value);
+                    setForm((f) => ({ ...f, assigned_to_user_id: u ? u.id : null, assigned_to_name: u ? u.name : "" }));
+                  }}>
+                  <option value="">{t("owner_none")}</option>
+                  {owners.map((u) => <option key={u.id} value={u.id}>{u.name}{u.department ? ` — ${u.department}` : ""}</option>)}
+                </select>
+                <p className="mt-1.5 text-xs text-slate-400">{t("owner_confirm_hint")}</p>
+              </>
+            )}
+          </div>
           <TextField label={t("asset_department")} value={form.department} onChange={(v)=>update("department",v)}
             placeholder={t("asset_department_placeholder")} testid="asset-department-input"/>
           <SelectField label={t("user_type")} value={form.user_type} onChange={(v)=>update("user_type",v)}

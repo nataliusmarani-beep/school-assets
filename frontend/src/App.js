@@ -18,6 +18,8 @@ import HelpPage from "./pages/HelpPage";
 import PoliciesPage from "./pages/PoliciesPage";
 import TransferRequestsPage from "./pages/TransferRequestsPage";
 import LoanRequestsPage from "./pages/LoanRequestsPage";
+import MyAssetsPage from "./pages/MyAssetsPage";
+import UserAssetsPage from "./pages/UserAssetsPage";
 import { Toaster } from "./components/ui/sonner";
 
 function Layout({ children }) {
@@ -48,6 +50,12 @@ function App() {
             <Route path="/assets/:id/edit" element={
               <ProtectedRoute><Layout><AssetFormPage /></Layout></ProtectedRoute>
             }/>
+            <Route path="/my-assets" element={
+              <ProtectedRoute><Layout><MyAssetsPage /></Layout></ProtectedRoute>
+            } />
+            <Route path="/user-assets" element={
+              <ProtectedRoute adminOnly><Layout><UserAssetsPage /></Layout></ProtectedRoute>
+            } />
             <Route path="/faults" element={
               <ProtectedRoute><Layout><FaultsPage /></Layout></ProtectedRoute>
             }/>
