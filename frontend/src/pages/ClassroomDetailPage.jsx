@@ -18,6 +18,7 @@ export default function ClassroomDetailPage() {
   const [room, setRoom] = useState(null);
   const [loading, setLoading] = useState(true);
   const [hoOpen, setHoOpen] = useState(false);
+  const [sel, setSel] = useState(new Set());
 
   const load = useCallback(() => api.get(`/classrooms/${id}`).then((r) => setRoom(r.data))
     .catch((e) => toast.error(formatErr(e))).finally(() => setLoading(false)), [id]);
@@ -27,6 +28,13 @@ export default function ClassroomDetailPage() {
     if (!window.confirm(t("cr_cancel_confirm"))) return;
     try { await api.post(`/classrooms/${id}/handover/cancel`); toast.success(t("cr_cancelled")); load(); }
     catch (e) { toast.error(formatErr(e)); }
+  };
+  const setKind = async (kind) => {
+    try {
+      const r = await api.post(`/classrooms/${id}/set-kind`, { asset_ids: [...sel], kind });
+      toast.success(t("cr_kind_changed").replace("{n}", r.data.changed));
+      setSel(new Set()); load();
+    } catch (e) { toast.error(formatErr(e)); }
   };
   const resolve = async (ids) => {
     try { await api.post(`/classrooms/${id}/resolve-discrepancy`, { asset_ids: ids }); toast.success(t("cr_resolved")); load(); }
@@ -106,10 +114,26 @@ export default function ClassroomDetailPage() {
         </section>
       )}
 
+      {isAdmin && sel.size > 0 && (
+        <div className="mb-3 flex items-center gap-4 flex-wrap bg-blue-50 border border-blue-200 px-4 py-2.5 text-sm" data-testid="classroom-kind-bar">
+          <span className="font-medium text-blue-900">{t("bt_selected").replace("{n}", sel.size)}</span>
+          <button onClick={() => setKind("class")} className="bg-blue-800 hover:bg-blue-900 text-white px-3 py-1.5" data-testid="make-class">{t("cr_make_class")}</button>
+          <button onClick={() => setKind("personal")} className="border border-slate-300 bg-white hover:bg-slate-50 px-3 py-1.5" data-testid="make-personal">{t("cr_make_personal")}</button>
+          <button onClick={() => setSel(new Set())} className="text-slate-600 hover:text-slate-900">{t("bt_clear")}</button>
+        </div>
+      )}
+
       <div className="bg-white border border-slate-200 overflow-x-auto mb-8">
         <table className="w-full text-sm" data-testid="classroom-assets-table">
           <thead>
             <tr className="bg-slate-50 border-b border-slate-200">
+              {isAdmin && (
+                <th className="py-3 px-4 w-8">
+                  <input type="checkbox" data-testid="room-select-all"
+                    checked={room.assets.length > 0 && room.assets.every((a) => sel.has(a.id))}
+                    onChange={(e) => setSel(e.target.checked ? new Set(room.assets.filter((a) => !a.pending_assignment).map((a) => a.id)) : new Set())} />
+                </th>
+              )}
               {["col_tag", "col_asset", "cr_holding", "col_assigned", "col_status"].map((k) => (
                 <th key={k} className="text-left font-medium label-mono py-3 px-4">{t(k)}</th>
               ))}
@@ -117,9 +141,15 @@ export default function ClassroomDetailPage() {
           </thead>
           <tbody>
             {room.assets.length === 0 ? (
-              <tr><td colSpan={5} className="text-center text-slate-500 py-10">{t("cr_no_assets")}</td></tr>
+              <tr><td colSpan={6} className="text-center text-slate-500 py-10">{t("cr_no_assets")}</td></tr>
             ) : room.assets.map((a) => (
               <tr key={a.id} className="border-b border-slate-100">
+                {isAdmin && (
+                  <td className="py-3 px-4">
+                    <input type="checkbox" data-testid={`room-select-${a.id}`} disabled={!!a.pending_assignment} checked={sel.has(a.id)}
+                      onChange={() => setSel((x) => { const n = new Set(x); n.has(a.id) ? n.delete(a.id) : n.add(a.id); return n; })} />
+                  </td>
+                )}
                 <td className="py-3 px-4 font-mono text-xs text-slate-600"><Link to={`/assets/${a.id}`} className="hover:text-blue-800">{a.asset_tag}</Link></td>
                 <td className="py-3 px-4"><Link to={`/assets/${a.id}`} className="font-medium text-slate-900 hover:text-blue-800">{a.name}</Link></td>
                 <td className="py-3 px-4">

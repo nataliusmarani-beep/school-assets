@@ -3966,6 +3966,33 @@ async def classroom_resolve(cid: str, body: ResolveIn, _: dict = Depends(admin_r
     return {"resolved": n}
 
 
+class SetKindIn(BaseModel):
+    asset_ids: List[str]
+    kind: Literal["class", "personal"]
+
+
+@api.post("/classrooms/{cid}/set-kind")
+async def classroom_set_kind(cid: str, body: SetKindIn, _: dict = Depends(admin_required)):
+    """Mark assets of this room as class assets (follow the room) or personal (stay with their holder)."""
+    conn = get_conn()
+    room = _get_room(conn, cid)
+    in_room = {a["id"]: a for a in _room_assets(conn, room)}
+    changed, skipped = 0, []
+    for aid in dict.fromkeys(body.asset_ids):
+        a = in_room.get(aid)
+        if not a:
+            skipped.append({"asset_id": aid, "reason": "not_in_room"}); continue
+        if pending_assignment(conn, aid):
+            skipped.append({"asset_id": aid, "name": a["name"], "reason": "pending"}); continue
+        if (a.get("assignment_kind") or "personal") == body.kind:
+            continue
+        conn.execute("UPDATE assets SET assignment_kind = ?, updated_at = ? WHERE id = ?", (body.kind, now_iso(), aid))
+        changed += 1
+    conn.commit()
+    conn.close()
+    return {"changed": changed, "skipped": skipped}
+
+
 def finish_class_handovers(conn, batch_ids):
     """After items were answered/cancelled: close hand-overs with nothing pending and apply the accepted items.
     Returns the finished hand-over dicts (with counts) so the caller can e-mail after commit."""
