@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "../components/ui/dialog";
 import { toast } from "sonner";
 import { useAuth } from "../context/AuthContext";
-import { Plus, Trash2, Pencil, Upload } from "lucide-react";
+import { Plus, Trash2, Pencil, Upload, Mail, KeyRound } from "lucide-react";
 import BulkUsersDialog from "../components/BulkUsersDialog";
 
 const EMPTY_FORM = { name: "", email: "", password: "", role: "staff", department: "", campus: "", supervisor_name: "", supervisor: "", employee_id: "" };
@@ -201,6 +201,17 @@ export default function UsersPage() {
     } catch (err) { toast.error(formatErr(err)); }
   };
 
+  const sendLink = async (u, kind) => {
+    if (!window.confirm(t(kind === "invite" ? "invite_confirm" : "reset_confirm").replace("{name}", u.name).replace("{email}", u.email))) return;
+    try {
+      const r = await api.post(`/users/${u.id}/${kind === "invite" ? "invite" : "reset-password"}`);
+      if (r.data.sent) { toast.success(t(kind === "invite" ? "invite_sent" : "reset_sent").replace("{email}", u.email)); return; }
+      let copied = false;
+      try { await navigator.clipboard.writeText(r.data.link); copied = true; } catch (e) { /* ignore */ }
+      toast.warning(t(r.data.email_configured ? "link_send_failed" : "link_no_email") + (copied ? " " + t("link_copied") : " " + r.data.link), { duration: 15000 });
+    } catch (e) { toast.error(formatErr(e)); }
+  };
+
   const remove = async (u) => {
     if (u.id === user.id) return toast.error(t("cant_delete_self"));
     if (!window.confirm(t("delete_user_confirm").replace("{{name}}", u.name))) return;
@@ -287,6 +298,12 @@ export default function UsersPage() {
                   <td className="py-3 px-4 text-slate-500 text-xs">{fmtDate(u.created_at)}</td>
                   <td className="py-3 px-4 text-right">
                     <div className="flex items-center justify-end gap-2">
+                      <button onClick={() => sendLink(u, "invite")} title={t("send_invitation")} className="text-slate-400 hover:text-blue-700" data-testid={`invite-user-${u.id}`}>
+                        <Mail className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => sendLink(u, "reset")} title={t("reset_password")} className="text-slate-400 hover:text-amber-600" data-testid={`reset-user-${u.id}`}>
+                        <KeyRound className="w-4 h-4" />
+                      </button>
                       <button onClick={() => openEdit(u)} className="text-slate-400 hover:text-slate-700" data-testid={`edit-user-${u.id}`}>
                         <Pencil className="w-4 h-4" />
                       </button>

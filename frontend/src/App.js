@@ -20,6 +20,7 @@ import TransferRequestsPage from "./pages/TransferRequestsPage";
 import LoanRequestsPage from "./pages/LoanRequestsPage";
 import MyAssetsPage from "./pages/MyAssetsPage";
 import UserAssetsPage from "./pages/UserAssetsPage";
+import { SetPasswordPage, ForgotPasswordPage } from "./pages/PasswordPages";
 import { Toaster } from "./components/ui/sonner";
 
 function Layout({ children }) {
@@ -35,6 +36,8 @@ function App() {
           <Toaster richColors position="top-right" />
           <Routes>
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/set-password" element={<SetPasswordPage />} />
+            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
             <Route path="/" element={
               <ProtectedRoute><Layout><DashboardPage /></Layout></ProtectedRoute>
             }/>

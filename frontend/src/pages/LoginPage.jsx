@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate, Navigate } from "react-router-dom";
+import { useNavigate, Navigate, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useLang } from "../context/LangContext";
 import { Button } from "../components/ui/button";
@@ -102,6 +102,9 @@ export default function LoginPage() {
               {submitting ? t("signing_in") : t("tab_signin")}
               <ArrowRight className="w-4 h-4 ml-2" strokeWidth={1.75} />
             </Button>
+            <div className="text-right">
+              <Link to="/forgot-password" className="text-xs text-blue-800 hover:underline" data-testid="forgot-link">{t("fp_link")}</Link>
+            </div>
           </form>
         </div>
 

@@ -5,6 +5,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 import os
+import hashlib
 import html as html_mod
 import secrets
 import re
@@ -329,6 +330,15 @@ def init_db():
         last_reminded_at TEXT,
         transfer_request_id TEXT
     );
+    CREATE TABLE IF NOT EXISTS password_tokens (
+        token_hash TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        used_at TEXT,
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_pwtok_user ON password_tokens(user_id);
     CREATE INDEX IF NOT EXISTS idx_assign_to ON assignments(to_user_id, status);
     CREATE INDEX IF NOT EXISTS idx_assign_asset ON assignments(asset_id, status);
     """)
@@ -1269,6 +1279,152 @@ async def users_import(file: UploadFile = File(...), dry_run: bool = Query(True)
     return {"dry_run": False, "created": len(created), "skipped": invalid, "invited": invited,
             "invite_requested": bool(send_invite), "email_configured": email_configured(), "users": created,
             "errors": [p for p in preview if p["errors"]]}
+
+
+# ---- Invitations & password reset (single-use, expiring links; only a hash of the token is stored) ----
+INVITE_HOURS = 7 * 24
+ADMIN_RESET_HOURS = 24
+FORGOT_RESET_HOURS = 2
+
+
+class SetPasswordIn(BaseModel):
+    token: str
+    password: str
+
+
+class ForgotPasswordIn(BaseModel):
+    email: str
+
+
+def _token_hash(tok: str) -> str:
+    return hashlib.sha256(tok.encode()).hexdigest()
+
+
+def _make_password_token(conn, uid: str, kind: str, hours: int) -> str:
+    conn.execute("DELETE FROM password_tokens WHERE user_id = ? AND used_at IS NULL", (uid,))
+    tok = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    conn.execute("INSERT INTO password_tokens (token_hash,user_id,kind,expires_at,created_at) VALUES (?,?,?,?,?)",
+                 (_token_hash(tok), uid, kind, (now + timedelta(hours=hours)).isoformat(), now.isoformat()))
+    return tok
+
+
+def _password_link_email(name: str, kind: str, link: str, hours: int) -> tuple:
+    days = hours // 24
+    valid = f"{days} hari" if hours >= 24 else f"{hours} jam"
+    if kind == "invite":
+        subject = "[YPJ Assets] Undangan: buat kata sandi akun Anda"
+        title, intro, cta, eyebrow = ("Selamat datang di YPJ Assets",
+            "Akun Anda di aplikasi manajemen aset YPJ sudah dibuat. Klik tombol di bawah untuk membuat kata sandi, lalu masuk. "
+            "Aset yang diserahkan kepada Anda akan diberitahukan lewat email dan dikonfirmasi di menu <b>Aset Saya</b>.",
+            "Buat kata sandi", "Undangan")
+    else:
+        subject = "[YPJ Assets] Atur ulang kata sandi Anda"
+        title, intro, cta, eyebrow = ("Atur ulang kata sandi",
+            "Kami menerima permintaan untuk mengatur ulang kata sandi akun Anda. Klik tombol di bawah untuk membuat kata sandi baru.",
+            "Atur ulang kata sandi", "Keamanan akun")
+    body = (f'<h2 style="margin:0 0 10px;font-size:20px">{title}</h2>'
+            f'<p style="margin:0 0 14px;font-size:14px;line-height:1.6">Halo {html_mod.escape(name)}, {intro}</p>'
+            f'<p style="margin:0;font-size:12px;color:#64748b">Tautan berlaku {valid} dan hanya dapat dipakai sekali. '
+            f'Jika Anda tidak merasa memintanya, abaikan email ini.</p>')
+    return subject, _email_shell(body, eyebrow=eyebrow, cta_label=cta, cta_url=link)
+
+
+def _send_password_link(conn, u: dict, kind: str, hours: int) -> dict:
+    tok = _make_password_token(conn, u["id"], kind, hours)
+    conn.commit()
+    link = f"{APP_URL}/set-password?token={tok}"
+    sent = False
+    if email_configured():
+        subject, html_body = _password_link_email(u["name"], kind, link, hours)
+        sent = bool(send_email(u["email"], subject, html_body))
+    return {"sent": sent, "link": link, "email_configured": email_configured(), "email": u["email"]}
+
+
+@api.post("/users/{uid}/invite")
+async def invite_user(uid: str, admin: dict = Depends(admin_required)):
+    conn = get_conn()
+    u = conn.execute("SELECT id,name,email FROM users WHERE id = ?", (uid,)).fetchone()
+    if not u:
+        conn.close()
+        raise HTTPException(404, "User not found")
+    res = _send_password_link(conn, dict(u), "invite", INVITE_HOURS)
+    conn.close()
+    logger.info("Invitation for %s created by %s (sent=%s)", u["email"], admin.get("email"), res["sent"])
+    return res
+
+
+@api.post("/users/{uid}/reset-password")
+async def admin_reset_password(uid: str, admin: dict = Depends(admin_required)):
+    conn = get_conn()
+    u = conn.execute("SELECT id,name,email FROM users WHERE id = ?", (uid,)).fetchone()
+    if not u:
+        conn.close()
+        raise HTTPException(404, "User not found")
+    res = _send_password_link(conn, dict(u), "reset", ADMIN_RESET_HOURS)
+    conn.close()
+    logger.info("Password reset link for %s created by %s (sent=%s)", u["email"], admin.get("email"), res["sent"])
+    return res
+
+
+@api.post("/auth/forgot-password")
+async def forgot_password(body: ForgotPasswordIn):
+    """Always answers the same way so it cannot be used to discover which e-mails are registered."""
+    conn = get_conn()
+    u = conn.execute("SELECT id,name,email FROM users WHERE email = ?", (body.email.strip().lower(),)).fetchone()
+    if u:
+        recent = conn.execute("SELECT created_at FROM password_tokens WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
+                              (u["id"],)).fetchone()
+        too_soon = False
+        if recent:
+            try:
+                too_soon = (datetime.now(timezone.utc) - datetime.fromisoformat(recent["created_at"])).total_seconds() < 60
+            except ValueError:
+                pass
+        if not too_soon:
+            _send_password_link(conn, dict(u), "reset", FORGOT_RESET_HOURS)
+    conn.close()
+    return {"ok": True}
+
+
+def _lookup_password_token(conn, tok: str):
+    r = conn.execute("SELECT t.*, u.name, u.email FROM password_tokens t JOIN users u ON u.id = t.user_id WHERE t.token_hash = ?",
+                     (_token_hash(tok or ""),)).fetchone()
+    if not r or r["used_at"]:
+        return None
+    try:
+        if datetime.fromisoformat(r["expires_at"]) < datetime.now(timezone.utc):
+            return None
+    except ValueError:
+        return None
+    return dict(r)
+
+
+@api.get("/auth/password-token/{tok}")
+async def check_password_token(tok: str):
+    conn = get_conn()
+    r = _lookup_password_token(conn, tok)
+    conn.close()
+    if not r:
+        return {"valid": False}
+    return {"valid": True, "kind": r["kind"], "name": r["name"], "email": r["email"]}
+
+
+@api.post("/auth/set-password")
+async def set_password(body: SetPasswordIn):
+    if len(body.password or "") < 6:
+        raise HTTPException(400, "Password must be at least 6 characters")
+    conn = get_conn()
+    r = _lookup_password_token(conn, body.token)
+    if not r:
+        conn.close()
+        raise HTTPException(400, "Tautan tidak valid atau sudah kedaluwarsa. Minta tautan baru.")
+    conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(body.password), r["user_id"]))
+    conn.execute("UPDATE password_tokens SET used_at = ? WHERE token_hash = ?", (now_iso(), r["token_hash"]))
+    conn.execute("DELETE FROM password_tokens WHERE user_id = ? AND used_at IS NULL", (r["user_id"],))
+    conn.commit()
+    conn.close()
+    return {"ok": True, "email": r["email"]}
 
 
 @api.delete("/users/{uid}")
