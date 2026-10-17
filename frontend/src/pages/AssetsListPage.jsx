@@ -15,6 +15,7 @@ import {
 import { Search, Plus, Filter, Upload, Download, CheckCircle2, XCircle, FileText, FileSpreadsheet } from "lucide-react";
 import { isAdminRole } from "../lib/roles";
 import { ownerName } from "../lib/format";
+import BulkTransferDialog from "../components/assets/BulkTransferDialog";
 
 const CAMPUSES = ["YPJ Kuala Kencana", "YPJ Tembagapura"];
 
@@ -331,6 +332,8 @@ export default function AssetsListPage() {
   const [status, setStatus] = useState("all");
   const [showImport, setShowImport] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [selected, setSelected] = useState(new Set());
+  const [showBulk, setShowBulk] = useState(false);
 
   const doExport = async () => {
     setExporting(true);
@@ -363,7 +366,7 @@ export default function AssetsListPage() {
     if (category !== "all") params.category = category;
     if (status !== "all") params.status = status;
     api.get("/assets", { params })
-      .then((r) => setAssets(r.data))
+      .then((r) => { setAssets(r.data); setSelected((s) => new Set([...s].filter((id) => r.data.some((a) => a.id === id)))); })
       .finally(() => setLoading(false));
   };
 
@@ -471,12 +474,27 @@ export default function AssetsListPage() {
         </div>
       </div>
 
+      {isAdmin && selected.size > 0 && (
+        <div className="mb-3 flex items-center gap-4 bg-blue-50 border border-blue-200 px-4 py-2.5 text-sm" data-testid="bulk-transfer-bar">
+          <span className="font-medium text-blue-900">{t("bt_selected").replace("{n}", selected.size)}</span>
+          <button onClick={() => setShowBulk(true)} className="bg-blue-800 hover:bg-blue-900 text-white px-3 py-1.5" data-testid="bulk-transfer-button">{t("bt_transfer")}</button>
+          <button onClick={() => setSelected(new Set())} className="text-slate-600 hover:text-slate-900" data-testid="bulk-clear">{t("bt_clear")}</button>
+        </div>
+      )}
+
       {/* Table */}
       <div className="bg-white border border-slate-200 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm" data-testid="assets-table">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200">
+                {isAdmin && (
+                  <th className="py-3 px-4 w-8">
+                    <input type="checkbox" data-testid="select-all-assets"
+                      checked={assets.length > 0 && assets.every((a) => selected.has(a.id))}
+                      onChange={(e) => setSelected(e.target.checked ? new Set(assets.map((a) => a.id)) : new Set())} />
+                  </th>
+                )}
                 <th className="text-left font-medium label-mono py-3 px-4">{t("col_tag")}</th>
                 <th className="text-left font-medium label-mono py-3 px-4">{t("col_asset")}</th>
                 <th className="text-left font-medium label-mono py-3 px-4">{t("col_category")}</th>
@@ -489,10 +507,10 @@ export default function AssetsListPage() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={8} className="text-center text-slate-500 py-12">{t("loading")}</td></tr>
+                <tr><td colSpan={isAdmin ? 9 : 8} className="text-center text-slate-500 py-12">{t("loading")}</td></tr>
               ) : assets.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="text-center text-slate-500 py-16">
+                  <td colSpan={isAdmin ? 9 : 8} className="text-center text-slate-500 py-16">
                     <div className="font-display text-lg text-slate-700 mb-1">{t("no_assets")}</div>
                     <div className="text-xs">{t("no_assets_sub")}</div>
                   </td>
@@ -502,6 +520,12 @@ export default function AssetsListPage() {
                 const dot = CAMPUS_DOT[a.campus];
                 return (
                   <tr key={a.id} className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer" data-testid={`asset-row-${a.id}`}>
+                    {isAdmin && (
+                      <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
+                        <input type="checkbox" data-testid={`asset-select-${a.id}`} checked={selected.has(a.id)}
+                          onChange={() => setSelected((s) => { const n = new Set(s); n.has(a.id) ? n.delete(a.id) : n.add(a.id); return n; })} />
+                      </td>
+                    )}
                     <td className="py-3 px-4 font-mono text-xs text-slate-600">
                       <Link to={`/assets/${a.id}`} className="hover:text-blue-800">{a.asset_tag}</Link>
                     </td>
@@ -538,6 +562,12 @@ export default function AssetsListPage() {
         <span>{assets.length} {assets.length !== 1 ? t("count_assets") : t("count_asset")}</span>
         <span>{t("last_refreshed")} {fmtDate(new Date().toISOString())}</span>
       </div>
+
+      {isAdmin && (
+        <BulkTransferDialog open={showBulk} onOpenChange={setShowBulk} t={t}
+          assets={assets.filter((a) => selected.has(a.id))}
+          onDone={() => { setSelected(new Set()); load(); }} />
+      )}
 
       {showImport && (
         <ImportModal
