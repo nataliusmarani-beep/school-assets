@@ -20,6 +20,66 @@ import { CATEGORY_VALUES, CATEGORY_KEYS } from "../i18n";
 
 const CAMPUSES = ["YPJ Kuala Kencana", "YPJ Tembagapura"];
 
+const UNIT_VALUES = ["paud", "sd", "smp", "admin", "shared"];
+const CONDITION_VALUES = ["good", "fair", "poor", "damaged"];
+const ACQ_VALUES = ["purchase", "donation", "transfer"];
+const USER_TYPE_VALUES = ["employee", "shared", "classroom"];
+
+const optionsFor = (prefix, values, t) =>
+  values.map((v) => ({ value: v, label: t(`${prefix}_${v}`) }));
+
+// Extended register fields (text unless noted)
+const EXTRA_TEXT_KEYS = [
+  "asset_code", "item_type", "brand", "model", "unit", "building", "department", "user_type",
+  "acquisition_type", "po_number", "funding_source", "asset_condition", "condition_notes",
+  "last_inspection_date", "next_inspection_date", "last_maintenance_date", "next_maintenance_date",
+  "maintenance_provider", "maintenance_cost", "warranty_start_date", "warranty_provider", "residual_value",
+];
+
+const extrasFromAsset = (a) => {
+  const out = { maintenance_required: !!a.maintenance_required };
+  EXTRA_TEXT_KEYS.forEach((k) => { out[k] = a[k] == null ? "" : String(a[k]); });
+  return out;
+};
+
+const FIELD_CLS = "mt-2 rounded-none border-slate-300";
+
+function TextField({ label, value, onChange, testid, mono, required, placeholder, type = "text", span2, step, min }) {
+  return (
+    <div className={span2 ? "md:col-span-2" : ""}>
+      <Label className="label-mono">{label}</Label>
+      <Input type={type} step={step} min={min} value={value ?? ""} required={required}
+        placeholder={placeholder} onChange={(e) => onChange(e.target.value)}
+        className={`${FIELD_CLS} ${mono ? "font-mono" : ""}`} data-testid={testid} />
+    </div>
+  );
+}
+
+function SelectField({ label, value, onChange, options, placeholder, testid }) {
+  return (
+    <div>
+      <Label className="label-mono">{label}</Label>
+      <Select value={value || ""} onValueChange={onChange}>
+        <SelectTrigger className={FIELD_CLS} data-testid={testid}>
+          <SelectValue placeholder={placeholder} />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((o) => (<SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+function Section({ title, children }) {
+  return (
+    <section className="bg-white border border-slate-200 p-6">
+      <div className="label-mono mb-5 text-blue-800">{title}</div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">{children}</div>
+    </section>
+  );
+}
+
 export default function AssetFormPage() {
   const { id } = useParams();
   const isEdit = !!id;
@@ -37,6 +97,7 @@ export default function AssetFormPage() {
     purchase_date: new Date().toISOString().split("T")[0],
     useful_life_years: 5, warranty_end_date: "", serial_number: "",
     supplier: "", assigned_to_name: "", photo_path: null, documents: [],
+    ...extrasFromAsset({}),
   });
 
   useEffect(() => {
@@ -48,6 +109,8 @@ export default function AssetFormPage() {
           purchase_price: String(a.purchase_price),
           warranty_end_date: a.warranty_end_date ? a.warranty_end_date.split("T")[0] : "",
           purchase_date: a.purchase_date ? a.purchase_date.split("T")[0] : "",
+          assigned_to_name: a.assigned_to_name || "",
+          ...extrasFromAsset(a),
         });
       }).catch((e) => setError(formatErr(e)));
     }
@@ -116,7 +179,7 @@ export default function AssetFormPage() {
     setPdfUploading(true);
     try {
       const r = await uploadFile(file);
-      update("documents", [...form.documents, r]);
+      update("documents", [...form.documents, { ...r, type: "supporting" }]);
       toast.success(t("doc_attached"));
     } catch (err) {
       toast.error(formatErr(err));
@@ -129,6 +192,9 @@ export default function AssetFormPage() {
   const removeDoc = (path) =>
     update("documents", form.documents.filter((d) => d.path !== path));
 
+  const setDocType = (path, type) =>
+    update("documents", form.documents.map((d) => (d.path === path ? { ...d, type } : d)));
+
   const submit = async (e) => {
     e.preventDefault();
     setError("");
@@ -139,6 +205,8 @@ export default function AssetFormPage() {
         purchase_price: parseFloat(form.purchase_price),
         useful_life_years: parseInt(form.useful_life_years, 10),
         warranty_end_date: form.warranty_end_date || null,
+        maintenance_cost: parseFloat(form.maintenance_cost) || 0,
+        residual_value: parseFloat(form.residual_value) || 0,
       };
       let res;
       if (isEdit) {
@@ -171,136 +239,157 @@ export default function AssetFormPage() {
       </h1>
 
       <form onSubmit={submit} className="space-y-8">
-        {/* Section 1: Basic Info */}
-        <section className="bg-white border border-slate-200 p-6">
-          <div className="label-mono mb-5 text-blue-800">{t("section_basic")}</div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            <div className="md:col-span-2">
-              <Label className="label-mono">{t("asset_name")}</Label>
-              <Input value={form.name} onChange={(e)=>update("name",e.target.value)}
-                required className="mt-2 rounded-none border-slate-300" data-testid="asset-name-input"/>
-            </div>
-            <div>
-              <Label className="label-mono">{t("asset_tag")}</Label>
-              <Input value={form.asset_tag} onChange={(e)=>update("asset_tag",e.target.value)}
-                required placeholder={t("asset_tag_placeholder")} className="mt-2 rounded-none border-slate-300 font-mono"
-                data-testid="asset-tag-input"/>
-            </div>
-            <div>
-              <Label className="label-mono">{t("col_category")}</Label>
-              <Select value={form.category} onValueChange={(v)=>update("category",v)}>
-                <SelectTrigger className="mt-2 rounded-none border-slate-300" data-testid="asset-category-select">
-                  <SelectValue/>
-                </SelectTrigger>
-                <SelectContent>
-                  {CATEGORY_VALUES.map((c, i)=>(<SelectItem key={c} value={c}>{t(CATEGORY_KEYS[i])}</SelectItem>))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label className="label-mono">{t("asset_property_by")}</Label>
-              <Select value={form.asset_type || "School Asset"} onValueChange={(v)=>update("asset_type",v)}>
-                <SelectTrigger className="mt-2 rounded-none border-slate-300" data-testid="asset-type-select">
-                  <SelectValue/>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="School Asset">{t("asset_type_school")}</SelectItem>
-                  <SelectItem value="Company Asset">{t("asset_type_company")}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label className="label-mono">{t("campus")}</Label>
-              <Select value={form.campus || ""} onValueChange={(v)=>update("campus",v)}>
-                <SelectTrigger className="mt-2 rounded-none border-slate-300" data-testid="asset-campus-select">
-                  <SelectValue placeholder={t("select_campus")}/>
-                </SelectTrigger>
-                <SelectContent>
-                  {CAMPUSES.map((c)=>(<SelectItem key={c} value={c}>{c}</SelectItem>))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label className="label-mono">{t("room_location")}</Label>
-              <Input value={form.location} onChange={(e)=>update("location",e.target.value)}
-                required placeholder={t("room_placeholder")} className="mt-2 rounded-none border-slate-300"
-                data-testid="asset-location-input"/>
-            </div>
-            <div>
-              <Label className="label-mono">{t("status")}</Label>
-              <Select value={form.status} onValueChange={(v)=>update("status",v)}>
-                <SelectTrigger className="mt-2 rounded-none border-slate-300" data-testid="asset-status-select">
-                  <SelectValue/>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="active">{t("status_active")}</SelectItem>
-                  <SelectItem value="in_repair">{t("status_in_repair")}</SelectItem>
-                  <SelectItem value="retired">{t("status_retired")}</SelectItem>
-                  <SelectItem value="lost">{t("status_lost")}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="md:col-span-2">
-              <Label className="label-mono">{t("description")}</Label>
-              <Textarea value={form.description} onChange={(e)=>update("description",e.target.value)}
-                rows={3} className="mt-2 rounded-none border-slate-300"
-                data-testid="asset-description-input"/>
-            </div>
-            <div>
-              <Label className="label-mono">{t("serial_number")}</Label>
-              <Input value={form.serial_number} onChange={(e)=>update("serial_number",e.target.value)}
-                className="mt-2 rounded-none border-slate-300 font-mono" data-testid="asset-serial-input"/>
-            </div>
-            <div>
-              <Label className="label-mono">{t("initial_owner")}</Label>
-              <Input value={form.assigned_to_name} onChange={(e)=>update("assigned_to_name",e.target.value)}
-                placeholder={t("initial_owner_placeholder")} className="mt-2 rounded-none border-slate-300"
-                data-testid="asset-assigned-input"/>
-            </div>
+        {/* Section 1: Identity */}
+        <Section title={t("section_basic")}>
+          <TextField label={t("asset_code")} value={form.asset_code} onChange={(v)=>update("asset_code",v)}
+            placeholder={t("asset_code_placeholder")} mono testid="asset-code-input"/>
+          <TextField label={t("asset_tag")} value={form.asset_tag} onChange={(v)=>update("asset_tag",v)}
+            required placeholder={t("asset_tag_placeholder")} mono testid="asset-tag-input"/>
+          <TextField label={t("asset_name")} value={form.name} onChange={(v)=>update("name",v)}
+            required span2 testid="asset-name-input"/>
+          <div>
+            <Label className="label-mono">{t("col_category")}</Label>
+            <Select value={form.category} onValueChange={(v)=>update("category",v)}>
+              <SelectTrigger className={FIELD_CLS} data-testid="asset-category-select">
+                <SelectValue/>
+              </SelectTrigger>
+              <SelectContent>
+                {CATEGORY_VALUES.map((c, i)=>(<SelectItem key={c} value={c}>{t(CATEGORY_KEYS[i])}</SelectItem>))}
+              </SelectContent>
+            </Select>
           </div>
-        </section>
-
-        {/* Section 2: Financial */}
-        <section className="bg-white border border-slate-200 p-6">
-          <div className="label-mono mb-5 text-blue-800">{t("section_financials")}</div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            <div>
-              <Label className="label-mono">{t("purchase_price")}</Label>
-              <Input type="number" step="0.01" value={form.purchase_price}
-                onChange={(e)=>update("purchase_price",e.target.value)}
-                required className="mt-2 rounded-none border-slate-300 font-mono"
-                data-testid="asset-price-input"/>
-            </div>
-            <div>
-              <Label className="label-mono">{t("purchase_date")}</Label>
-              <Input type="date" value={form.purchase_date}
-                onChange={(e)=>update("purchase_date",e.target.value)}
-                required className="mt-2 rounded-none border-slate-300"
-                data-testid="asset-purchase-date-input"/>
-            </div>
-            <div>
-              <Label className="label-mono">{t("useful_life")}</Label>
-              <Input type="number" min="1" value={form.useful_life_years}
-                onChange={(e)=>update("useful_life_years",e.target.value)}
-                required className="mt-2 rounded-none border-slate-300"
-                data-testid="asset-life-input"/>
-            </div>
-            <div>
-              <Label className="label-mono">{t("warranty_end")}</Label>
-              <Input type="date" value={form.warranty_end_date}
-                onChange={(e)=>update("warranty_end_date",e.target.value)}
-                className="mt-2 rounded-none border-slate-300"
-                data-testid="asset-warranty-input"/>
-            </div>
-            <div className="md:col-span-2">
-              <Label className="label-mono">{t("supplier")}</Label>
-              <Input value={form.supplier} onChange={(e)=>update("supplier",e.target.value)}
-                className="mt-2 rounded-none border-slate-300" data-testid="asset-supplier-input"/>
-            </div>
+          <TextField label={t("item_type")} value={form.item_type} onChange={(v)=>update("item_type",v)}
+            placeholder={t("item_type_placeholder")} testid="asset-item-type-input"/>
+          <TextField label={t("brand")} value={form.brand} onChange={(v)=>update("brand",v)}
+            placeholder={t("brand_placeholder")} testid="asset-brand-input"/>
+          <TextField label={t("model")} value={form.model} onChange={(v)=>update("model",v)}
+            placeholder={t("model_placeholder")} testid="asset-model-input"/>
+          <TextField label={t("serial_number")} value={form.serial_number} onChange={(v)=>update("serial_number",v)}
+            mono testid="asset-serial-input"/>
+          <div>
+            <Label className="label-mono">{t("asset_property_by")}</Label>
+            <Select value={form.asset_type || "School Asset"} onValueChange={(v)=>update("asset_type",v)}>
+              <SelectTrigger className={FIELD_CLS} data-testid="asset-type-select">
+                <SelectValue/>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="School Asset">{t("asset_type_school")}</SelectItem>
+                <SelectItem value="Company Asset">{t("asset_type_company")}</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-        </section>
+          <div className="md:col-span-2">
+            <Label className="label-mono">{t("description")}</Label>
+            <Textarea value={form.description || ""} onChange={(e)=>update("description",e.target.value)}
+              rows={3} className={FIELD_CLS} data-testid="asset-description-input"/>
+          </div>
+        </Section>
 
-        {/* Section 3: Media */}
+        {/* Section 2: Location & Custodian */}
+        <Section title={t("section_location")}>
+          <div>
+            <Label className="label-mono">{t("campus")}</Label>
+            <Select value={form.campus || ""} onValueChange={(v)=>update("campus",v)}>
+              <SelectTrigger className={FIELD_CLS} data-testid="asset-campus-select">
+                <SelectValue placeholder={t("select_campus")}/>
+              </SelectTrigger>
+              <SelectContent>
+                {CAMPUSES.map((c)=>(<SelectItem key={c} value={c}>{c}</SelectItem>))}
+              </SelectContent>
+            </Select>
+          </div>
+          <SelectField label={t("unit")} value={form.unit} onChange={(v)=>update("unit",v)}
+            options={optionsFor("unit", UNIT_VALUES, t)} placeholder={t("select_generic")} testid="asset-unit-select"/>
+          <TextField label={t("building")} value={form.building} onChange={(v)=>update("building",v)}
+            placeholder={t("building_placeholder")} testid="asset-building-input"/>
+          <TextField label={t("room_location")} value={form.location} onChange={(v)=>update("location",v)}
+            required placeholder={t("room_placeholder")} testid="asset-location-input"/>
+          <TextField label={t("initial_owner")} value={form.assigned_to_name} onChange={(v)=>update("assigned_to_name",v)}
+            placeholder={t("initial_owner_placeholder")} testid="asset-assigned-input"/>
+          <TextField label={t("asset_department")} value={form.department} onChange={(v)=>update("department",v)}
+            placeholder={t("asset_department_placeholder")} testid="asset-department-input"/>
+          <SelectField label={t("user_type")} value={form.user_type} onChange={(v)=>update("user_type",v)}
+            options={optionsFor("ut", USER_TYPE_VALUES, t)} placeholder={t("select_generic")} testid="asset-user-type-select"/>
+        </Section>
+
+        {/* Section 3: Acquisition */}
+        <Section title={t("section_acquisition")}>
+          <TextField label={t("purchase_date")} type="date" value={form.purchase_date}
+            onChange={(v)=>update("purchase_date",v)} required testid="asset-purchase-date-input"/>
+          <SelectField label={t("acquisition_type")} value={form.acquisition_type} onChange={(v)=>update("acquisition_type",v)}
+            options={optionsFor("acq", ACQ_VALUES, t)} placeholder={t("select_generic")} testid="asset-acq-type-select"/>
+          <TextField label={t("supplier")} value={form.supplier} onChange={(v)=>update("supplier",v)}
+            testid="asset-supplier-input"/>
+          <TextField label={t("po_number")} value={form.po_number} onChange={(v)=>update("po_number",v)}
+            placeholder={t("po_placeholder")} mono testid="asset-po-input"/>
+          <TextField label={t("purchase_price")} type="number" step="0.01" value={form.purchase_price}
+            onChange={(v)=>update("purchase_price",v)} required mono testid="asset-price-input"/>
+          <TextField label={t("funding_source")} value={form.funding_source} onChange={(v)=>update("funding_source",v)}
+            placeholder={t("funding_placeholder")} testid="asset-funding-input"/>
+        </Section>
+
+        {/* Section 4: Condition & Inspection */}
+        <Section title={t("section_condition")}>
+          <div>
+            <Label className="label-mono">{t("status")}</Label>
+            <Select value={form.status} onValueChange={(v)=>update("status",v)}>
+              <SelectTrigger className={FIELD_CLS} data-testid="asset-status-select">
+                <SelectValue/>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active">{t("status_active")}</SelectItem>
+                <SelectItem value="in_repair">{t("status_in_repair")}</SelectItem>
+                <SelectItem value="retired">{t("status_retired")}</SelectItem>
+                <SelectItem value="lost">{t("status_lost")}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <SelectField label={t("asset_condition")} value={form.asset_condition} onChange={(v)=>update("asset_condition",v)}
+            options={optionsFor("cond", CONDITION_VALUES, t)} placeholder={t("select_generic")} testid="asset-condition-select"/>
+          <TextField label={t("condition_notes")} value={form.condition_notes} onChange={(v)=>update("condition_notes",v)}
+            span2 testid="asset-condition-notes-input"/>
+          <TextField label={t("last_inspection")} type="date" value={form.last_inspection_date}
+            onChange={(v)=>update("last_inspection_date",v)} testid="asset-last-inspection-input"/>
+          <TextField label={t("next_inspection")} type="date" value={form.next_inspection_date}
+            onChange={(v)=>update("next_inspection_date",v)} testid="asset-next-inspection-input"/>
+        </Section>
+
+        {/* Section 5: Maintenance */}
+        <Section title={t("section_maintenance")}>
+          <SelectField label={t("maintenance_required")} value={form.maintenance_required ? "yes" : "no"}
+            onChange={(v)=>update("maintenance_required", v === "yes")}
+            options={[{ value: "no", label: t("opt_no") }, { value: "yes", label: t("opt_yes") }]}
+            testid="asset-maintenance-required-select"/>
+          <TextField label={t("maintenance_provider")} value={form.maintenance_provider}
+            onChange={(v)=>update("maintenance_provider",v)} placeholder={t("maintenance_provider_placeholder")}
+            testid="asset-maintenance-provider-input"/>
+          <TextField label={t("last_maintenance")} type="date" value={form.last_maintenance_date}
+            onChange={(v)=>update("last_maintenance_date",v)} testid="asset-last-maintenance-input"/>
+          <TextField label={t("next_maintenance")} type="date" value={form.next_maintenance_date}
+            onChange={(v)=>update("next_maintenance_date",v)} testid="asset-next-maintenance-input"/>
+          <TextField label={t("maintenance_cost")} type="number" step="0.01" min="0" value={form.maintenance_cost}
+            onChange={(v)=>update("maintenance_cost",v)} mono testid="asset-maintenance-cost-input"/>
+        </Section>
+
+        {/* Section 6: Warranty */}
+        <Section title={t("section_warranty")}>
+          <TextField label={t("warranty_start")} type="date" value={form.warranty_start_date}
+            onChange={(v)=>update("warranty_start_date",v)} testid="asset-warranty-start-input"/>
+          <TextField label={t("warranty_end")} type="date" value={form.warranty_end_date}
+            onChange={(v)=>update("warranty_end_date",v)} testid="asset-warranty-input"/>
+          <TextField label={t("warranty_provider")} value={form.warranty_provider}
+            onChange={(v)=>update("warranty_provider",v)} span2 testid="asset-warranty-provider-input"/>
+        </Section>
+
+        {/* Section 7: Financials */}
+        <Section title={t("section_financials")}>
+          <TextField label={t("useful_life")} type="number" min="1" value={form.useful_life_years}
+            onChange={(v)=>update("useful_life_years",v)} required testid="asset-life-input"/>
+          <TextField label={t("residual_value")} type="number" step="0.01" min="0" value={form.residual_value}
+            onChange={(v)=>update("residual_value",v)} mono testid="asset-residual-input"/>
+        </Section>
+
+        {/* Section 8: Media */}
         <section className="bg-white border border-slate-200 p-6">
           <div className="label-mono mb-5 text-blue-800">{t("section_media")}</div>
 
@@ -350,6 +439,12 @@ export default function AssetFormPage() {
                     <div className="text-sm truncate">{d.name}</div>
                     <div className="text-xs text-slate-500">{(d.size/1024).toFixed(1)} KB</div>
                   </div>
+                  <select value={d.type || "supporting"} onChange={(e)=>setDocType(d.path, e.target.value)}
+                    className="text-xs border border-slate-300 bg-white px-2 py-1" data-testid="document-type-select">
+                    <option value="invoice">{t("doc_invoice")}</option>
+                    <option value="warranty">{t("doc_warranty")}</option>
+                    <option value="supporting">{t("doc_supporting")}</option>
+                  </select>
                   <button type="button" onClick={()=>removeDoc(d.path)}
                     className="text-slate-400 hover:text-rose-600">
                     <X className="w-4 h-4"/>

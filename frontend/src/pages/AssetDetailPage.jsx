@@ -191,6 +191,8 @@ export default function AssetDetailPage() {
   if (!asset) return <div className="p-8 text-sm text-slate-500">{t("asset_not_found")}</div>;
 
   const dep = asset.depreciation || {};
+  const opt = (prefix, v) => (v ? t(`${prefix}_${v}`) : "—");
+  const day = (v) => (v ? fmtDate(v) : "—");
 
   return (
     <div className="p-6 lg:p-10 max-w-[1600px] mx-auto" data-testid="asset-detail-page">
@@ -441,17 +443,65 @@ export default function AssetDetailPage() {
               <dl className="grid grid-cols-2 gap-y-4">
                 <Field label={t("cat_label")} value={asset.category}/>
                 <Field label={t("col_status")} value={asset.status.replace("_", " ")}/>
-                <Field label={t("serial_number")} value={asset.serial_number || "—"} mono/>
-                <Field label={t("supplier")} value={asset.supplier || "—"}/>
-                <Field label={t("useful_life")} value={`${asset.useful_life_years} yrs`}/>
-                <Field label={t("created_label")} value={fmtDate(asset.created_at)}/>
                 <Field label={t("col_asset_property_of")} value={asset.asset_type || "School Asset"}/>
+                <Field label={t("created_label")} value={fmtDate(asset.created_at)}/>
+                <Field label={t("updated_label")} value={fmtDate(asset.updated_at)}/>
               </dl>
+
+              <DetailGroup title={sec(t("section_basic"))}>
+                <Field label={t("asset_code")} value={asset.asset_code || "—"} mono/>
+                <Field label={t("asset_tag")} value={asset.asset_tag || "—"} mono/>
+                <Field label={t("item_type")} value={asset.item_type || "—"}/>
+                <Field label={t("brand")} value={asset.brand || "—"}/>
+                <Field label={t("model")} value={asset.model || "—"}/>
+                <Field label={t("serial_number")} value={asset.serial_number || "—"} mono/>
+              </DetailGroup>
+
+              <DetailGroup title={sec(t("section_location"))}>
+                <Field label={t("campus")} value={asset.campus || "—"}/>
+                <Field label={t("unit")} value={opt("unit", asset.unit)}/>
+                <Field label={t("building")} value={asset.building || "—"}/>
+                <Field label={t("room_location")} value={asset.location || "—"}/>
+                <Field label={t("initial_owner")} value={asset.assigned_to_name || "—"}/>
+                <Field label={t("asset_department")} value={asset.department || "—"}/>
+                <Field label={t("user_type")} value={opt("ut", asset.user_type)}/>
+              </DetailGroup>
+
+              <DetailGroup title={sec(t("section_acquisition"))}>
+                <Field label={t("purchase_date")} value={day(asset.purchase_date)}/>
+                <Field label={t("acquisition_type")} value={opt("acq", asset.acquisition_type)}/>
+                <Field label={t("supplier")} value={asset.supplier || "—"}/>
+                <Field label={t("po_number")} value={asset.po_number || "—"} mono/>
+                <Field label={t("purchase_price")} value={fmtCurrency(asset.purchase_price)}/>
+                <Field label={t("funding_source")} value={asset.funding_source || "—"}/>
+              </DetailGroup>
+
+              <DetailGroup title={sec(t("section_condition"))}>
+                <Field label={t("asset_condition")} value={opt("cond", asset.asset_condition)}/>
+                <Field label={t("condition_notes")} value={asset.condition_notes || "—"}/>
+                <Field label={t("last_inspection")} value={day(asset.last_inspection_date)}/>
+                <Field label={t("next_inspection")} value={day(asset.next_inspection_date)}/>
+              </DetailGroup>
+
+              <DetailGroup title={sec(t("section_maintenance"))}>
+                <Field label={t("maintenance_required")} value={asset.maintenance_required ? t("opt_yes") : t("opt_no")}/>
+                <Field label={t("maintenance_provider")} value={asset.maintenance_provider || "—"}/>
+                <Field label={t("last_maintenance")} value={day(asset.last_maintenance_date)}/>
+                <Field label={t("next_maintenance")} value={day(asset.next_maintenance_date)}/>
+                <Field label={t("maintenance_cost")} value={asset.maintenance_cost ? fmtCurrency(asset.maintenance_cost) : "—"}/>
+              </DetailGroup>
+
+              <DetailGroup title={sec(t("section_warranty"))}>
+                <Field label={t("warranty_start")} value={day(asset.warranty_start_date)}/>
+                <Field label={t("warranty_end")} value={day(asset.warranty_end_date)}/>
+                <Field label={t("warranty_provider")} value={asset.warranty_provider || "—"}/>
+              </DetailGroup>
 
               <div className="border-t border-slate-100 pt-5">
                 <div className="label-mono mb-4">{t("depreciation")}</div>
                 <div className="space-y-3">
                   <Row label={t("purchase_price")} value={fmtCurrency(asset.purchase_price)}/>
+                  <Row label={t("residual_value")} value={fmtCurrency(asset.residual_value || 0)}/>
                   <Row label={t("annual_dep")} value={fmtCurrency(dep.annual)}/>
                   <Row label={t("accumulated")} value={fmtCurrency(dep.accumulated)}/>
                   <div className="border-t border-slate-200 pt-3">
@@ -518,7 +568,9 @@ export default function AssetDetailPage() {
                       <FileText className="w-4 h-4 text-slate-500"/>
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-medium truncate">{d.name}</div>
-                        <div className="text-xs text-slate-500">{(d.size/1024).toFixed(1)} KB</div>
+                        <div className="text-xs text-slate-500">
+                          {d.type ? `${t("doc_" + d.type)} · ` : ""}{(d.size/1024).toFixed(1)} KB
+                        </div>
                       </div>
                       <Button variant="outline" size="sm" className="rounded-none"
                         onClick={()=>downloadDoc(d)} data-testid={`download-doc-${d.path}`}>
@@ -544,6 +596,18 @@ function Detail({ icon: Icon, label, value }) {
         <div className="label-mono mb-0.5">{label}</div>
         <div className="text-sm text-slate-900">{value}</div>
       </div>
+    </div>
+  );
+}
+
+// "02 — Location & Custodian" -> "Location & Custodian"
+const sec = (title) => title.replace(/^\d+\s*—\s*/, "");
+
+function DetailGroup({ title, children }) {
+  return (
+    <div className="border-t border-slate-100 pt-5">
+      <div className="label-mono mb-4 text-blue-800">{title}</div>
+      <dl className="grid grid-cols-2 gap-y-4">{children}</dl>
     </div>
   );
 }

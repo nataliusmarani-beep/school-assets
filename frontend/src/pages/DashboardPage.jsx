@@ -122,6 +122,40 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* Inspections & maintenance due */}
+      <div className="bg-white border border-slate-200 p-6 mb-6" data-testid="due-items-card">
+        <div className="label-mono mb-1">{t("action_required")}</div>
+        <h2 className="font-display text-xl font-medium text-slate-900 mb-5">{t("due_title")}</h2>
+        {(!stats.due_items || stats.due_items.length === 0) ? (
+          <div className="text-sm text-slate-500">{t("due_none")}</div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3 max-h-72 overflow-y-auto">
+            {stats.due_items.slice(0, 12).map((it) => {
+              const late = it.days_left < 0;
+              const when = late
+                ? `${-it.days_left} ${t("due_days_overdue")}`
+                : it.days_left === 0
+                  ? t("due_today")
+                  : `${t("due_in")} ${it.days_left} ${t("due_days")}`;
+              return (
+                <Link to={`/assets/${it.asset_id}`} key={`${it.asset_id}-${it.kind}`}
+                  data-testid={`due-item-${it.asset_id}-${it.kind}`}
+                  className={`block border-l-2 ${late ? "border-rose-400" : "border-amber-400"} pl-3 py-1 hover:bg-slate-50`}>
+                  <div className="text-sm font-medium text-slate-900 truncate">{it.name}</div>
+                  <div className="text-xs text-slate-500 flex items-center gap-2 flex-wrap">
+                    <span>{it.asset_tag}</span><span>·</span>
+                    <span>{t(`due_${it.kind}`)}</span><span>·</span>
+                    <span className={late ? "text-rose-600" : "text-amber-700"}>
+                      {fmtDate(it.due_date)} ({when})
+                    </span>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       {/* Recent faults + Categories */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white border border-slate-200 p-6">

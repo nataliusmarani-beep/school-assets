@@ -76,6 +76,33 @@ def get_conn() -> sqlite3.Connection:
     return conn
 
 
+# ---- Extended asset register fields (all optional; added via safe migration) ----
+# (column, sqlite type, default)
+EXTRA_ASSET_FIELDS = [
+    # Identity
+    ("asset_code", "TEXT", ""), ("item_type", "TEXT", ""), ("brand", "TEXT", ""), ("model", "TEXT", ""),
+    # Location
+    ("unit", "TEXT", ""), ("building", "TEXT", ""),
+    # Custodian
+    ("department", "TEXT", ""), ("user_type", "TEXT", ""),
+    # Acquisition
+    ("acquisition_type", "TEXT", ""), ("po_number", "TEXT", ""), ("funding_source", "TEXT", ""),
+    # Condition & inspection
+    ("asset_condition", "TEXT", ""), ("condition_notes", "TEXT", ""),
+    ("last_inspection_date", "TEXT", ""), ("next_inspection_date", "TEXT", ""),
+    # Maintenance
+    ("maintenance_required", "INTEGER", 0), ("last_maintenance_date", "TEXT", ""),
+    ("next_maintenance_date", "TEXT", ""), ("maintenance_provider", "TEXT", ""),
+    ("maintenance_cost", "REAL", 0),
+    # Warranty
+    ("warranty_start_date", "TEXT", ""), ("warranty_provider", "TEXT", ""),
+    # Financial
+    ("residual_value", "REAL", 0),
+]
+EXTRA_ASSET_KEYS = [f[0] for f in EXTRA_ASSET_FIELDS]
+EXTRA_DATE_KEYS = [k for k, _, _ in EXTRA_ASSET_FIELDS if k.endswith("_date")]
+
+
 def init_db():
     conn = get_conn()
     conn.executescript("""
@@ -239,6 +266,13 @@ def init_db():
         if col not in loan_cols:
             conn.execute(f"ALTER TABLE loan_requests ADD COLUMN {col} {defn}")
     conn.commit()
+    # Extended asset register columns
+    asset_cols = [r[1] for r in conn.execute("PRAGMA table_info(assets)").fetchall()]
+    for col, sqltype, default in EXTRA_ASSET_FIELDS:
+        if col not in asset_cols:
+            lit = f"'{default}'" if isinstance(default, str) else str(default)
+            conn.execute(f"ALTER TABLE assets ADD COLUMN {col} {sqltype} NOT NULL DEFAULT {lit}")
+    conn.commit()
     conn.close()
 
 
@@ -342,6 +376,30 @@ class AssetIn(BaseModel):
     assigned_to_name: Optional[str] = None
     photo_path: Optional[str] = None
     documents: List[dict] = []
+    # Extended register fields
+    asset_code: Optional[str] = ""
+    item_type: Optional[str] = ""
+    brand: Optional[str] = ""
+    model: Optional[str] = ""
+    unit: Optional[str] = ""
+    building: Optional[str] = ""
+    department: Optional[str] = ""
+    user_type: Optional[str] = ""
+    acquisition_type: Optional[str] = ""
+    po_number: Optional[str] = ""
+    funding_source: Optional[str] = ""
+    asset_condition: Optional[str] = ""
+    condition_notes: Optional[str] = ""
+    last_inspection_date: Optional[str] = ""
+    next_inspection_date: Optional[str] = ""
+    maintenance_required: Optional[bool] = False
+    last_maintenance_date: Optional[str] = ""
+    next_maintenance_date: Optional[str] = ""
+    maintenance_provider: Optional[str] = ""
+    maintenance_cost: Optional[float] = 0
+    warranty_start_date: Optional[str] = ""
+    warranty_provider: Optional[str] = ""
+    residual_value: Optional[float] = 0
 
 
 class AssetUpdate(BaseModel):
@@ -361,6 +419,29 @@ class AssetUpdate(BaseModel):
     supplier: Optional[str] = None
     photo_path: Optional[str] = None
     documents: Optional[List[dict]] = None
+    asset_code: Optional[str] = None
+    item_type: Optional[str] = None
+    brand: Optional[str] = None
+    model: Optional[str] = None
+    unit: Optional[str] = None
+    building: Optional[str] = None
+    department: Optional[str] = None
+    user_type: Optional[str] = None
+    acquisition_type: Optional[str] = None
+    po_number: Optional[str] = None
+    funding_source: Optional[str] = None
+    asset_condition: Optional[str] = None
+    condition_notes: Optional[str] = None
+    last_inspection_date: Optional[str] = None
+    next_inspection_date: Optional[str] = None
+    maintenance_required: Optional[bool] = None
+    last_maintenance_date: Optional[str] = None
+    next_maintenance_date: Optional[str] = None
+    maintenance_provider: Optional[str] = None
+    maintenance_cost: Optional[float] = None
+    warranty_start_date: Optional[str] = None
+    warranty_provider: Optional[str] = None
+    residual_value: Optional[float] = None
 
 
 class TransferIn(BaseModel):
@@ -402,7 +483,7 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def calc_depreciation(purchase_price: float, purchase_date: str, useful_life_years: int) -> dict:
+def calc_depreciation(purchase_price: float, purchase_date: str, useful_life_years: int, residual_value: float = 0) -> dict:
     try:
         pdate = datetime.fromisoformat(purchase_date.replace("Z", "+00:00"))
         if pdate.tzinfo is None:
@@ -410,9 +491,11 @@ def calc_depreciation(purchase_price: float, purchase_date: str, useful_life_yea
     except Exception:
         return {"current_value": purchase_price, "accumulated": 0, "annual": 0, "age_years": 0}
     age = (datetime.now(timezone.utc) - pdate).days / 365.25
-    annual = purchase_price / max(useful_life_years, 1)
-    accumulated = min(annual * age, purchase_price)
-    current = max(purchase_price - accumulated, 0)
+    residual = min(max(residual_value or 0, 0), purchase_price)
+    depreciable = purchase_price - residual
+    annual = depreciable / max(useful_life_years, 1)
+    accumulated = min(annual * age, depreciable)
+    current = max(purchase_price - accumulated, residual)
     return {
         "current_value": round(current, 2),
         "accumulated": round(accumulated, 2),
@@ -540,6 +623,152 @@ def send_return_reminders():
         send_email(email, subject, body, cc=cc)
     conn.close()
     logger.info("Return reminders checked — %d sent", len(rows))
+
+
+# ---- Due-date reminders: inspection / maintenance / warranty ----
+LOCAL_TZ = timezone(timedelta(hours=7))   # same wall clock as the scheduler (Asia/Jakarta)
+# Recipients: campus heads (CAMPUS_HEAD_EMAILS) + this general inbox (falls back to LOAN_NOTIFY_EMAIL)
+ASSET_REMINDER_EMAIL = os.environ.get("ASSET_REMINDER_EMAIL", "") or LOAN_NOTIFY_EMAIL
+REMINDER_MILESTONES = (30, 14, 7, 1, 0)   # days before the due date on which an email goes out
+DUE_KINDS = (
+    ("inspection",  "next_inspection_date"),
+    ("maintenance", "next_maintenance_date"),
+    ("warranty",    "warranty_end_date"),
+)
+DUE_KIND_LABELS = {"inspection": "Inspection", "maintenance": "Maintenance", "warranty": "Warranty expiry"}
+
+
+def _parse_day(value):
+    try:
+        return datetime.strptime((value or "")[:10], "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return None
+
+
+def collect_due_items(assets: list, within_days: int = 60, kinds=None, today=None) -> list:
+    """Items due within `within_days` (overdue ones included, days_left < 0), soonest first.
+    Retired and lost assets are ignored."""
+    today = today or datetime.now(LOCAL_TZ).date()
+    items = []
+    for a in assets:
+        if a.get("status") in ("retired", "lost"):
+            continue
+        for kind, col in DUE_KINDS:
+            if kinds and kind not in kinds:
+                continue
+            d = _parse_day(a.get(col))
+            if not d:
+                continue
+            days_left = (d - today).days
+            if days_left <= within_days:
+                items.append({
+                    "asset_id": a["id"], "name": a["name"], "asset_tag": a["asset_tag"],
+                    "campus": a.get("campus") or "", "location": a.get("location") or "",
+                    "kind": kind, "due_date": d.isoformat(), "days_left": days_left,
+                })
+    items.sort(key=lambda i: (i["days_left"], i["name"]))
+    return items
+
+
+def _reminder_html(campus: str, items: list) -> str:
+    import html as _h
+    def when(i):
+        n = i["days_left"]
+        if n < 0:
+            return f"<span style='color:#e11d48;'>{-n} day(s) overdue</span>"
+        return "<strong>today</strong>" if n == 0 else f"in {n} day(s)"
+    rows = "".join(
+        f"<tr>"
+        f"<td style='padding:6px 8px;border-bottom:1px solid #e2e8f0;'>{_h.escape(DUE_KIND_LABELS[i['kind']])}</td>"
+        f"<td style='padding:6px 8px;border-bottom:1px solid #e2e8f0;'>{_h.escape(i['name'])}<br>"
+        f"<span style='color:#64748b;font-size:12px;'>{_h.escape(i['asset_tag'])} · {_h.escape(i['location'])}</span></td>"
+        f"<td style='padding:6px 8px;border-bottom:1px solid #e2e8f0;'>{i['due_date']}<br>"
+        f"<span style='font-size:12px;'>{when(i)}</span></td>"
+        f"</tr>"
+        for i in items
+    )
+    return f"""
+    <div style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;">
+      <div style="background:#0f172a;color:#fff;padding:16px 24px;">
+        <strong>YPJ School Assets Management</strong>
+      </div>
+      <div style="padding:24px;">
+        <h2 style="margin-top:0;">Asset due-date reminder{f' — {_h.escape(campus)}' if campus else ''}</h2>
+        <table style="border-collapse:collapse;width:100%;margin-bottom:16px;font-size:14px;">
+          <tr style="text-align:left;color:#64748b;font-size:12px;">
+            <th style="padding:6px 8px;">Type</th><th style="padding:6px 8px;">Asset</th><th style="padding:6px 8px;">Due</th>
+          </tr>
+          {rows}
+        </table>
+        <p style="margin-top:24px;">
+          <a href="{APP_URL}" style="background:#0f172a;color:#fff;padding:10px 20px;text-decoration:none;">
+            Open Asset Registry
+          </a>
+        </p>
+      </div>
+      <div style="background:#f8fafc;padding:12px 24px;font-size:12px;color:#94a3b8;">
+        YPJ School Assets Management &mdash; automated notification
+      </div>
+    </div>
+    """
+
+
+def send_asset_due_reminders(force: bool = False, today=None) -> dict:
+    """Runs daily. One digest email per campus (campus heads + general inbox).
+
+    Normal run: items exactly 30 / 14 / 7 / 1 / 0 days before the due date, plus overdue
+    inspections and maintenance every Monday. Expired warranties are not nagged.
+    force=True: everything due within 30 days or overdue (for manual sends / testing).
+    """
+    today = today or datetime.now(LOCAL_TZ).date()
+    conn = get_conn()
+    assets = [row_to_dict(r) for r in conn.execute("SELECT * FROM assets").fetchall()]
+    conn.close()
+
+    picked = []
+    for it in collect_due_items(assets, within_days=30, today=today):
+        n = it["days_left"]
+        if n < 0 and it["kind"] == "warranty":
+            continue
+        if force or (n in REMINDER_MILESTONES) or (n < 0 and today.weekday() == 0):
+            picked.append(it)
+
+    by_campus: dict = {}
+    for it in picked:
+        by_campus.setdefault(it["campus"], []).append(it)
+
+    configured = bool(SMTP_HOST and SMTP_USER)
+    sent = 0
+    for campus, group in by_campus.items():
+        recipients = [a for a in CAMPUS_HEAD_EMAILS.get(campus, []) if a]
+        if ASSET_REMINDER_EMAIL:
+            recipients.append(ASSET_REMINDER_EMAIL)
+        recipients = list(dict.fromkeys(recipients))   # dedupe, keep order
+        if not recipients:
+            logger.warning("Asset reminders for %r skipped — no recipients configured", campus)
+            continue
+        overdue = sum(1 for i in group if i["days_left"] < 0)
+        subject = f"[YPJ Assets] {len(group)} asset reminder(s)" + (f" — {campus}" if campus else "")
+        if overdue:
+            subject += f" ({overdue} overdue)"
+        send_email(recipients[0], subject, _reminder_html(campus, group), cc=recipients[1:])
+        if configured:
+            sent += 1
+    logger.info("Asset due reminders: %d item(s), %d email(s)", len(picked), sent)
+    return {"items": len(picked), "emails": sent, "email_configured": configured}
+
+
+@api.get("/reminders/due")
+async def list_due_reminders(days: int = 30, _: dict = Depends(admin_required)):
+    conn = get_conn()
+    assets = [row_to_dict(r) for r in conn.execute("SELECT * FROM assets").fetchall()]
+    conn.close()
+    return {"days": days, "items": collect_due_items(assets, within_days=days)}
+
+
+@api.post("/reminders/send-now")
+async def send_reminders_now(_: dict = Depends(admin_required)):
+    return send_asset_due_reminders(force=True)
 
 
 # ---- Auth endpoints ----
@@ -736,7 +965,7 @@ async def list_assets(
     conn.close()
     assets = [row_to_dict(r) for r in rows]
     for a in assets:
-        a["depreciation"] = calc_depreciation(a["purchase_price"], a["purchase_date"], a.get("useful_life_years", 5))
+        a["depreciation"] = calc_depreciation(a["purchase_price"], a["purchase_date"], a.get("useful_life_years", 5), a.get("residual_value") or 0)
     return assets
 
 
@@ -758,6 +987,15 @@ async def create_asset(body: AssetIn, user: dict = Depends(get_current_user)):
         body.serial_number or "", body.supplier or "", body.assigned_to_user_id, body.assigned_to_name,
         body.photo_path, json.dumps(body.documents), ts, ts, user["id"],
     ))
+    extras = {k: getattr(body, k) for k in EXTRA_ASSET_KEYS}
+    extras["maintenance_required"] = 1 if extras["maintenance_required"] else 0
+    for k, _t, d in EXTRA_ASSET_FIELDS:
+        if extras[k] is None:
+            extras[k] = d
+    conn.execute(
+        "UPDATE assets SET " + ", ".join(f"{k}=?" for k in extras) + " WHERE id=?",
+        list(extras.values()) + [aid],
+    )
     if body.assigned_to_name:
         conn.execute("""
             INSERT INTO ownership_logs (id,asset_id,from_name,from_user_id,to_name,to_user_id,note,by,by_name,at)
@@ -768,7 +1006,7 @@ async def create_asset(body: AssetIn, user: dict = Depends(get_current_user)):
     row = conn.execute("SELECT * FROM assets WHERE id = ?", (aid,)).fetchone()
     conn.close()
     doc = row_to_dict(row)
-    doc["depreciation"] = calc_depreciation(doc["purchase_price"], doc["purchase_date"], doc.get("useful_life_years", 5))
+    doc["depreciation"] = calc_depreciation(doc["purchase_price"], doc["purchase_date"], doc.get("useful_life_years", 5), doc.get("residual_value") or 0)
     return doc
 
 
@@ -777,7 +1015,7 @@ IMPORT_COLUMNS = [
     "campus", "location", "status", "purchase_price", "purchase_date",
     "useful_life_years", "warranty_end_date", "serial_number", "supplier",
     "assigned_to_name",
-]
+] + EXTRA_ASSET_KEYS
 
 VALID_CATEGORIES = [
     "IT Equipment", "AV Equipment", "Furniture", "Lab Equipment",
@@ -828,7 +1066,15 @@ def _validate_import_row(row: dict, row_num: int, seen_tags: set) -> list:
         except ValueError:
             errors.append(f'useful_life_years "{life_str}" must be an integer')
 
-    for date_col in ("purchase_date", "warranty_end_date"):
+    for num_col in ("maintenance_cost", "residual_value"):
+        val = (row.get(num_col) or "").strip()
+        if val:
+            try:
+                float(val)
+            except ValueError:
+                errors.append(f'{num_col} "{val}" is not a number')
+
+    for date_col in ("purchase_date", "warranty_end_date", *EXTRA_DATE_KEYS):
         val = (row.get(date_col) or "").strip()
         if val:
             try:
@@ -903,6 +1149,11 @@ async def export_assets(
         "Campus", "Room / Location", "Status", "Assigned To",
         "Purchase Price (USD)", "Purchase Date", "Useful Life (yrs)",
         "Warranty End", "Supplier", "Description", "Created At",
+        "Asset ID", "Item Type", "Brand", "Model", "Unit", "Building", "Department", "User Type",
+        "Acquisition Type", "PO / Contract No.", "Funding Source", "Condition", "Condition Notes",
+        "Last Inspection", "Next Inspection", "Maintenance Required", "Last Maintenance",
+        "Next Maintenance", "Maintenance Provider", "Maintenance Cost", "Warranty Start",
+        "Warranty Provider", "Residual Value",
     ]
     ws.append(headers)
     _style_header(ws)
@@ -926,6 +1177,16 @@ async def export_assets(
             d.get("supplier") or "",
             d.get("description") or "",
             d["created_at"][:10] if d.get("created_at") else "",
+            d.get("asset_code") or "", d.get("item_type") or "", d.get("brand") or "", d.get("model") or "",
+            d.get("unit") or "", d.get("building") or "", d.get("department") or "", d.get("user_type") or "",
+            d.get("acquisition_type") or "", d.get("po_number") or "", d.get("funding_source") or "",
+            d.get("asset_condition") or "", d.get("condition_notes") or "",
+            d.get("last_inspection_date") or "", d.get("next_inspection_date") or "",
+            "Yes" if d.get("maintenance_required") else "No",
+            d.get("last_maintenance_date") or "", d.get("next_maintenance_date") or "",
+            d.get("maintenance_provider") or "", d.get("maintenance_cost") or 0,
+            d.get("warranty_start_date") or "", d.get("warranty_provider") or "",
+            d.get("residual_value") or 0,
         ])
 
     # Auto-size columns
@@ -944,6 +1205,7 @@ async def download_import_template(_: dict = Depends(admin_required)):
         'Dell Latitude 5430,IT-LAP-0001,IT Equipment,School Asset,'
         'Example laptop,YPJ Kuala Kencana,Computer Lab A,active,'
         '1250.00,2023-08-15,4,2026-08-15,DL5430X01,Dell Technologies,Maria Hernandez'
+        + "," * len(EXTRA_ASSET_KEYS)
     )
     buf = io.BytesIO(f"{header}\n{example}\n".encode())
     headers = {"Content-Disposition": 'attachment; filename="asset-import-template.csv"'}
@@ -1043,6 +1305,19 @@ async def bulk_import_assets(
                 None, owner or None,
                 None, "[]", ts, ts, user["id"],
             ))
+            extras = {}
+            for k, _t, d in EXTRA_ASSET_FIELDS:
+                raw = (row.get(k) or "").strip()
+                if k == "maintenance_required":
+                    extras[k] = 1 if raw.lower() in ("1", "yes", "y", "true", "ya") else 0
+                elif isinstance(d, (int, float)):
+                    extras[k] = float(raw) if raw else d
+                else:
+                    extras[k] = raw
+            conn.execute(
+                "UPDATE assets SET " + ", ".join(f"{k}=?" for k in extras) + " WHERE id=?",
+                list(extras.values()) + [aid],
+            )
             if owner:
                 conn.execute("""
                     INSERT INTO ownership_logs
@@ -1068,7 +1343,7 @@ async def get_asset(aid: str, user: dict = Depends(get_current_user)):
         conn.close()
         raise HTTPException(404, "Asset not found")
     asset = row_to_dict(row)
-    asset["depreciation"] = calc_depreciation(asset["purchase_price"], asset["purchase_date"], asset.get("useful_life_years", 5))
+    asset["depreciation"] = calc_depreciation(asset["purchase_price"], asset["purchase_date"], asset.get("useful_life_years", 5), asset.get("residual_value") or 0)
     asset["ownership_history"] = [
         dict(r) for r in conn.execute("SELECT * FROM ownership_logs WHERE asset_id = ? ORDER BY at DESC", (aid,)).fetchall()
     ]
@@ -1088,6 +1363,8 @@ async def update_asset(aid: str, body: AssetUpdate, user: dict = Depends(get_cur
     if not updates:
         raise HTTPException(400, "No fields to update")
     updates["updated_at"] = now_iso()
+    if "maintenance_required" in updates:
+        updates["maintenance_required"] = 1 if updates["maintenance_required"] else 0
     if "documents" in updates:
         updates["documents"] = json.dumps(updates["documents"])
     set_clause = ", ".join(f"{k} = ?" for k in updates)
@@ -1386,7 +1663,7 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
     by_category: dict = {}
     by_status: dict = {}
     for a in assets:
-        d = calc_depreciation(a["purchase_price"], a["purchase_date"], a.get("useful_life_years", 5))
+        d = calc_depreciation(a["purchase_price"], a["purchase_date"], a.get("useful_life_years", 5), a.get("residual_value") or 0)
         current_value += d["current_value"]
         by_category[a["category"]] = by_category.get(a["category"], 0) + 1
         by_status[a["status"]] = by_status.get(a["status"], 0) + 1
@@ -1471,6 +1748,7 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
         "compliance_overdue": overdue,
         "compliance_upcoming": upcoming,
         "depreciation_timeline": timeline,
+        "due_items": collect_due_items(assets, within_days=60, kinds=("inspection", "maintenance")),
     }
 
 
@@ -1609,7 +1887,7 @@ async def report_asset_inventory(_: dict = Depends(admin_required)):
     _style_header(ws)
     for r in rows:
         d = dict(r)
-        dep = calc_depreciation(d["purchase_price"], d["purchase_date"], d.get("useful_life_years", 5))
+        dep = calc_depreciation(d["purchase_price"], d["purchase_date"], d.get("useful_life_years", 5), d.get("residual_value") or 0)
         ws.append([
             d["name"], d["asset_tag"], d["category"], d["campus"], d["location"],
             d["status"], d["assigned_to_name"] or "", d["purchase_price"],
@@ -1626,7 +1904,7 @@ async def report_depreciation(_: dict = Depends(admin_required)):
     import openpyxl
     conn = get_conn()
     rows = conn.execute("""
-        SELECT name, asset_tag, category, campus, purchase_price, purchase_date, useful_life_years
+        SELECT name, asset_tag, category, campus, purchase_price, purchase_date, useful_life_years, residual_value
         FROM assets ORDER BY name
     """).fetchall()
     conn.close()
@@ -1640,7 +1918,7 @@ async def report_depreciation(_: dict = Depends(admin_required)):
     _style_header(ws)
     for r in rows:
         d = dict(r)
-        dep = calc_depreciation(d["purchase_price"], d["purchase_date"], d.get("useful_life_years", 5))
+        dep = calc_depreciation(d["purchase_price"], d["purchase_date"], d.get("useful_life_years", 5), d.get("residual_value") or 0)
         ws.append([
             d["name"], d["asset_tag"], d["category"], d["campus"],
             d["purchase_price"], d["purchase_date"][:10] if d["purchase_date"] else "",
@@ -2178,6 +2456,7 @@ async def on_startup():
     # Start background scheduler for daily return reminders
     scheduler = BackgroundScheduler(timezone="Asia/Jakarta")
     scheduler.add_job(send_return_reminders, "cron", hour=8, minute=0)
+    scheduler.add_job(send_asset_due_reminders, "cron", hour=8, minute=5)
     scheduler.start()
     mode = "production" if BUILD_DIR.exists() else "development"
     logger.info(f"Startup complete [{mode}] — DB: {DB_PATH}")
