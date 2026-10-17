@@ -786,6 +786,13 @@ DUE_KINDS = (
     ("warranty",    "warranty_end_date"),
 )
 DUE_KIND_LABELS = {"inspection": "Inspection", "maintenance": "Maintenance", "warranty": "Warranty expiry"}
+DUE_KIND_LABELS_ID = {"inspection": "Inspeksi", "maintenance": "Pemeliharaan", "warranty": "Garansi berakhir"}
+_MONTHS_ID = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"]
+
+
+def _fmt_day_id(value) -> str:
+    d = _parse_day(value)
+    return f"{d.day} {_MONTHS_ID[d.month - 1]} {d.year}" if d else (value or "—")
 
 
 def _parse_day(value):
@@ -825,14 +832,14 @@ def _reminder_html(campus: str, items: list) -> str:
     def when(i):
         n = i["days_left"]
         if n < 0:
-            return f"<span style='color:#e11d48;'>{-n} day(s) overdue</span>"
-        return "<strong>today</strong>" if n == 0 else f"in {n} day(s)"
+            return f"<span style='color:#e11d48;'>terlambat {-n} hari</span>"
+        return "<strong>hari ini</strong>" if n == 0 else f"dalam {n} hari"
     rows = "".join(
         f"<tr>"
-        f"<td style='padding:6px 8px;border-bottom:1px solid #e2e8f0;'>{_h.escape(DUE_KIND_LABELS[i['kind']])}</td>"
+        f"<td style='padding:6px 8px;border-bottom:1px solid #e2e8f0;'>{_h.escape(DUE_KIND_LABELS_ID[i['kind']])}</td>"
         f"<td style='padding:6px 8px;border-bottom:1px solid #e2e8f0;'>{_h.escape(i['name'])}<br>"
         f"<span style='color:#64748b;font-size:12px;'>{_h.escape(i['asset_tag'])} · {_h.escape(i['location'])}</span></td>"
-        f"<td style='padding:6px 8px;border-bottom:1px solid #e2e8f0;'>{i['due_date']}<br>"
+        f"<td style='padding:6px 8px;border-bottom:1px solid #e2e8f0;'>{_fmt_day_id(i['due_date'])}<br>"
         f"<span style='font-size:12px;'>{when(i)}</span></td>"
         f"</tr>"
         for i in items
@@ -840,7 +847,7 @@ def _reminder_html(campus: str, items: list) -> str:
     return _email_shell(f"""
         <h2 style="margin:0 0 14px;font-size:22px;color:#0f172a;">Inspeksi &amp; pemeliharaan jatuh tempo{f' — {_h.escape(campus)}' if campus else ''}</h2>
         <div style="border-left:3px solid #f2c14e;background:#fffbeb;padding:10px 14px;font-size:13px;color:#78350f;margin-bottom:16px">
-          Aset berikut memerlukan tindakan / The following assets need attention.
+          Aset berikut memerlukan tindakan.
         </div>
         <table style="border-collapse:collapse;width:100%;font-size:14px;">
           <tr style="text-align:left;color:#64748b;font-size:11px;letter-spacing:.1em;text-transform:uppercase;border-bottom:1px solid #e2e8f0;">
@@ -885,9 +892,9 @@ def send_asset_due_reminders(force: bool = False, today=None) -> dict:
             logger.warning("Asset reminders for %r skipped — no recipients configured", campus)
             continue
         overdue = sum(1 for i in group if i["days_left"] < 0)
-        subject = f"[YPJ Assets] {len(group)} asset reminder(s)" + (f" — {campus}" if campus else "")
+        subject = f"[YPJ Assets] {len(group)} pengingat aset" + (f" — {campus}" if campus else "")
         if overdue:
-            subject += f" ({overdue} overdue)"
+            subject += f" ({overdue} terlambat)"
         if send_email(recipients[0], subject, _reminder_html(campus, group), cc=recipients[1:]):
             sent += 1
     logger.info("Asset due reminders: %d item(s), %d email(s)", len(picked), sent)

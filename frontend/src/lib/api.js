@@ -73,7 +73,10 @@ export function fmtAxisCurrency(v) {
 export function fmtDate(iso) {
   if (!iso) return "—";
   try {
-    return new Date(iso).toLocaleDateString("en-US", {
+    // Date-only values (YYYY-MM-DD) are calendar days: parse as local so they never shift a day.
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+    const d = m ? new Date(+m[1], +m[2] - 1, +m[3]) : new Date(iso);
+    return d.toLocaleDateString(isRupiah() ? "id-ID" : "en-US", {
       year: "numeric",
       month: "short",
       day: "numeric",
