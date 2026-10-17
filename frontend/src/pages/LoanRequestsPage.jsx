@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { toast } from "sonner";
 import { BookOpen, CheckCircle2, XCircle, Truck, RotateCcw, Camera, ImageIcon } from "lucide-react";
+import { isAdminRole } from "../lib/roles";
 
 const STATUS_META = {
   pending:  { bg: "bg-amber-50 text-amber-700 border-amber-200",   dot: "bg-amber-400" },
@@ -250,7 +251,7 @@ function LoanCard({ req, t, isAdmin, onApprove, onReject, onDeliver, onReturn })
 export default function LoanRequestsPage() {
   const { t } = useLang();
   const { user } = useAuth();
-  const isAdmin = user?.role === "admin";
+  const isAdmin = isAdminRole(user?.role);
 
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);

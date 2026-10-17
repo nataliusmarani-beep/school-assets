@@ -11,6 +11,7 @@ import { Textarea } from "../components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { toast } from "sonner";
 import { Wrench } from "lucide-react";
+import { isAdminRole } from "../lib/roles";
 
 const STATUS_BADGE = {
   open: "bg-amber-50 text-amber-700 border-amber-200",
@@ -27,7 +28,7 @@ const SEVERITY_BADGE = {
 export default function FaultsPage() {
   const { t } = useLang();
   const { user } = useAuth();
-  const isAdmin = user?.role === "admin";
+  const isAdmin = isAdminRole(user?.role);
   const [faults, setFaults] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all");

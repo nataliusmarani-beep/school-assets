@@ -13,6 +13,7 @@ import {
   SelectValue,
 } from "../components/ui/select";
 import { Search, Plus, Filter, Upload, Download, CheckCircle2, XCircle, FileText, FileSpreadsheet } from "lucide-react";
+import { isAdminRole } from "../lib/roles";
 
 const CAMPUSES = ["YPJ Kuala Kencana", "YPJ Tembagapura"];
 
@@ -312,7 +313,7 @@ function ImportModal({ onClose, onImported }) {
 export default function AssetsListPage() {
   const { t } = useLang();
   const { user } = useAuth();
-  const isAdmin = user?.role === "admin";
+  const isAdmin = isAdminRole(user?.role);
   const [assets, setAssets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");

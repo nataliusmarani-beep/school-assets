@@ -484,9 +484,18 @@ async def get_current_user(request: Request) -> dict:
     return user
 
 
+ADMIN_ROLES = ("admin", "super_admin")  # super_admin can do everything an admin can, plus manage admin accounts
+
+
 async def admin_required(user: dict = Depends(get_current_user)) -> dict:
-    if user.get("role") != "admin":
+    if user.get("role") not in ADMIN_ROLES:
         raise HTTPException(403, "Admin access required")
+    return user
+
+
+async def super_admin_required(user: dict = Depends(get_current_user)) -> dict:
+    if user.get("role") != "super_admin":
+        raise HTTPException(403, "Super Admin access required")
     return user
 
 
@@ -495,7 +504,7 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str
     name: str
-    role: Literal["admin", "staff"] = "staff"
+    role: Literal["super_admin", "admin", "staff"] = "staff"
     department: Optional[str] = None
     campus: Optional[str] = ""
     supervisor: Optional[str] = ""
@@ -1062,8 +1071,16 @@ def get_fx_rate():
 
 
 # ---- Auth endpoints ----
+def _guard_privileged_role(actor: dict, *roles):
+    """Only a Super Admin may create, promote, demote or change a Super Admin account."""
+    if "super_admin" in roles and actor.get("role") != "super_admin":
+        raise HTTPException(403, "Only a Super Admin can manage Super Admin accounts")
+
+
 @api.post("/auth/register")
-async def register(body: UserCreate, response: Response):
+async def register(body: UserCreate, actor: dict = Depends(admin_required)):
+    """Creating accounts is an admin action (there is no public sign-up)."""
+    _guard_privileged_role(actor, body.role)
     conn = get_conn()
     email = body.email.lower()
     existing = conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
@@ -1077,9 +1094,7 @@ async def register(body: UserCreate, response: Response):
     )
     conn.commit()
     conn.close()
-    token = create_token(uid, email, body.role)
-    response.set_cookie("access_token", token, httponly=True, samesite="lax", max_age=7*24*3600, path="/")
-    return {"id": uid, "email": email, "name": body.name, "role": body.role, "department": body.department, "token": token}
+    return {"id": uid, "email": email, "name": body.name, "role": body.role, "department": body.department}
 
 
 @api.post("/auth/login")
@@ -1122,8 +1137,8 @@ async def list_users(user: dict = Depends(get_current_user)):
 
 
 @api.post("/users")
-async def create_user(body: UserCreate, _: dict = Depends(admin_required)):
-    return await register(body, Response())
+async def create_user(body: UserCreate, actor: dict = Depends(admin_required)):
+    return await register(body, actor)
 
 
 USER_IMPORT_COLUMNS = ["name", "email", "role", "department", "campus", "supervisor_name", "supervisor", "employee_id", "password"]
@@ -1428,8 +1443,16 @@ async def set_password(body: SetPasswordIn):
 
 
 @api.delete("/users/{uid}")
-async def delete_user(uid: str, _: dict = Depends(admin_required)):
+async def delete_user(uid: str, actor: dict = Depends(admin_required)):
     conn = get_conn()
+    t = conn.execute("SELECT role FROM users WHERE id = ?", (uid,)).fetchone()
+    if t and t["role"] == "super_admin":
+        if actor.get("role") != "super_admin":
+            conn.close()
+            raise HTTPException(403, "Only a Super Admin can delete a Super Admin account")
+        if conn.execute("SELECT COUNT(*) FROM users WHERE role='super_admin'").fetchone()[0] <= 1:
+            conn.close()
+            raise HTTPException(400, "Cannot delete the last Super Admin")
     res = conn.execute("DELETE FROM users WHERE id = ?", (uid,))
     conn.commit()
     conn.close()
@@ -1451,10 +1474,21 @@ class UserPatch(BaseModel):
 
 
 @api.put("/users/{uid}")
-async def update_user(uid: str, body: UserPatch, _: dict = Depends(admin_required)):
+async def update_user(uid: str, body: UserPatch, actor: dict = Depends(admin_required)):
     updates = {k: v for k, v in body.model_dump(exclude_none=True).items() if v is not None}
     if not updates:
         raise HTTPException(400, "No fields to update")
+    if "role" in updates and updates["role"] not in ("super_admin", "admin", "staff"):
+        raise HTTPException(400, "Invalid role")
+    chk = get_conn()
+    target = chk.execute("SELECT role FROM users WHERE id = ?", (uid,)).fetchone()
+    if target:
+        _guard_privileged_role(actor, target["role"], updates.get("role"))
+        if target["role"] == "super_admin" and updates.get("role", "super_admin") != "super_admin" \
+                and chk.execute("SELECT COUNT(*) FROM users WHERE role='super_admin'").fetchone()[0] <= 1:
+            chk.close()
+            raise HTTPException(400, "Cannot remove the last Super Admin")
+    chk.close()
     if "password" in updates:
         updates["password_hash"] = hash_password(updates.pop("password"))
     set_clause = ", ".join(f"{k} = ?" for k in updates)
@@ -2407,7 +2441,7 @@ async def create_transfer_request(asset_id: str, body: TransferRequestIn, user: 
 @api.get("/transfer-requests")
 async def list_transfer_requests(user: dict = Depends(get_current_user), status: Optional[str] = None):
     conn = get_conn()
-    if user["role"] == "admin":
+    if user["role"] in ADMIN_ROLES:
         base = "SELECT * FROM transfer_requests"
         rows = conn.execute(base + (" WHERE status = ?" if status else "") + " ORDER BY created_at DESC",
                             ([status] if status else [])).fetchall()
@@ -2772,7 +2806,7 @@ async def my_assets(user: dict = Depends(get_current_user)):
 
 @api.get("/users/{uid}/assets")
 async def user_assets(uid: str, user: dict = Depends(get_current_user)):
-    if user["role"] != "admin" and user["id"] != uid:
+    if user["role"] not in ADMIN_ROLES and user["id"] != uid:
         raise HTTPException(403, "Not allowed")
     conn = get_conn()
     u = conn.execute("SELECT id,name,email,department,campus,role FROM users WHERE id = ?", (uid,)).fetchone()
@@ -2829,7 +2863,7 @@ async def list_assignments(status: Optional[str] = None, user: dict = Depends(ge
     cond = []
     if status:
         cond.append("status = ?"); params.append(status)
-    if user["role"] != "admin":
+    if user["role"] not in ADMIN_ROLES:
         cond.append("(to_user_id = ? OR created_by = ?)"); params += [user["id"], user["id"]]
     if cond:
         sql += " WHERE " + " AND ".join(cond)
@@ -2844,7 +2878,7 @@ async def assignments_pending_count(user: dict = Depends(get_current_user)):
     mine = conn.execute("SELECT COUNT(*) FROM assignments WHERE status='pending' AND to_user_id = ?",
                         (user["id"],)).fetchone()[0]
     total = conn.execute("SELECT COUNT(*) FROM assignments WHERE status='pending'").fetchone()[0] \
-        if user["role"] == "admin" else None
+        if user["role"] in ADMIN_ROLES else None
     conn.close()
     return {"mine": mine, "total": total}
 
@@ -2920,7 +2954,7 @@ async def cancel_assignment(rid: str, user: dict = Depends(get_current_user)):
         conn.close()
         raise HTTPException(404, "Assignment not found")
     a = dict(r)
-    if user["role"] != "admin" and a["created_by"] != user["id"]:
+    if user["role"] not in ADMIN_ROLES and a["created_by"] != user["id"]:
         conn.close()
         raise HTTPException(403, "Not allowed")
     if a["status"] != "pending":
@@ -3216,7 +3250,7 @@ async def create_loan_request(aid: str, body: LoanRequestIn, user: dict = Depend
 @api.get("/loan-requests")
 async def list_loan_requests(user: dict = Depends(get_current_user), status: Optional[str] = None):
     conn = get_conn()
-    if user["role"] == "admin":
+    if user["role"] in ADMIN_ROLES:
         if status and status != "all":
             rows = conn.execute(
                 "SELECT * FROM loan_requests WHERE status=? ORDER BY created_at DESC", (status,)
@@ -3484,6 +3518,14 @@ def seed_data():
             logger.info(f"Seeded admin: {admin_email}")
     else:
         admin_id = admin["id"]
+
+    # Owner account: gets the Super Admin role once (only while no Super Admin exists), and the
+    # placeholder seed name is replaced with the owner's real name.
+    if not conn.execute("SELECT 1 FROM users WHERE role = 'super_admin' LIMIT 1").fetchone():
+        conn.execute("UPDATE users SET role = 'super_admin' WHERE id = ? AND role = 'admin'", (admin_id,))
+        logger.info("Promoted %s to super_admin", admin_email)
+    owner_name = os.environ.get("ADMIN_NAME", "Natalius Marani")
+    conn.execute("UPDATE users SET name = ? WHERE id = ? AND name = 'Admin User'", (owner_name, admin_id))
 
     # Remove demo staff user if still present
     demo_staff = conn.execute("SELECT id FROM users WHERE email = ?", (staff_email,)).fetchone()

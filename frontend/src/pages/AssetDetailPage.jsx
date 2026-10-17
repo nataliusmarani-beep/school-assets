@@ -11,6 +11,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "../components/ui/dialog";
 import { useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
+import { isAdminRole } from "../lib/roles";
 import {
   ArrowLeft, ArrowRightLeft, Wrench, Edit, Trash2, Download,
   FileText, Calendar, ShieldCheck, Building2, User as UserIcon, Tag, BookOpen,
@@ -77,7 +78,7 @@ export default function AssetDetailPage() {
     } catch (e) { toast.error(formatErr(e)); }
   };
 
-  const isAdmin = user?.role === "admin";
+  const isAdmin = isAdminRole(user?.role);
   // Staff can only act on assets in their own campus
   const canActOnAsset = isAdmin || !asset || !user?.campus || !asset.campus || user.campus === asset.campus;
 
@@ -401,14 +402,14 @@ export default function AssetDetailPage() {
             </DialogContent>
           </Dialog>}
 
-          {user?.role === "admin" && (
+          {isAdminRole(user?.role) && (
             <Link to={`/assets/${id}/edit`}>
               <Button variant="outline" className="rounded-none" data-testid="edit-asset-button">
                 <Edit className="w-4 h-4 mr-2" strokeWidth={1.75}/> {t("edit")}
               </Button>
             </Link>
           )}
-          {user?.role === "admin" && (
+          {isAdminRole(user?.role) && (
             <Button variant="outline" onClick={handleDelete}
               className="rounded-none text-rose-600 hover:text-rose-700" data-testid="delete-asset-button">
               <Trash2 className="w-4 h-4" strokeWidth={1.75}/>

@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { useAuth } from "../context/AuthContext";
 import { Plus, Trash2, Pencil, Upload, Mail, KeyRound } from "lucide-react";
 import BulkUsersDialog from "../components/BulkUsersDialog";
+import { isAdminRole, isSuperAdmin } from "../lib/roles";
 
 const EMPTY_FORM = { name: "", email: "", password: "", role: "staff", department: "", campus: "", supervisor_name: "", supervisor: "", employee_id: "" };
 const EMPTY_EDIT = { name: "", email: "", role: "staff", department: "", campus: "", supervisor_name: "", supervisor: "", employee_id: "", password: "" };
@@ -78,7 +79,7 @@ function SupervisorNameField({ value, onChangeName, onChangeEmail, users }) {
 }
 
 /* ── FormFields lifted out of UsersPage so React never remounts it on re-render ── */
-function FormFields({ values, set, isEdit, t, allNames, allDepts, users }) {
+function FormFields({ values, set, isEdit, t, allNames, allDepts, users, canSuper }) {
   return (
     <div className="space-y-4">
       <div><Label className="label-mono">{t("full_name")}</Label>
@@ -103,11 +104,13 @@ function FormFields({ values, set, isEdit, t, allNames, allDepts, users }) {
 
       <div className="grid grid-cols-2 gap-3">
         <div><Label className="label-mono">{t("role")}</Label>
-          <Select value={values.role} onValueChange={(v) => set({ ...values, role: v })}>
-            <SelectTrigger className="mt-2 rounded-none"><SelectValue /></SelectTrigger>
+          <Select value={values.role} onValueChange={(v) => set({ ...values, role: v })}
+            disabled={values.role === "super_admin" && !canSuper}>
+            <SelectTrigger className="mt-2 rounded-none" data-testid="user-role-select"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="staff">{t("staff")}</SelectItem>
               <SelectItem value="admin">{t("admin")}</SelectItem>
+              {(canSuper || values.role === "super_admin") && <SelectItem value="super_admin">{t("super_admin")}</SelectItem>}
             </SelectContent>
           </Select></div>
         <div><Label className="label-mono">{t("department")}</Label>
@@ -244,7 +247,7 @@ export default function UsersPage() {
           <DialogContent className="rounded-none max-h-[90vh] overflow-y-auto">
             <DialogHeader><DialogTitle>{t("create_user")}</DialogTitle></DialogHeader>
             <form onSubmit={submit}>
-              <FormFields values={form} set={setForm} isEdit={false} t={t} allNames={allNames} allDepts={allDepts} users={users} />
+              <FormFields values={form} set={setForm} isEdit={false} t={t} allNames={allNames} allDepts={allDepts} users={users} canSuper={isSuperAdmin(user?.role)} />
               <DialogFooter className="mt-6">
                 <Button type="submit" className="rounded-none bg-slate-900" data-testid="submit-user-button">
                   {t("create_user")}
@@ -283,8 +286,9 @@ export default function UsersPage() {
                   <td className="py-3 px-4 text-slate-700">{u.email}</td>
                   <td className="py-3 px-4">
                     <span className={`text-xs px-2 py-0.5 border capitalize ${
-                      u.role === "admin" ? "bg-blue-50 text-blue-800 border-blue-200" : "bg-slate-100 text-slate-600 border-slate-200"
-                    }`}>{u.role === "admin" ? t("admin") : t("staff")}</span>
+                      isSuperAdmin(u.role) ? "bg-amber-50 text-amber-800 border-amber-300 font-medium"
+                        : isAdminRole(u.role) ? "bg-blue-50 text-blue-800 border-blue-200" : "bg-slate-100 text-slate-600 border-slate-200"
+                    }`} data-testid={`role-badge-${u.id}`}>{isSuperAdmin(u.role) ? t("super_admin") : isAdminRole(u.role) ? t("admin") : t("staff")}</span>
                   </td>
                   <td className="py-3 px-4 text-slate-700">{u.department || "—"}</td>
                   <td className="py-3 px-4 text-slate-700">
@@ -304,10 +308,11 @@ export default function UsersPage() {
                       <button onClick={() => sendLink(u, "reset")} title={t("reset_password")} className="text-slate-400 hover:text-amber-600" data-testid={`reset-user-${u.id}`}>
                         <KeyRound className="w-4 h-4" />
                       </button>
+                      {(!isSuperAdmin(u.role) || isSuperAdmin(user?.role)) && (
                       <button onClick={() => openEdit(u)} className="text-slate-400 hover:text-slate-700" data-testid={`edit-user-${u.id}`}>
                         <Pencil className="w-4 h-4" />
-                      </button>
-                      {u.id !== user.id && (
+                      </button>)}
+                      {u.id !== user?.id && (!isSuperAdmin(u.role) || isSuperAdmin(user?.role)) && (
                         <button onClick={() => remove(u)} className="text-rose-500 hover:text-rose-700" data-testid={`delete-user-${u.id}`}>
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -326,7 +331,7 @@ export default function UsersPage() {
         <DialogContent className="rounded-none max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>{t("edit_user")}</DialogTitle></DialogHeader>
           <form onSubmit={submitEdit}>
-            <FormFields values={editForm} set={setEditForm} isEdit={true} t={t} allNames={allNames} allDepts={allDepts} users={users} />
+            <FormFields values={editForm} set={setEditForm} isEdit={true} t={t} allNames={allNames} allDepts={allDepts} users={users} canSuper={isSuperAdmin(user?.role)} />
             <DialogFooter className="mt-6">
               <Button variant="outline" className="rounded-none" type="button" onClick={() => setEditOpen(false)}>{t("cancel")}</Button>
               <Button type="submit" className="rounded-none bg-slate-900">{t("save_changes")}</Button>

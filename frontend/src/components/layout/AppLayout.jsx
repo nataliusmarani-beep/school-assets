@@ -22,6 +22,7 @@ import {
 import { useState, useEffect } from "react";
 import api from "../../lib/api";
 import { toast } from "sonner";
+import { isAdminRole } from "../../lib/roles";
 
 const NAV_LINKS = [
   { to: "/", labelKey: "nav_dashboard", icon: LayoutDashboard, testid: "nav-dashboard" },
@@ -60,7 +61,7 @@ export default function AppLayout({ children }) {
   }, [user]);
 
   useEffect(() => {
-    if (user?.role !== "admin") return;
+    if (!isAdminRole(user?.role)) return;
     const fetchCounts = () => {
       api.get("/transfer-requests/pending-count").then((r) => setPendingTransfers(r.data.count)).catch(() => {});
       api.get("/loan-requests/pending-count").then((r) => setPendingLoans(r.data.count)).catch(() => {});
@@ -70,7 +71,7 @@ export default function AppLayout({ children }) {
     return () => clearInterval(interval);
   }, [user]);
 
-  const visibleLinks = NAV_LINKS.filter((l) => !l.adminOnly || user?.role === "admin");
+  const visibleLinks = NAV_LINKS.filter((l) => !l.adminOnly || isAdminRole(user?.role));
 
   const handleBackup = async () => {
     setBacking(true);
@@ -165,7 +166,7 @@ export default function AppLayout({ children }) {
       </nav>
 
       <div className="px-3 pb-6 border-t border-slate-800 pt-4 space-y-4">
-        {user?.role === "admin" && (
+        {isAdminRole(user?.role) && (
           <button
             onClick={handleBackup}
             disabled={backing}
@@ -187,7 +188,7 @@ export default function AppLayout({ children }) {
             <div className="text-sm text-white truncate" data-testid="current-user-name">
               {user?.name}
             </div>
-            <div className="text-xs text-slate-500 capitalize">{user?.role}</div>
+            <div className="text-xs text-slate-500 capitalize">{user?.role === "super_admin" ? t("super_admin") : user?.role}</div>
           </div>
           <button
             data-testid="logout-button"
