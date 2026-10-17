@@ -89,12 +89,12 @@ export default function DashboardPage() {
           icon={Wrench} hint={`${stats.compliance_overdue} ${t("compliance_overdue")}`} />
       </div>
 
-      {lang === "ID" && (
+      {lang === "EN" && (
         <p className="text-xs text-slate-500 -mt-5 mb-8" data-testid="fx-note">
           {(fx.source === "fallback" ? t("fx_note_fallback") : t("fx_note"))
-            .replace("{rate}", new Intl.NumberFormat("id-ID", { maximumFractionDigits: 0 }).format(fx.rate))
+            .replace("{rate}", new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(fx.rate))
             .replace("{date}", fx.as_of
-              ? new Date(fx.as_of).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })
+              ? new Date(fx.as_of).toLocaleDateString("en-US", { day: "numeric", month: "long", year: "numeric" })
               : "-")}
         </p>
       )}

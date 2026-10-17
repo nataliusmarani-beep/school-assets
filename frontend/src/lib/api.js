@@ -31,8 +31,8 @@ export function formatErr(err) {
 }
 
 // ---- Currency ----
-// Amounts are stored in USD. When the UI language is Indonesian (ID) they are shown in
-// Rupiah using the current USD->IDR rate (fetched from /api/fx by LangProvider).
+// Amounts are STORED IN RUPIAH (IDR). Indonesian (ID) shows them as they are; English (EN) shows
+// USD, calculated from the stored Rupiah with the current USD->IDR rate (fetched from /api/fx).
 export const FX_FALLBACK_RATE = 17950;
 const fxState = { lang: "EN", rate: FX_FALLBACK_RATE };
 
@@ -43,6 +43,7 @@ export function setCurrencyContext(lang, rate) {
 
 export const isRupiah = () => fxState.lang === "ID";
 
+// v is an amount in IDR (as stored)
 export function fmtCurrency(v) {
   const n = Number(v) || 0;
   if (isRupiah()) {
@@ -50,24 +51,23 @@ export function fmtCurrency(v) {
       style: "currency",
       currency: "IDR",
       maximumFractionDigits: 0,
-    }).format(n * fxState.rate);
+    }).format(n);
   }
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
     maximumFractionDigits: 0,
-  }).format(n);
+  }).format(n / fxState.rate);
 }
 
-// Short label for chart axes: $12k  /  Rp 1,2 M
+// Short label for chart axes: Rp 1,2 M  /  $12k
 export function fmtAxisCurrency(v) {
   const n = Number(v) || 0;
   if (isRupiah()) {
-    const short = new Intl.NumberFormat("id-ID", { notation: "compact", maximumFractionDigits: 1 })
-      .format(n * fxState.rate);
+    const short = new Intl.NumberFormat("id-ID", { notation: "compact", maximumFractionDigits: 1 }).format(n);
     return `Rp ${short}`;
   }
-  return `$${(n / 1000).toFixed(0)}k`;
+  return `$${(n / fxState.rate / 1000).toFixed(0)}k`;
 }
 
 export function fmtDate(iso) {

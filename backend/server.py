@@ -106,6 +106,64 @@ EXTRA_ASSET_KEYS = [f[0] for f in EXTRA_ASSET_FIELDS]
 EXTRA_DATE_KEYS = [k for k, _, _ in EXTRA_ASSET_FIELDS if k.endswith("_date")]
 
 
+MONEY_COLUMNS = ("purchase_price", "maintenance_cost", "residual_value")
+
+
+def migrate_money_to_idr(conn):
+    """One-time migration: amounts used to be stored in USD, they are now stored in whole Rupiah.
+
+    - Runs once; afterwards app_meta.money_currency = 'IDR' and this is a no-op.
+    - Empty database: nothing to convert, just sets the flag.
+    - Rate: MIGRATION_USD_IDR_RATE env var if set, otherwise the live rate (falls back to
+      USD_IDR_RATE / built-in estimate when the live source is unreachable). It is recorded in app_meta.
+    - A consistent copy of the database is written next to it first (<db>.pre-idr-<time>.bak).
+    - Conversion + flag happen in one transaction; on any error nothing is changed and startup fails
+      (the previous deployment keeps running).
+    """
+    if conn.execute("SELECT 1 FROM app_meta WHERE key = 'money_currency'").fetchone():
+        return
+    n_assets = conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
+    if n_assets == 0:
+        conn.execute("INSERT INTO app_meta (key, value) VALUES ('money_currency', 'IDR')")
+        conn.commit()
+        return
+
+    override = (os.environ.get("MIGRATION_USD_IDR_RATE") or "").strip()
+    if override:
+        rate, source = float(override), "env"
+    else:
+        info = get_usd_idr_rate()
+        rate, source = info["rate"], info["source"]
+    if not (5000 < rate < 50000):
+        raise RuntimeError(f"Refusing to migrate amounts to IDR with implausible rate {rate}")
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    backup_path = DB_PATH.with_name(f"{DB_PATH.name}.pre-idr-{stamp}.bak")
+    dst = sqlite3.connect(str(backup_path))
+    try:
+        conn.backup(dst)
+    finally:
+        dst.close()
+
+    try:
+        conn.execute(
+            "UPDATE assets SET purchase_price = ROUND(COALESCE(purchase_price, 0) * ?), "
+            "maintenance_cost = ROUND(COALESCE(maintenance_cost, 0) * ?), "
+            "residual_value = ROUND(COALESCE(residual_value, 0) * ?)",
+            (rate, rate, rate),
+        )
+        for k, v in (("money_currency", "IDR"), ("money_migrated_at", now_iso()),
+                     ("money_migration_rate", str(rate)), ("money_migration_rate_source", source),
+                     ("money_migration_backup", backup_path.name)):
+            conn.execute("INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)", (k, v))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    logger.warning("Converted %d asset(s) from USD to IDR at %.2f (%s). Backup: %s",
+                   n_assets, rate, source, backup_path.name)
+
+
 def init_db():
     conn = get_conn()
     conn.executescript("""
@@ -214,6 +272,11 @@ def init_db():
         created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS app_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS transfer_requests (
         id TEXT PRIMARY KEY,
         asset_id TEXT NOT NULL,
@@ -276,6 +339,7 @@ def init_db():
             lit = f"'{default}'" if isinstance(default, str) else str(default)
             conn.execute(f"ALTER TABLE assets ADD COLUMN {col} {sqltype} NOT NULL DEFAULT {lit}")
     conn.commit()
+    migrate_money_to_idr(conn)
     conn.close()
 
 
@@ -1215,7 +1279,7 @@ async def export_assets(
     headers = [
         "Tag", "Asset Name", "Serial Number", "Category", "Asset Type",
         "Campus", "Room / Location", "Status", "Assigned To",
-        "Purchase Price (USD)", "Purchase Date", "Useful Life (yrs)",
+        "Purchase Price (IDR)", "Purchase Date", "Useful Life (yrs)",
         "Warranty End", "Supplier", "Description", "Created At",
         "Asset ID", "Item Type", "Brand", "Model", "Unit", "Building", "Department", "User Type",
         "Acquisition Type", "PO / Contract No.", "Funding Source", "Condition", "Condition Notes",
@@ -1272,7 +1336,7 @@ async def download_import_template(_: dict = Depends(admin_required)):
     example = (
         'Dell Latitude 5430,IT-LAP-0001,IT Equipment,School Asset,'
         'Example laptop,YPJ Kuala Kencana,Computer Lab A,active,'
-        '1250.00,2023-08-15,4,2026-08-15,DL5430X01,Dell Technologies,Maria Hernandez'
+        '19500000,2023-08-15,4,2026-08-15,DL5430X01,Dell Technologies,Maria Hernandez'
         + "," * len(EXTRA_ASSET_KEYS)
     )
     buf = io.BytesIO(f"{header}\n{example}\n".encode())
@@ -1949,7 +2013,7 @@ async def report_asset_inventory(_: dict = Depends(admin_required)):
     ws = wb.active
     ws.title = "Asset Inventory"
     headers = ["Asset Name", "Tag", "Category", "Campus", "Room/Location", "Status",
-               "Assigned To", "Purchase Price (USD)", "Purchase Date", "Useful Life (yrs)",
+               "Assigned To", "Purchase Price (IDR)", "Purchase Date", "Useful Life (yrs)",
                "Warranty End", "Serial Number", "Supplier", "Created At"]
     ws.append(headers)
     _style_header(ws)
@@ -1979,9 +2043,9 @@ async def report_depreciation(_: dict = Depends(admin_required)):
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Depreciation Schedule"
-    headers = ["Asset Name", "Tag", "Category", "Campus", "Purchase Price (USD)",
-               "Purchase Date", "Useful Life (yrs)", "Annual Depreciation (USD)",
-               "Accumulated Depreciation (USD)", "Current Book Value (USD)", "Age (yrs)"]
+    headers = ["Asset Name", "Tag", "Category", "Campus", "Purchase Price (IDR)",
+               "Purchase Date", "Useful Life (yrs)", "Annual Depreciation (IDR)",
+               "Accumulated Depreciation (IDR)", "Current Book Value (IDR)", "Age (yrs)"]
     ws.append(headers)
     _style_header(ws)
     for r in rows:
@@ -2033,7 +2097,7 @@ async def report_fully_depreciated(_: dict = Depends(admin_required)):
     ws.title = "Fully Depreciated"
     ws.append(["Asset Name", "Tag", "Category", "Campus", "Room/Location", "Status", "Assigned To",
                "Purchase Date", "Useful Life (yrs)", "Fully Depreciated On", "Years Past End of Life",
-               "Purchase Price (USD)", "Residual Value (USD)", "Current Book Value (USD)"])
+               "Purchase Price (IDR)", "Residual Value (IDR)", "Current Book Value (IDR)"])
     _style_header(ws)
     for d, end, past, dep in out:
         ws.append([
@@ -2519,7 +2583,7 @@ def seed_data():
                     serial_number,supplier,assigned_to_user_id,assigned_to_name,
                     photo_path,documents,created_at,updated_at,created_by)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """, (aid, name, tag, cat, desc, campus, loc, status, price, pdate, life, warranty,
+            """, (aid, name, tag, cat, desc, campus, loc, status, round(price * FX_FALLBACK_RATE, -3), pdate, life, warranty,
                   serial, supplier, assignee_id, assignee_name, None, "[]", ts, ts, admin_id))
             conn.execute("""
                 INSERT INTO ownership_logs (id,asset_id,from_name,from_user_id,to_name,to_user_id,note,by,by_name,at)

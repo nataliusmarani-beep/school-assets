@@ -62,43 +62,43 @@ function TextField({ label, value, onChange, testid, mono, required, placeholder
   );
 }
 
-// Money input. The form always holds USD (what the API stores); in ID mode the user types
-// and sees Rupiah, converted with the current rate. Untouched values are never re-converted.
-function MoneyField({ label, usd, onChangeUsd, required, testid, min, span2 }) {
+// Money input. The form holds Rupiah (what the API stores). In ID the user types Rupiah directly;
+// in EN the user types USD, which is converted to Rupiah with the current rate on the way in.
+function MoneyField({ label, idr, onChangeIdr, required, testid, min, span2 }) {
   const { lang, fx } = useLang();
-  const idr = lang === "ID";
-  const toText = (u) => {
-    if (u === "" || u == null || Number.isNaN(Number(u))) return "";
-    const n = Number(u);
-    return idr ? String(Math.round(n * fx.rate)) : String(n);
+  const rupiah = lang === "ID";
+  const toText = (v) => {
+    if (v === "" || v == null || Number.isNaN(Number(v))) return "";
+    const n = Number(v);
+    return rupiah ? String(Math.round(n)) : String(Math.round((n / fx.rate) * 100) / 100);
   };
-  const [text, setText] = useState(() => toText(usd));
-  const lastUsd = useRef(usd);
+  const [text, setText] = useState(() => toText(idr));
+  const last = useRef(idr);
 
   // value changed from outside (e.g. asset loaded for editing)
   useEffect(() => {
-    if (usd !== lastUsd.current) { lastUsd.current = usd; setText(toText(usd)); }
+    if (idr !== last.current) { last.current = idr; setText(toText(idr)); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [usd]);
-  // language or rate changed -> re-render the same USD value in the other currency
+  }, [idr]);
+  // language or rate changed -> show the same stored Rupiah amount in the other currency
   useEffect(() => {
-    setText(toText(usd));
+    setText(toText(idr));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idr, fx.rate]);
+  }, [rupiah, fx.rate]);
 
   const onChange = (e) => {
     const v = e.target.value;
     setText(v);
     const n = parseFloat(v);
-    const u = v === "" || Number.isNaN(n) ? "" : (idr ? n / fx.rate : n);
-    lastUsd.current = u;
-    onChangeUsd(u);
+    const out = v === "" || Number.isNaN(n) ? "" : (rupiah ? n : Math.round(n * fx.rate));
+    last.current = out;
+    onChangeIdr(out);
   };
 
   return (
     <div className={span2 ? "md:col-span-2" : ""}>
       <Label className="label-mono">{label}</Label>
-      <Input type="number" step={idr ? "1" : "0.01"} min={min} value={text} required={required}
+      <Input type="number" step={rupiah ? "1" : "0.01"} min={min} value={text} required={required}
         onChange={onChange} className={`${FIELD_CLS} font-mono`} data-testid={testid} />
     </div>
   );
@@ -376,8 +376,8 @@ export default function AssetFormPage() {
             testid="asset-supplier-input"/>
           <TextField label={t("po_number")} value={form.po_number} onChange={(v)=>update("po_number",v)}
             placeholder={t("po_placeholder")} mono testid="asset-po-input"/>
-          <MoneyField label={t("purchase_price")} usd={form.purchase_price}
-            onChangeUsd={(v)=>update("purchase_price",v)} required testid="asset-price-input"/>
+          <MoneyField label={t("purchase_price")} idr={form.purchase_price}
+            onChangeIdr={(v)=>update("purchase_price",v)} required testid="asset-price-input"/>
           <TextField label={t("funding_source")} value={form.funding_source} onChange={(v)=>update("funding_source",v)}
             placeholder={t("funding_placeholder")} testid="asset-funding-input"/>
         </Section>
@@ -421,8 +421,8 @@ export default function AssetFormPage() {
             onChange={(v)=>update("last_maintenance_date",v)} testid="asset-last-maintenance-input"/>
           <TextField label={t("next_maintenance")} type="date" value={form.next_maintenance_date}
             onChange={(v)=>update("next_maintenance_date",v)} testid="asset-next-maintenance-input"/>
-          <MoneyField label={t("maintenance_cost")} usd={form.maintenance_cost} min="0"
-            onChangeUsd={(v)=>update("maintenance_cost",v)} testid="asset-maintenance-cost-input"/>
+          <MoneyField label={t("maintenance_cost")} idr={form.maintenance_cost} min="0"
+            onChangeIdr={(v)=>update("maintenance_cost",v)} testid="asset-maintenance-cost-input"/>
         </Section>
 
         {/* Section 6: Warranty */}
@@ -440,8 +440,8 @@ export default function AssetFormPage() {
           <TextField label={t("useful_life")} type="number" min="1" value={form.useful_life_years}
             onChange={(v)=>{ lifeTouched.current = true; update("useful_life_years", v); }} required testid="asset-life-input"
             hint={t("life_hint").replace("{n}", DEFAULT_USEFUL_LIFE[form.category] ?? 5)}/>
-          <MoneyField label={t("residual_value")} usd={form.residual_value} min="0"
-            onChangeUsd={(v)=>update("residual_value",v)} testid="asset-residual-input"/>
+          <MoneyField label={t("residual_value")} idr={form.residual_value} min="0"
+            onChangeIdr={(v)=>update("residual_value",v)} testid="asset-residual-input"/>
         </Section>
 
         {/* Section 8: Media */}
