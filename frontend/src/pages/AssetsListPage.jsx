@@ -294,6 +294,14 @@ function ImportModal({ onClose, onImported }) {
                     .replace("{{imported}}", result.imported)
                     .replace("{{skipped}}", result.skipped)}
                 </div>
+                {result.pending_confirmation > 0 && (
+                  <div className="text-xs text-slate-500 mt-2">{t("import_pending_note").replace("{n}", result.pending_confirmation)}</div>
+                )}
+                {result.owner_ignored?.length > 0 && (
+                  <div className="text-xs text-amber-700 mt-2" data-testid="import-owner-ignored">
+                    {t("import_owner_ignored").replace("{n}", result.owner_ignored.length)}
+                  </div>
+                )}
               </div>
               <button
                 onClick={onClose}

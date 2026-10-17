@@ -395,6 +395,7 @@ def init_db():
         conn.execute("ALTER TABLE transfer_requests ADD COLUMN to_user_id TEXT")
     conn.commit()
     backfill_assignee_user_ids(conn)
+    reset_free_text_owners(conn)
     migrate_money_to_idr(conn)
     conn.close()
 
@@ -425,6 +426,29 @@ def backfill_assignee_user_ids(conn):
     conn.commit()
     if linked:
         logger.warning("Linked %d asset owner name(s) to user accounts", linked)
+
+
+def reset_free_text_owners(conn):
+    """One time: owners typed as free text (not a registered user) are cleared to "No owner yet".
+    Assets whose owner is linked to a user account are left alone. Each change is written to the ownership log."""
+    if conn.execute("SELECT 1 FROM app_meta WHERE key = 'free_text_owner_reset_v1'").fetchone():
+        return
+    ts = datetime.now(timezone.utc).isoformat()
+    rows = conn.execute("SELECT id, assigned_to_name FROM assets "
+                        "WHERE (assigned_to_user_id IS NULL OR assigned_to_user_id = '') "
+                        "AND assigned_to_name IS NOT NULL AND TRIM(assigned_to_name) != ''").fetchall()
+    for r in rows:
+        conn.execute("INSERT INTO ownership_logs (id,asset_id,from_name,from_user_id,to_name,to_user_id,note,by,by_name,at) "
+                     "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                     (str(uuid.uuid4()), r["id"], r["assigned_to_name"], None, "(No owner yet)", None,
+                      "Owner cleared: free-text name is not a registered user", "system", "System", ts))
+    conn.execute("UPDATE assets SET assigned_to_name = NULL, assigned_to_user_id = NULL "
+                 "WHERE (assigned_to_user_id IS NULL OR assigned_to_user_id = '') "
+                 "AND assigned_to_name IS NOT NULL AND TRIM(assigned_to_name) != ''")
+    conn.execute("INSERT OR REPLACE INTO app_meta (key, value) VALUES ('free_text_owner_reset_v1', ?)", (ts,))
+    conn.commit()
+    if rows:
+        logger.warning("Cleared %d free-text asset owner(s) to 'No owner yet'", len(rows))
 
 
 def row_to_dict(row) -> dict:
@@ -1971,6 +1995,7 @@ async def bulk_import_assets(
     imported = 0
     skipped  = 0
     import_errors = []
+    new_assignments, owner_ignored = [], []
 
     for i, row in enumerate(rows, start=2):
         p = preview[i - 2]
@@ -2008,7 +2033,7 @@ async def bulk_import_assets(
             """, (
                 aid, name, tag, cat, atype, desc, campus, loc, status,
                 price, pdate, life, wdate, serial, supplier,
-                None, owner or None,
+                None, None,
                 None, "[]", ts, ts, user["id"],
             ))
             extras = {}
@@ -2024,13 +2049,14 @@ async def bulk_import_assets(
                 "UPDATE assets SET " + ", ".join(f"{k}=?" for k in extras) + " WHERE id=?",
                 list(extras.values()) + [aid],
             )
-            if owner:
-                conn.execute("""
-                    INSERT INTO ownership_logs
-                      (id,asset_id,from_name,from_user_id,to_name,to_user_id,note,by,by_name,at)
-                    VALUES (?,?,?,?,?,?,?,?,?,?)
-                """, (str(uuid.uuid4()), aid, None, None, owner, None,
-                      "Bulk import", user["id"], user["name"], ts))
+            if owner:  # only a registered user can be the owner, and they must confirm receipt
+                to_user = resolve_user(conn, None, owner)
+                if to_user:
+                    new_assignments.append(create_assignment(
+                        conn, row_to_dict(conn.execute("SELECT * FROM assets WHERE id = ?", (aid,)).fetchone()),
+                        to_user, "personal", "new", user, note="Bulk import", to_label=owner))
+                else:
+                    owner_ignored.append({"row": i, "asset_tag": tag, "owner": owner})
             imported += 1
         except Exception as exc:
             skipped += 1
@@ -2038,7 +2064,10 @@ async def bulk_import_assets(
 
     conn.commit()
     conn.close()
-    return {"dry_run": False, "imported": imported, "skipped": skipped, "errors": import_errors}
+    if new_assignments:
+        notify_assignees(new_assignments)
+    return {"dry_run": False, "imported": imported, "skipped": skipped, "errors": import_errors,
+            "pending_confirmation": len(new_assignments), "owner_ignored": owner_ignored}
 
 
 @api.get("/assets/{aid}")
