@@ -149,6 +149,7 @@ export default function AssetDetailPage() {
   const submitTransfer = async () => {
     const ownerLabel = buildOwnerLabel();
     if (!ownerLabel.trim()) return toast.error(t("transfer_owner_required"));
+    if (!transferUserId) return toast.error(t("transfer_user_required"));
     try {
       if (isAdmin) {
         const r = await api.post(`/assets/${id}/transfer`, { new_owner_name: ownerLabel, new_owner_user_id: transferUserId, note: transferNote });

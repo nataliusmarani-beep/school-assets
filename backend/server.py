@@ -1252,7 +1252,7 @@ async def create_asset(body: AssetIn, user: dict = Depends(get_current_user)):
     ts = now_iso()
     conn = get_conn()
     # An owner that is a real user must confirm receipt first; the asset starts unassigned until then.
-    to_user = (resolve_user(conn, body.assigned_to_user_id, body.assigned_to_name)
+    to_user = (require_user(conn, body.assigned_to_user_id, body.assigned_to_name)
                if (body.assigned_to_name or body.assigned_to_user_id) else None)
     direct_uid, direct_name = (None, None) if to_user else (body.assigned_to_user_id, body.assigned_to_name)
     conn.execute("""
@@ -1695,7 +1695,7 @@ async def transfer_asset(aid: str, body: TransferIn, user: dict = Depends(get_cu
         conn.close()
         raise HTTPException(404, "Asset not found")
     asset = row_to_dict(row)
-    to_user = resolve_user(conn, body.new_owner_user_id, body.new_owner_name)
+    to_user = require_user(conn, body.new_owner_user_id, body.new_owner_name)
     if to_user:  # the recipient has to confirm before ownership changes
         try:
             a = create_assignment(conn, asset, to_user, asset.get("assignment_kind") or "personal", "transfer", user,
@@ -2075,6 +2075,7 @@ async def create_transfer_request(asset_id: str, body: TransferRequestIn, user: 
     if not asset:
         conn.close()
         raise HTTPException(404, "Asset not found")
+    require_user(conn, body.new_owner_user_id, body.new_owner_name)
     rid = str(uuid.uuid4())
     conn.execute("""
         INSERT INTO transfer_requests
@@ -2124,7 +2125,7 @@ async def approve_transfer(rid: str, user: dict = Depends(admin_required)):
         conn.close()
         raise HTTPException(400, "Request is not pending")
     ts = now_iso()
-    to_user = resolve_user(conn, req.get("to_user_id"), req["to_name"])
+    to_user = require_user(conn, req.get("to_user_id"), req["to_name"])
     if to_user:  # approved by admin; the recipient still has to confirm receipt
         asset = row_to_dict(conn.execute("SELECT * FROM assets WHERE id = ?", (req["asset_id"],)).fetchone())
         try:
@@ -2205,6 +2206,30 @@ def resolve_user(conn, user_id=None, label=None):
     hits = [dict(r) for r in conn.execute(f"SELECT {cols} FROM users").fetchall()
             if _name_key(r["name"]) == key or _name_key(r["email"]) == key]
     return hits[0] if len(hits) == 1 else None
+
+
+def require_user(conn, user_id=None, label=None):
+    """Hand-overs go only to users registered in the app (HTTP 422 otherwise)."""
+    u = resolve_user(conn, user_id, label)
+    if not u:
+        conn.close()
+        raise HTTPException(422, "Penerima harus pengguna yang sudah terdaftar di aplikasi. Tambahkan dulu di menu Users.")
+    return u
+
+
+def _supervisor_cc(conn, user_ids, exclude=()) -> list:
+    """Supervisor e-mail addresses (users.supervisor) of the given users, de-duplicated."""
+    skip = {(e or "").strip().casefold() for e in exclude}
+    out, seen = [], set(skip)
+    for uid in user_ids:
+        if not uid:
+            continue
+        r = conn.execute("SELECT supervisor FROM users WHERE id = ?", (uid,)).fetchone()
+        addr = ((r["supervisor"] if r else "") or "").strip()
+        if "@" in addr and addr.casefold() not in seen:
+            seen.add(addr.casefold())
+            out.append(addr)
+    return out
 
 
 def pending_assignment(conn, asset_id):
@@ -2324,8 +2349,9 @@ def notify_assignees(assignments: list, reminder: bool = False):
             by = ", ".join(sorted({a["created_by_name"] for a in group}))
             n = len(group)
             subject = (f"[YPJ Assets] {'Pengingat: ' if reminder else ''}Konfirmasi penerimaan {n} aset")
+            cc = _supervisor_cc(conn, [uid] + [a.get("from_user_id") for a in group], exclude=[email])
             send_email(email, subject,
-                       _assignment_request_html(name, group, by, group[0].get("note") or "", reminder))
+                       _assignment_request_html(name, group, by, group[0].get("note") or "", reminder), cc=cc)
     finally:
         conn.close()
 
@@ -2345,6 +2371,8 @@ def notify_responses(responded: list, accepted: bool, by_name: str, reason: str 
                 row = conn.execute("SELECT location FROM assets WHERE id = ?", (a["asset_id"],)).fetchone()
                 a["location"] = row["location"] if row else ""
             cc = [ASSET_REMINDER_EMAIL] if ASSET_REMINDER_EMAIL else []
+            cc += _supervisor_cc(conn, [a["to_user_id"] for a in group] + [a.get("from_user_id") for a in group],
+                                 exclude=[email] + cc)
             subject = (f"[YPJ Assets] {by_name} {'menerima' if accepted else 'menolak'} {len(group)} aset")
             send_email(email, subject, _assignment_response_html(group, accepted, by_name, reason), cc=cc)
     finally:
