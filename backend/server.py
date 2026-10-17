@@ -52,7 +52,9 @@ SMTP_FROM_NAME = os.environ.get("SMTP_FROM_NAME", "YPJ Assets Management")
 # Resend (HTTPS API) — preferred on Railway, which blocks outbound SMTP ports
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 MAIL_FROM_DOMAIN = os.environ.get("MAIL_FROM_DOMAIN", "ypj.sch.id")
-APP_URL       = os.environ.get("APP_URL", "https://your-app.railway.app")
+_RAILWAY_DOMAIN = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
+APP_URL       = (os.environ.get("APP_URL")
+                 or (f"https://{_RAILWAY_DOMAIN}" if _RAILWAY_DOMAIN else "http://localhost:8001")).rstrip("/")
 
 # Loan notification recipients (set in Railway environment variables)
 # General inbox that receives new-request and return-complete alerts
@@ -615,21 +617,43 @@ def _send_via_resend(to_addr: str, subject: str, body_html: str, cc: list) -> No
         raise RuntimeError(f"Resend API {e.code}: {e.read().decode(errors='replace')[:300]}")
 
 
-def _email_shell(body: str) -> str:
-    """Common look for all emails (same style as YPJ KK Inventory)."""
+def _email_logo_url() -> str:
+    """Public URL of the YPJ logo bundled with the frontend build (hashed filename)."""
+    try:
+        f = next((BUILD_DIR / "static" / "media").glob("ypj-logo*.png"), None)
+        return f"{APP_URL}/static/media/{f.name}" if f else ""
+    except Exception:
+        return ""
+
+
+def _email_shell(body: str, eyebrow: str = "") -> str:
+    """Common look for all emails — matches the SchoolAssets app theme (navy, yellow action, mono labels)."""
+    logo = _email_logo_url()
+    logo_html = (f'<td style="width:44px;padding-right:12px;vertical-align:middle">'
+                 f'<img src="{logo}" width="40" height="40" alt="YPJ" style="display:block;border:0"></td>') if logo else ""
+    mono = "'IBM Plex Mono',Menlo,Consolas,monospace"
+    eyebrow_html = (f'<div style="font-family:{mono};font-size:11px;letter-spacing:.14em;text-transform:uppercase;'
+                    f'color:#64748b;margin-bottom:6px">{eyebrow}</div>') if eyebrow else ""
     return f"""
-  <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:32px 24px;background:#f8fafc">
-    <div style="background:#1a2f5e;padding:16px 24px;border-radius:10px 10px 0 0">
-      <div style="color:white;font-size:18px;font-weight:800">&#127979; YPJ Assets Management</div>
-    </div>
-    <div style="background:white;padding:28px 24px;border-radius:0 0 10px 10px;border:1px solid #e2e8f0;border-top:none">
-      {body}
-      <p style="margin:24px 0 0;"><a href="{APP_URL}" style="background:#1a2f5e;color:#fff;padding:10px 20px;text-decoration:none;border-radius:6px;font-size:14px;font-weight:600">Open Asset Registry</a></p>
-      <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0">
-      <p style="color:#94a3b8;font-size:12px;margin:0">
-        Yayasan Pendidikan Jayawijaya &mdash; Kuala Kencana Campus<br>
-        This is an automated message. Please do not reply directly.
-      </p>
+  <div style="background:#f8fafc;padding:24px 12px;font-family:'IBM Plex Sans',Segoe UI,Arial,sans-serif;color:#0f172a">
+    <div style="max-width:600px;margin:0 auto;border:1px solid #e2e8f0;background:#ffffff">
+      <table role="presentation" width="100%" style="background:#0f172a;border-collapse:collapse"><tr>
+        <td style="padding:18px 24px"><table role="presentation" style="border-collapse:collapse"><tr>
+          {logo_html}
+          <td style="vertical-align:middle">
+            <div style="color:#ffffff;font-size:16px;font-weight:700;line-height:1.2">Yayasan Pendidikan Jayawijaya</div>
+            <div style="font-family:{mono};color:#94a3b8;font-size:10px;letter-spacing:.16em;text-transform:uppercase;margin-top:3px">Manajemen Aset Sekolah</div>
+          </td></tr></table></td>
+      </tr></table>
+      <div style="padding:28px 24px">
+        {eyebrow_html}
+        {body}
+        <p style="margin:28px 0 0"><a href="{APP_URL}" style="display:inline-block;background:#f2c14e;color:#0f172a;padding:11px 22px;text-decoration:none;font-size:14px;font-weight:700;border-radius:4px">Buka Asset Registry &rarr;</a></p>
+        <p style="margin:10px 0 0;font-size:12px;color:#64748b">Atau buka: <a href="{APP_URL}" style="color:#0f3ea3">{APP_URL}</a></p>
+      </div>
+      <div style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:14px 24px;font-size:12px;color:#94a3b8">
+        YPJ Assets Management &mdash; Kuala Kencana Campus &middot; Pesan otomatis, mohon tidak membalas langsung.
+      </div>
     </div>
   </div>"""
 
@@ -713,7 +737,7 @@ def _loan_html(req: dict, heading: str, detail_lines: list, footer: str = "") ->
         for k, v in detail_lines
     )
     return _email_shell(f"""
-        <h2 style="margin-top:0;color:#1a2f5e;">{heading}</h2>
+        <h2 style="margin:0 0 4px;font-size:22px;color:#0f172a;">{heading}</h2>
         <table style="border-collapse:collapse;margin:16px 0;font-size:14px;">
           {rows}
         </table>
@@ -814,16 +838,16 @@ def _reminder_html(campus: str, items: list) -> str:
         for i in items
     )
     return _email_shell(f"""
-        <h2 style="margin-top:0;color:#1a2f5e;">Asset due-date reminder{f' — {_h.escape(campus)}' if campus else ''}</h2>
-        <div style="background:#fffbeb;border-left:4px solid #d97706;padding:12px 16px;border-radius:4px;font-size:13px;color:#92400e;margin-bottom:16px">
-          &#9888;&#65039; The following assets need attention.
+        <h2 style="margin:0 0 14px;font-size:22px;color:#0f172a;">Inspeksi &amp; pemeliharaan jatuh tempo{f' — {_h.escape(campus)}' if campus else ''}</h2>
+        <div style="border-left:3px solid #f2c14e;background:#fffbeb;padding:10px 14px;font-size:13px;color:#78350f;margin-bottom:16px">
+          Aset berikut memerlukan tindakan / The following assets need attention.
         </div>
         <table style="border-collapse:collapse;width:100%;font-size:14px;">
-          <tr style="background:#f1f5f9;text-align:left;color:#475569;font-size:12px;">
-            <th style="padding:8px;">Type</th><th style="padding:8px;">Asset</th><th style="padding:8px;">Due</th>
+          <tr style="text-align:left;color:#64748b;font-size:11px;letter-spacing:.1em;text-transform:uppercase;border-bottom:1px solid #e2e8f0;">
+            <th style="padding:8px;">Jenis</th><th style="padding:8px;">Aset</th><th style="padding:8px;">Jatuh tempo</th>
           </tr>
           {rows}
-        </table>""")
+        </table>""", eyebrow="Tindakan diperlukan")
 
 
 def send_asset_due_reminders(force: bool = False, today=None) -> dict:
