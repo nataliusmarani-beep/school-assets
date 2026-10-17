@@ -49,6 +49,9 @@ SMTP_HOST     = os.environ.get("SMTP_HOST") or ("smtp.gmail.com" if SMTP_USER el
 SMTP_PORT     = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_FROM     = os.environ.get("SMTP_FROM", SMTP_USER)
 SMTP_FROM_NAME = os.environ.get("SMTP_FROM_NAME", "YPJ Assets Management")
+# Resend (HTTPS API) — preferred on Railway, which blocks outbound SMTP ports
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+MAIL_FROM_DOMAIN = os.environ.get("MAIL_FROM_DOMAIN", "ypj.sch.id")
 APP_URL       = os.environ.get("APP_URL", "https://your-app.railway.app")
 
 # Loan notification recipients (set in Railway environment variables)
@@ -590,7 +593,26 @@ class _SMTP4_SSL(smtplib.SMTP_SSL):
 
 
 def email_configured() -> bool:
-    return bool(SMTP_HOST and SMTP_USER and SMTP_PASSWORD)
+    return bool(RESEND_API_KEY or (SMTP_HOST and SMTP_USER and SMTP_PASSWORD))
+
+
+def _send_via_resend(to_addr: str, subject: str, body_html: str, cc: list) -> None:
+    import json as _json, urllib.request, urllib.error
+    payload = {
+        "from": formataddr((SMTP_FROM_NAME, f"noreply@{MAIL_FROM_DOMAIN}")),
+        "to": [to_addr], "subject": subject, "html": body_html,
+    }
+    if cc:
+        payload["cc"] = cc
+    req = urllib.request.Request(
+        "https://api.resend.com/emails", data=_json.dumps(payload).encode(), method="POST",
+        headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json",
+                 "User-Agent": "ypj-assets/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            r.read()
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"Resend API {e.code}: {e.read().decode(errors='replace')[:300]}")
 
 
 def _email_shell(body: str) -> str:
@@ -620,6 +642,10 @@ def send_email(to_addr: str, subject: str, body_html: str, cc: list = None) -> b
         return False
     try:
         clean_cc = [a for a in (cc or []) if a and a != to_addr]
+        if RESEND_API_KEY:
+            _send_via_resend(to_addr, subject, body_html, clean_cc)
+            logger.info("Email sent via Resend to %s (CC: %s) — %s", to_addr, clean_cc, subject)
+            return True
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
         msg["From"]    = formataddr((SMTP_FROM_NAME, SMTP_FROM or SMTP_USER))
@@ -838,8 +864,7 @@ def send_asset_due_reminders(force: bool = False, today=None) -> dict:
         subject = f"[YPJ Assets] {len(group)} asset reminder(s)" + (f" — {campus}" if campus else "")
         if overdue:
             subject += f" ({overdue} overdue)"
-        send_email(recipients[0], subject, _reminder_html(campus, group), cc=recipients[1:])
-        if configured:
+        if send_email(recipients[0], subject, _reminder_html(campus, group), cc=recipients[1:]):
             sent += 1
     logger.info("Asset due reminders: %d item(s), %d email(s)", len(picked), sent)
     return {"items": len(picked), "emails": sent, "email_configured": configured}
