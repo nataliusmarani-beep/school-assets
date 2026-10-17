@@ -8,7 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "../components/ui/dialog";
 import { toast } from "sonner";
 import { useAuth } from "../context/AuthContext";
-import { Plus, Trash2, Pencil } from "lucide-react";
+import { Plus, Trash2, Pencil, Upload } from "lucide-react";
+import BulkUsersDialog from "../components/BulkUsersDialog";
 
 const EMPTY_FORM = { name: "", email: "", password: "", role: "staff", department: "", campus: "", supervisor_name: "", supervisor: "", employee_id: "" };
 const EMPTY_EDIT = { name: "", email: "", role: "staff", department: "", campus: "", supervisor_name: "", supervisor: "", employee_id: "", password: "" };
@@ -152,6 +153,7 @@ export default function UsersPage() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -218,6 +220,10 @@ export default function UsersPage() {
             {t("team_users")}
           </h1>
         </div>
+        <div className="flex items-center gap-3">
+        <Button variant="outline" className="rounded-none" onClick={() => setBulkOpen(true)} data-testid="bulk-add-user-button">
+          <Upload className="w-4 h-4 mr-2" strokeWidth={1.75} /> {t("bulk_add_users")}
+        </Button>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
             <Button className="rounded-none bg-slate-900 hover:bg-slate-800" data-testid="add-user-button">
@@ -236,7 +242,10 @@ export default function UsersPage() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
+
+      {bulkOpen && <BulkUsersDialog onClose={() => setBulkOpen(false)} onImported={load} />}
 
       <div className="bg-white border border-slate-200 overflow-hidden">
         <div className="overflow-x-auto">

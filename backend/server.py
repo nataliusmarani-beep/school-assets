@@ -5,6 +5,9 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 import os
+import html as html_mod
+import secrets
+import re
 import uuid
 import sqlite3
 import json
@@ -1111,6 +1114,161 @@ async def list_users(user: dict = Depends(get_current_user)):
 @api.post("/users")
 async def create_user(body: UserCreate, _: dict = Depends(admin_required)):
     return await register(body, Response())
+
+
+USER_IMPORT_COLUMNS = ["name", "email", "role", "department", "campus", "supervisor_name", "supervisor", "employee_id", "password"]
+_USER_COL_ALIASES = {
+    "nama": "name", "full_name": "name", "email_address": "email", "peran": "role", "jabatan": "department",
+    "departemen": "department", "unit": "department", "kampus": "campus", "nama_atasan": "supervisor_name",
+    "atasan": "supervisor_name", "supervisor_email": "supervisor", "email_atasan": "supervisor",
+    "nip": "employee_id", "id_karyawan": "employee_id", "kata_sandi": "password",
+}
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_PW_ALPHABET = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def _gen_password(n: int = 10) -> str:
+    return "".join(secrets.choice(_PW_ALPHABET) for _ in range(n))
+
+
+def _norm_user_row(raw: dict) -> dict:
+    out = {}
+    for k, v in raw.items():
+        key = re.sub(r"[\s\-]+", "_", (k or "").strip().lower())
+        key = _USER_COL_ALIASES.get(key, key)
+        if key in USER_IMPORT_COLUMNS and key not in out:
+            out[key] = (v or "").strip() if isinstance(v, str) else ("" if v is None else str(v).strip())
+    return {c: out.get(c, "") for c in USER_IMPORT_COLUMNS}
+
+
+def _validate_user_rows(conn, rows: list) -> list:
+    """Normalise + validate parsed rows. Returns [{row, data, errors}]."""
+    existing = {r["email"].lower(): r for r in conn.execute("SELECT email, name FROM users").fetchall()}
+    by_name = {}
+    for r in conn.execute("SELECT email, name FROM users").fetchall():
+        by_name.setdefault(_name_key(r["name"]), set()).add(r["email"].lower())
+    file_emails = {}
+    parsed = []
+    for i, raw in enumerate(rows, start=2):  # row 1 = header
+        d = _norm_user_row(raw)
+        if not any(d.values()):
+            continue
+        parsed.append((i, d))
+        if _EMAIL_RE.match(d["email"]):
+            by_name.setdefault(_name_key(d["name"]), set()).add(d["email"].lower())
+    campuses = {c.casefold(): c for c in VALID_CAMPUSES if c}
+    out = []
+    for i, d in parsed:
+        errs = []
+        d["email"] = d["email"].lower()
+        if not d["name"]:
+            errs.append("name is required")
+        if not _EMAIL_RE.match(d["email"]):
+            errs.append("email is missing or invalid")
+        elif d["email"] in existing:
+            errs.append(f'email "{d["email"]}" is already registered')
+        elif d["email"] in file_emails:
+            errs.append(f'email "{d["email"]}" is duplicated (row {file_emails[d["email"]]})')
+        else:
+            file_emails[d["email"]] = i
+        role = (d["role"] or "staff").casefold()
+        role = {"administrator": "admin", "staf": "staff", "user": "staff"}.get(role, role)
+        if role not in ("admin", "staff"):
+            errs.append('role must be "admin" or "staff"')
+        d["role"] = role
+        if d["campus"]:
+            c = campuses.get(d["campus"].casefold())
+            if c:
+                d["campus"] = c
+            else:
+                errs.append('campus must be "YPJ Kuala Kencana" or "YPJ Tembagapura"')
+        if d["password"] and len(d["password"]) < 6:
+            errs.append("password must be at least 6 characters")
+        if d["supervisor"] and not _EMAIL_RE.match(d["supervisor"]):
+            errs.append("supervisor e-mail is invalid")
+        if not d["supervisor"] and d["supervisor_name"]:  # fill the e-mail from a registered / listed user with that name
+            hits = by_name.get(_name_key(d["supervisor_name"]), set())
+            if len(hits) == 1:
+                d["supervisor"] = next(iter(hits))
+        out.append({"row": i, "data": d, "errors": errs})
+    return out
+
+
+def _welcome_email_html(name: str, email: str, password: str, generated: bool) -> str:
+    pw_line = (f'<tr><td style="padding:6px 0;color:#64748b;width:120px">Kata sandi sementara</td>'
+               f'<td style="padding:6px 0;font-family:monospace;font-size:15px"><b>{html_mod.escape(password)}</b></td></tr>') if password else ""
+    body = f"""
+      <h2 style="margin:0 0 10px;font-size:20px">Akun Anda sudah dibuat</h2>
+      <p style="margin:0 0 14px;font-size:14px;line-height:1.6">Halo {html_mod.escape(name)}, Anda sekarang terdaftar di aplikasi manajemen aset YPJ.
+      Aset yang diserahkan kepada Anda akan diberitahukan lewat email ini dan perlu Anda konfirmasi di menu <b>Aset Saya</b>.</p>
+      <table role="presentation" style="border-collapse:collapse;font-size:14px;margin:0 0 10px">
+        <tr><td style="padding:6px 0;color:#64748b;width:120px">Email</td><td style="padding:6px 0"><b>{html_mod.escape(email)}</b></td></tr>
+        {pw_line}
+      </table>
+      {'<p style="margin:0;font-size:13px;color:#b45309">Segera ganti kata sandi setelah masuk.</p>' if generated else ''}"""
+    return _email_shell(body, eyebrow="Akun baru", cta_label="Masuk ke Asset Registry")
+
+
+@api.get("/users/import-template")
+async def users_import_template(_: dict = Depends(admin_required)):
+    ex1 = "Budi Santoso,budi@fmi.com,staff,SD Administration,YPJ Kuala Kencana,Jeni Mansawan,jnelcema@fmi.com,0000123456,"
+    ex2 = "Sari Dewi,sari@fmi.com,staff,SMP,YPJ Tembagapura,,,,"
+    buf = io.BytesIO(("﻿" + ",".join(USER_IMPORT_COLUMNS) + f"\n{ex1}\n{ex2}\n").encode("utf-8"))
+    return StreamingResponse(buf, media_type="text/csv",
+                             headers={"Content-Disposition": 'attachment; filename="user-import-template.csv"'})
+
+
+@api.post("/users/import")
+async def users_import(file: UploadFile = File(...), dry_run: bool = Query(True),
+                       send_invite: bool = Query(False), admin: dict = Depends(admin_required)):
+    content = await file.read()
+    if len(content) > 2 * 1024 * 1024:
+        raise HTTPException(400, "File too large (max 2 MB)")
+    rows = _parse_import_file(content, file.filename or "upload.csv")
+    if not rows:
+        raise HTTPException(400, "File is empty or has no data rows")
+    if len(rows) > 500:
+        raise HTTPException(400, "Too many rows (max 500 per file)")
+    conn = get_conn()
+    checked = _validate_user_rows(conn, rows)
+    if not checked:
+        conn.close()
+        raise HTTPException(400, "File is empty or has no data rows")
+    preview = [{"row": c["row"], "name": c["data"]["name"], "email": c["data"]["email"], "role": c["data"]["role"],
+                "department": c["data"]["department"], "campus": c["data"]["campus"],
+                "supervisor": c["data"]["supervisor"], "errors": c["errors"]} for c in checked]
+    total = len(preview)
+    invalid = sum(1 for p in preview if p["errors"])
+    if dry_run:
+        conn.close()
+        return {"dry_run": True, "total": total, "valid": total - invalid, "invalid": invalid, "preview": preview}
+    created = []
+    ts = now_iso()
+    for c in checked:
+        if c["errors"]:
+            continue
+        d = c["data"]
+        generated = not d["password"]
+        pw = d["password"] or _gen_password()
+        uid = str(uuid.uuid4())
+        conn.execute(
+            "INSERT INTO users (id,email,name,role,department,campus,supervisor,supervisor_name,employee_id,password_hash,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (uid, d["email"], d["name"], d["role"], d["department"], d["campus"], d["supervisor"], d["supervisor_name"],
+             d["employee_id"], hash_password(pw), ts))
+        created.append({"id": uid, "name": d["name"], "email": d["email"], "role": d["role"],
+                        "password": pw, "generated": generated})
+    conn.commit()
+    conn.close()
+    invited = 0
+    if send_invite and email_configured():
+        for u in created:
+            if send_email(u["email"], "[YPJ Assets] Akun Anda sudah dibuat",
+                          _welcome_email_html(u["name"], u["email"], u["password"], u["generated"])):
+                invited += 1
+    logger.info("Bulk user import by %s: %d created, %d skipped, %d invited", admin.get("email"), len(created), invalid, invited)
+    return {"dry_run": False, "created": len(created), "skipped": invalid, "invited": invited,
+            "invite_requested": bool(send_invite), "email_configured": email_configured(), "users": created,
+            "errors": [p for p in preview if p["errors"]]}
 
 
 @api.delete("/users/{uid}")
