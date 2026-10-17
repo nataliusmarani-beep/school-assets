@@ -9,7 +9,8 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { toast } from "sonner";
-import { Plus, Search } from "lucide-react";
+import { Plus, Search, Pencil } from "lucide-react";
+import ClassroomEditDialog from "../components/assets/ClassroomEditDialog";
 
 const CAMPUSES = ["YPJ Kuala Kencana", "YPJ Tembagapura"];
 const TYPES = ["kelas", "lab", "kantor", "lainnya"];
@@ -26,6 +27,7 @@ export default function ClassroomsPage() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ name: "", campus: CAMPUSES[0], room_type: "kelas" });
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(null);
 
   const load = useCallback(() => api.get("/classrooms").then((r) => setRooms(r.data))
     .catch((e) => toast.error(formatErr(e))).finally(() => setLoading(false)), []);
@@ -87,7 +89,16 @@ export default function ClassroomsPage() {
               <tr><td colSpan={8} className="text-center text-slate-500 py-12">{t("cr_empty")}</td></tr>
             ) : shown.map((r) => (
               <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50" data-testid={`classroom-row-${r.id}`}>
-                <td className="py-3 px-4"><Link to={`/classrooms/${r.id}`} className="font-medium text-slate-900 hover:text-blue-800">{r.name}</Link></td>
+                <td className="py-3 px-4">
+                  <div className="flex items-center gap-2">
+                    <Link to={`/classrooms/${r.id}`} className="font-medium text-slate-900 hover:text-blue-800">{r.name}</Link>
+                    {isAdmin && (
+                      <button onClick={() => setEditing(r)} className="text-slate-400 hover:text-slate-900" title={t("cr_edit")} aria-label={t("cr_edit")} data-testid={`classroom-edit-${r.id}`}>
+                        <Pencil className="w-3.5 h-3.5" strokeWidth={1.75} />
+                      </button>
+                    )}
+                  </div>
+                </td>
                 <td className="py-3 px-4 text-slate-700">{r.campus || "—"}</td>
                 <td className="py-3 px-4 text-slate-700">{t(`cr_type_${r.room_type}`)}</td>
                 <td className="py-3 px-4 text-slate-700">{r.responsible_name ? ownerName(r.responsible_name) : <span className="text-slate-400">{t("cr_none_resp")}</span>}</td>
@@ -112,6 +123,8 @@ export default function ClassroomsPage() {
           </tbody>
         </table>
       </div>
+
+      {isAdmin && <ClassroomEditDialog open={!!editing} onOpenChange={(o) => { if (!o) setEditing(null); }} t={t} room={editing} onDone={load} />}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="rounded-none" data-testid="classroom-dialog">

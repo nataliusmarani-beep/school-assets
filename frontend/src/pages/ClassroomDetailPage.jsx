@@ -7,8 +7,9 @@ import { isAdminRole } from "../lib/roles";
 import { ownerName } from "../lib/format";
 import { Button } from "../components/ui/button";
 import HandoverDialog from "../components/assets/HandoverDialog";
+import ClassroomEditDialog from "../components/assets/ClassroomEditDialog";
 import { toast } from "sonner";
-import { ArrowLeft, ArrowRightLeft } from "lucide-react";
+import { ArrowLeft, ArrowRightLeft, Pencil } from "lucide-react";
 
 export default function ClassroomDetailPage() {
   const { id } = useParams();
@@ -18,6 +19,7 @@ export default function ClassroomDetailPage() {
   const [room, setRoom] = useState(null);
   const [loading, setLoading] = useState(true);
   const [hoOpen, setHoOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [sel, setSel] = useState(new Set());
 
   const load = useCallback(() => api.get(`/classrooms/${id}`).then((r) => setRoom(r.data))
@@ -60,11 +62,18 @@ export default function ClassroomDetailPage() {
               {room.responsible_name ? ownerName(room.responsible_name) : t("cr_none_resp")}</span>
           </p>
         </div>
+        <div className="flex gap-2 flex-wrap">
+        {isAdmin && (
+          <Button variant="outline" onClick={() => setEditOpen(true)} className="rounded-none" data-testid="classroom-edit-btn">
+            <Pencil className="w-4 h-4 mr-2" strokeWidth={1.75} /> {t("cr_edit")}
+          </Button>
+        )}
         {isAdmin && !h && (
           <Button onClick={() => setHoOpen(true)} className="rounded-none bg-slate-900" data-testid="classroom-handover-btn">
             <ArrowRightLeft className="w-4 h-4 mr-2" strokeWidth={1.75} /> {t("cr_handover_btn")}
           </Button>
         )}
+        </div>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
@@ -192,6 +201,7 @@ export default function ClassroomDetailPage() {
         </section>
       )}
 
+      {isAdmin && <ClassroomEditDialog open={editOpen} onOpenChange={setEditOpen} t={t} room={room} onDone={load} />}
       {isAdmin && <HandoverDialog open={hoOpen} onOpenChange={setHoOpen} t={t} classroomId={id} onDone={load} />}
     </div>
   );
