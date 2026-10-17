@@ -39,7 +39,7 @@ export default function ClassroomDetailPage() {
   const discrepancies = room.assets.filter((a) => a.handover_flag === "discrepancy");
 
   return (
-    <div data-testid="classroom-detail">
+    <div className="p-6 lg:p-10 max-w-[1600px] mx-auto" data-testid="classroom-detail">
       <Link to="/classrooms" className="text-sm text-slate-500 hover:text-slate-900 inline-flex items-center gap-1 mb-4">
         <ArrowLeft className="w-4 h-4" /> {t("cr_back")}
       </Link>

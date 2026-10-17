@@ -46,7 +46,7 @@ export default function ClassroomsPage() {
   };
 
   return (
-    <div data-testid="classrooms-page">
+    <div className="p-6 lg:p-10 max-w-[1600px] mx-auto" data-testid="classrooms-page">
       <div className="flex items-end justify-between gap-4 flex-wrap mb-8">
         <div>
           <div className="label-mono mb-2">{t("cr_eyebrow")}</div>
