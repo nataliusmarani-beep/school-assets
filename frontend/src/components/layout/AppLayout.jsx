@@ -91,7 +91,7 @@ export default function AppLayout({ children }) {
     }
   };
 
-  const LangToggle = ({ dark }) => (
+  const LangToggle = ({ dark, amber }) => (
     <div className={`flex items-center gap-0.5 ${dark ? "" : "border border-slate-200 p-0.5"}`}>
       {["EN", "ID"].map((l) => (
         <button
@@ -99,8 +99,8 @@ export default function AppLayout({ children }) {
           onClick={() => setLang(l)}
           className={`px-2.5 py-1 text-xs font-mono font-medium transition-colors ${
             lang === l
-              ? dark ? "bg-white text-slate-900" : "bg-slate-900 text-white"
-              : dark ? "text-slate-400 hover:text-white" : "text-slate-500 hover:text-slate-900"
+              ? amber ? "bg-slate-900 text-white" : dark ? "bg-white text-slate-900" : "bg-slate-900 text-white"
+              : amber ? "text-slate-900/70 hover:text-slate-900" : dark ? "text-slate-400 hover:text-white" : "text-slate-500 hover:text-slate-900"
           }`}
         >
           {l}
@@ -177,9 +177,10 @@ export default function AppLayout({ children }) {
           </button>
         )}
 
-        <div className="px-1">
-          <div className="label-mono text-slate-500 mb-2">{t("lang_label")}</div>
-          <LangToggle dark />
+        {/* Staff have no Backup button, so the language area takes the same amber highlight */}
+        <div className={isAdminRole(user?.role) ? "px-1" : "bg-amber-400 px-3 py-3"} data-testid="sidebar-language">
+          <div className={`label-mono mb-2 ${isAdminRole(user?.role) ? "text-slate-500" : "text-slate-800"}`}>{t("lang_label")}</div>
+          <LangToggle dark amber={!isAdminRole(user?.role)} />
         </div>
 
         <div className="border-t border-slate-800 pt-4">
