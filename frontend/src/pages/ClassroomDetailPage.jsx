@@ -143,14 +143,14 @@ export default function ClassroomDetailPage() {
                     onChange={(e) => setSel(e.target.checked ? new Set(room.assets.filter((a) => !a.pending_assignment).map((a) => a.id)) : new Set())} />
                 </th>
               )}
-              {["col_tag", "col_asset", "cr_holding", "col_assigned", "col_status"].map((k) => (
+              {["col_tag", "col_asset", "col_category", "cr_holding", "col_assigned", "col_status"].map((k) => (
                 <th key={k} className="text-left font-medium label-mono py-3 px-4">{t(k)}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {room.assets.length === 0 ? (
-              <tr><td colSpan={6} className="text-center text-slate-500 py-10">{t("cr_no_assets")}</td></tr>
+              <tr><td colSpan={7} className="text-center text-slate-500 py-10">{t("cr_no_assets")}</td></tr>
             ) : room.assets.map((a) => (
               <tr key={a.id} className="border-b border-slate-100">
                 {isAdmin && (
@@ -161,6 +161,7 @@ export default function ClassroomDetailPage() {
                 )}
                 <td className="py-3 px-4 font-mono text-xs text-slate-600"><Link to={`/assets/${a.id}`} className="hover:text-blue-800">{a.asset_tag}</Link></td>
                 <td className="py-3 px-4"><Link to={`/assets/${a.id}`} className="font-medium text-slate-900 hover:text-blue-800">{a.name}</Link></td>
+                <td className="py-3 px-4 text-slate-700" data-testid="room-asset-category">{a.category || "—"}</td>
                 <td className="py-3 px-4">
                   <span className={`inline-flex px-2 py-0.5 text-xs border ${a.is_class_asset ? "bg-blue-50 text-blue-700 border-blue-200" : "bg-slate-50 text-slate-600 border-slate-200"}`}>
                     {a.is_class_asset ? t("cr_held_class") : t("cr_held_personal")}
