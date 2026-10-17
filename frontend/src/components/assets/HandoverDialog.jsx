@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import api, { formatErr } from "../../lib/api";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
@@ -8,36 +8,35 @@ import { ownerName } from "../../lib/format";
 
 const SEL = "mt-2 w-full h-10 px-3 text-sm border border-slate-300 bg-white rounded-none";
 
-// Admin: hand over several assets (a whole classroom) to one person, who confirms item by item.
-export default function HandoverDialog({ open, onOpenChange, t, onDone }) {
+// Admin: change the responsible teacher of a classroom. The new teacher checks every asset (accept /
+// missing-or-damaged); the change only takes effect once all items are checked.
+export default function HandoverDialog({ open, onOpenChange, t, onDone, classroomId }) {
   const [users, setUsers] = useState([]);
-  const [assets, setAssets] = useState([]);
-  const [pendingIds, setPendingIds] = useState(new Set());
+  const [rooms, setRooms] = useState([]);
+  const [roomId, setRoomId] = useState(classroomId || "");
+  const [room, setRoom] = useState(null);
   const [toId, setToId] = useState("");
-  const [room, setRoom] = useState("");
-  const [kind, setKind] = useState("class");
   const [note, setNote] = useState("");
   const [checked, setChecked] = useState(new Set());
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (!open) return;
+    setRoomId(classroomId || "");
     api.get("/users").then((r) => setUsers(r.data)).catch(() => {});
-    api.get("/assets").then((r) => setAssets(r.data)).catch(() => {});
-    api.get("/assignments", { params: { status: "pending" } })
-      .then((r) => setPendingIds(new Set(r.data.map((a) => a.asset_id)))).catch(() => {});
-  }, [open]);
+    if (!classroomId) api.get("/classrooms").then((r) => setRooms(r.data)).catch(() => {});
+  }, [open, classroomId]);
 
-  const rooms = useMemo(
-    () => [...new Set(assets.filter((a) => !["retired", "lost"].includes(a.status)).map((a) => a.location).filter(Boolean))].sort(),
-    [assets]);
-  const inRoom = useMemo(
-    () => assets.filter((a) => a.location === room && !["retired", "lost"].includes(a.status)),
-    [assets, room]);
-  const selectable = inRoom.filter((a) => !pendingIds.has(a.id) && a.assigned_to_user_id !== toId);
+  useEffect(() => {
+    if (!open || !roomId) { setRoom(null); return; }
+    api.get(`/classrooms/${roomId}`).then((r) => setRoom(r.data)).catch((e) => toast.error(formatErr(e)));
+  }, [open, roomId]);
 
-  // default: every selectable item in the chosen room is ticked
-  useEffect(() => { setChecked(new Set(selectable.map((a) => a.id))); }, [room, toId, assets, pendingIds]); // eslint-disable-line
+  const active = (room?.assets || []).filter((a) => !["retired", "lost"].includes(a.status));
+  const isBlocked = (a) => !!a.pending_assignment || !a.is_class_asset || (a.assigned_to_user_id && a.assigned_to_user_id === toId);
+  const selectable = active.filter((a) => !isBlocked(a));
+
+  useEffect(() => { setChecked(new Set(selectable.map((a) => a.id))); }, [room, toId]); // eslint-disable-line
 
   const toggle = (id) => setChecked((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const allOn = selectable.length > 0 && selectable.every((a) => checked.has(a.id));
@@ -45,12 +44,13 @@ export default function HandoverDialog({ open, onOpenChange, t, onDone }) {
   const submit = async () => {
     setBusy(true);
     try {
-      const r = await api.post("/assignments/bulk", { to_user_id: toId, asset_ids: [...checked], kind, note });
+      const r = await api.post(`/classrooms/${roomId}/handover`, { to_user_id: toId, asset_ids: [...checked], note });
       let msg = t("ho_result").replace("{n}", r.data.created);
       if (r.data.skipped.length) msg += " · " + t("ho_skipped").replace("{n}", r.data.skipped.length);
       toast.success(msg);
       onOpenChange(false);
-      setRoom(""); setToId(""); setNote("");
+      setToId(""); setNote("");
+      if (!classroomId) setRoomId("");
       onDone && onDone();
     } catch (e) { toast.error(formatErr(e)); }
     finally { setBusy(false); }
@@ -62,6 +62,20 @@ export default function HandoverDialog({ open, onOpenChange, t, onDone }) {
         <DialogHeader><DialogTitle>{t("ho_title")}</DialogTitle></DialogHeader>
         <p className="text-sm text-slate-500">{t("ho_hint")}</p>
         <div className="space-y-4">
+          {!classroomId && (
+            <div>
+              <label className="label-mono">{t("ho_room")}</label>
+              <select value={roomId} onChange={(e) => setRoomId(e.target.value)} className={SEL} data-testid="ho-room">
+                <option value="">{t("ho_room_ph")}</option>
+                {rooms.map((r) => <option key={r.id} value={r.id}>{r.name}{r.campus ? ` — ${r.campus}` : ""}</option>)}
+              </select>
+            </div>
+          )}
+          {room && (
+            <div className="text-xs text-slate-500">
+              {t("cr_responsible")}: <span className="text-slate-800 font-medium">{room.responsible_name ? ownerName(room.responsible_name) : t("cr_none_resp")}</span>
+            </div>
+          )}
           <div>
             <label className="label-mono">{t("ho_recipient")}</label>
             <select value={toId} onChange={(e) => setToId(e.target.value)} className={SEL} data-testid="ho-recipient">
@@ -69,25 +83,9 @@ export default function HandoverDialog({ open, onOpenChange, t, onDone }) {
               {users.map((u) => <option key={u.id} value={u.id}>{u.name}{u.department ? ` — ${u.department}` : ""}</option>)}
             </select>
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="label-mono">{t("ho_room")}</label>
-              <select value={room} onChange={(e) => setRoom(e.target.value)} className={SEL} data-testid="ho-room">
-                <option value="">{t("ho_room_ph")}</option>
-                {rooms.map((r) => <option key={r} value={r}>{r}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="label-mono">{t("ho_kind")}</label>
-              <select value={kind} onChange={(e) => setKind(e.target.value)} className={SEL} data-testid="ho-kind">
-                <option value="class">{t("ma_kind_class")}</option>
-                <option value="personal">{t("ma_kind_personal")}</option>
-              </select>
-            </div>
-          </div>
           {room && (
             <div className="border border-slate-200 max-h-64 overflow-y-auto" data-testid="ho-list">
-              {inRoom.length === 0 ? (
+              {active.length === 0 ? (
                 <div className="p-4 text-sm text-slate-500">{t("ho_none")}</div>
               ) : (
                 <>
@@ -96,8 +94,8 @@ export default function HandoverDialog({ open, onOpenChange, t, onDone }) {
                       onChange={() => setChecked(allOn ? new Set() : new Set(selectable.map((a) => a.id)))} />
                     {t("ho_select_all")} ({checked.size}/{selectable.length})
                   </label>
-                  {inRoom.map((a) => {
-                    const blocked = pendingIds.has(a.id) || a.assigned_to_user_id === toId;
+                  {active.map((a) => {
+                    const blocked = isBlocked(a);
                     return (
                       <label key={a.id} className={`flex items-center gap-3 px-3 py-2 border-b border-slate-100 last:border-0 text-sm ${blocked ? "opacity-50" : ""}`}>
                         <input type="checkbox" disabled={blocked} checked={checked.has(a.id)} onChange={() => toggle(a.id)} />
@@ -105,7 +103,8 @@ export default function HandoverDialog({ open, onOpenChange, t, onDone }) {
                           {a.name} <span className="font-mono text-xs text-slate-500">({a.asset_tag})</span>
                         </span>
                         <span className="text-xs text-slate-500">
-                          {pendingIds.has(a.id) ? t("ho_waiting")
+                          {a.pending_assignment ? t("ho_waiting")
+                            : !a.is_class_asset ? t("cr_personal_stays")
                             : a.assigned_to_name ? t("ho_current").replace("{name}", ownerName(a.assigned_to_name)) : ""}
                         </span>
                       </label>
@@ -121,7 +120,7 @@ export default function HandoverDialog({ open, onOpenChange, t, onDone }) {
           </div>
         </div>
         <DialogFooter>
-          <Button disabled={busy || !toId || checked.size === 0} onClick={submit} className="rounded-none bg-slate-900" data-testid="ho-submit">
+          <Button disabled={busy || !roomId || !toId || checked.size === 0} onClick={submit} className="rounded-none bg-slate-900" data-testid="ho-submit">
             {t("ho_submit")} ({checked.size})
           </Button>
         </DialogFooter>

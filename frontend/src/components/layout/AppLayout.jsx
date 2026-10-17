@@ -18,6 +18,7 @@ import {
   ScrollText,
   UserCheck,
   ListChecks,
+  School,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import api from "../../lib/api";
@@ -29,6 +30,7 @@ const NAV_LINKS = [
   { to: "/assets", labelKey: "nav_assets", icon: Boxes, testid: "nav-assets" },
   { to: "/my-assets", labelKey: "nav_my_assets", icon: UserCheck, testid: "nav-my-assets", badge: "pendingMine" },
   { to: "/user-assets", labelKey: "nav_user_assets", icon: ListChecks, testid: "nav-user-assets", adminOnly: true },
+  { to: "/classrooms", labelKey: "nav_classrooms", icon: School, testid: "nav-classrooms" },
   { to: "/faults", labelKey: "nav_faults", icon: Wrench, testid: "nav-faults" },
   { to: "/compliance", labelKey: "nav_compliance", icon: ShieldCheck, testid: "nav-compliance" },
   { to: "/transfer-requests", labelKey: "nav_transfer_requests", icon: ArrowRightLeft, testid: "nav-transfers", badge: "pendingTransfers" },
