@@ -457,6 +457,9 @@ export const translations = {
     report_faults_desc: "All fault reports with status, severity, reporter, and resolution notes.",
     report_compliance: "Compliance Register",
     report_compliance_desc: "All compliance checks with due dates, status, and category.",
+    report_fully_depreciated: "Fully Depreciated Assets",
+    report_fully_depreciated_desc: "Assets still in use that have reached the end of their useful life — candidates for review or replacement.",
+    life_hint: "Suggested for this category: {n} years. You can change it.",
     report_ownership: "Ownership History",
     report_ownership_desc: "Complete audit trail of asset ownership changes across both campuses.",
 
@@ -1107,6 +1110,9 @@ export const translations = {
     report_faults_desc: "Semua laporan kerusakan dengan status, tingkat keparahan, pelapor, dan catatan penyelesaian.",
     report_compliance: "Daftar Kepatuhan",
     report_compliance_desc: "Semua pemeriksaan kepatuhan dengan tanggal jatuh tempo, status, dan kategori.",
+    report_fully_depreciated: "Aset Habis Disusutkan",
+    report_fully_depreciated_desc: "Aset yang masih dipakai tetapi sudah melewati umur manfaatnya — kandidat untuk ditinjau atau diganti.",
+    life_hint: "Saran untuk kategori ini: {n} tahun. Dapat diubah.",
     report_ownership: "Riwayat Kepemilikan",
     report_ownership_desc: "Jejak audit lengkap perubahan kepemilikan aset di kedua kampus.",
 

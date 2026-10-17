@@ -1083,6 +1083,12 @@ VALID_CATEGORIES = [
     "IT Equipment", "AV Equipment", "Furniture", "Lab Equipment",
     "Vehicles", "Books", "Sports", "Music Equipment", "Other",
 ]
+# Suggested useful life (years) per category. Used when a CSV/Excel import leaves the column empty;
+# the New Asset form mirrors this table (frontend/src/pages/AssetFormPage.jsx) - keep them in sync.
+DEFAULT_USEFUL_LIFE = {
+    "IT Equipment": 4, "AV Equipment": 5, "Furniture": 8, "Lab Equipment": 8, "Vehicles": 8,
+    "Books": 5, "Sports": 5, "Music Equipment": 8, "Other": 5,
+}
 VALID_STATUSES = ["active", "in_repair", "retired", "lost"]
 VALID_CAMPUSES = ["YPJ Kuala Kencana", "YPJ Tembagapura", ""]
 
@@ -1347,8 +1353,8 @@ async def bulk_import_assets(
             price_s   = (row.get("purchase_price") or "0").strip()
             price     = float(price_s) if price_s else 0.0
             pdate     = (row.get("purchase_date") or "").strip() or None
-            life_s    = (row.get("useful_life_years") or "5").strip()
-            life      = int(life_s) if life_s else 5
+            life_s    = (row.get("useful_life_years") or "").strip()
+            life      = int(life_s) if life_s else DEFAULT_USEFUL_LIFE.get(cat, 5)
             wdate     = (row.get("warranty_end_date") or "").strip() or None
             serial    = (row.get("serial_number") or "").strip()
             supplier  = (row.get("supplier") or "").strip()
@@ -1990,6 +1996,55 @@ async def report_depreciation(_: dict = Depends(admin_required)):
         ])
     today = datetime.now().strftime("%Y%m%d")
     return _xlsx_response(wb, f"depreciation-schedule-{today}.xlsx")
+
+
+def _add_years(d, n: int):
+    try:
+        return d.replace(year=d.year + n)
+    except ValueError:                      # 29 Feb -> 28 Feb in a non-leap year
+        return d.replace(year=d.year + n, day=28)
+
+
+@api.get("/reports/fully-depreciated")
+async def report_fully_depreciated(_: dict = Depends(admin_required)):
+    """Assets still on the books (not retired / lost) that have reached the end of their useful life."""
+    import openpyxl
+    conn = get_conn()
+    rows = [dict(r) for r in conn.execute("SELECT * FROM assets ORDER BY name").fetchall()]
+    conn.close()
+    today = datetime.now(LOCAL_TZ).date()
+    out = []
+    for d in rows:
+        if d.get("status") in ("retired", "lost") or (d.get("purchase_price") or 0) <= 0:
+            continue
+        pd = _parse_day(d.get("purchase_date"))
+        life = int(d.get("useful_life_years") or 5)
+        if not pd:
+            continue
+        end = _add_years(pd, max(life, 1))
+        if end > today:
+            continue
+        dep = calc_depreciation(d["purchase_price"], d["purchase_date"], life, d.get("residual_value") or 0)
+        out.append((d, end, round((today - end).days / 365.25, 1), dep))
+    out.sort(key=lambda x: (-x[2], x[0]["name"]))
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Fully Depreciated"
+    ws.append(["Asset Name", "Tag", "Category", "Campus", "Room/Location", "Status", "Assigned To",
+               "Purchase Date", "Useful Life (yrs)", "Fully Depreciated On", "Years Past End of Life",
+               "Purchase Price (USD)", "Residual Value (USD)", "Current Book Value (USD)"])
+    _style_header(ws)
+    for d, end, past, dep in out:
+        ws.append([
+            d["name"], d["asset_tag"], d["category"], d.get("campus") or "", d.get("location") or "",
+            d["status"], d.get("assigned_to_name") or "", d["purchase_date"][:10],
+            int(d.get("useful_life_years") or 5), end.isoformat(), past,
+            d["purchase_price"], d.get("residual_value") or 0, round(dep["current_value"], 2),
+        ])
+    for col in ws.columns:
+        ws.column_dimensions[col[0].column_letter].width = min(max((len(str(c.value or "")) for c in col), default=10) + 4, 40)
+    return _xlsx_response(wb, f"fully-depreciated-{datetime.now().strftime('%Y%m%d')}.xlsx")
 
 
 @api.get("/reports/faults")

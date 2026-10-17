@@ -42,15 +42,22 @@ const extrasFromAsset = (a) => {
   return out;
 };
 
+// Suggested useful life (years) per category - mirrors DEFAULT_USEFUL_LIFE in backend/server.py
+const DEFAULT_USEFUL_LIFE = {
+  "IT Equipment": 4, "AV Equipment": 5, "Furniture": 8, "Lab Equipment": 8, "Vehicles": 8,
+  "Books": 5, "Sports": 5, "Music Equipment": 8, "Other": 5,
+};
+
 const FIELD_CLS = "mt-2 rounded-none border-slate-300";
 
-function TextField({ label, value, onChange, testid, mono, required, placeholder, type = "text", span2, step, min }) {
+function TextField({ label, value, onChange, testid, mono, required, placeholder, type = "text", span2, step, min, hint }) {
   return (
     <div className={span2 ? "md:col-span-2" : ""}>
       <Label className="label-mono">{label}</Label>
       <Input type={type} step={step} min={min} value={value ?? ""} required={required}
         placeholder={placeholder} onChange={(e) => onChange(e.target.value)}
         className={`${FIELD_CLS} ${mono ? "font-mono" : ""}`} data-testid={testid} />
+      {hint && <p className="mt-1.5 text-xs text-slate-400">{hint}</p>}
     </div>
   );
 }
@@ -132,12 +139,14 @@ export default function AssetFormPage() {
   const [photoUploading, setPhotoUploading] = useState(false);
   const [pdfUploading, setPdfUploading] = useState(false);
   const [photoPreview, setPhotoPreview] = useState(null);
+  // Once the user types a useful life themselves, changing the category no longer overrides it
+  const lifeTouched = useRef(false);
 
   const [form, setForm] = useState({
     name: "", asset_tag: "", category: "IT Equipment", asset_type: "School Asset", description: "",
     campus: "", location: "", status: "active", purchase_price: "",
     purchase_date: new Date().toISOString().split("T")[0],
-    useful_life_years: 5, warranty_end_date: "", serial_number: "",
+    useful_life_years: DEFAULT_USEFUL_LIFE["IT Equipment"], warranty_end_date: "", serial_number: "",
     supplier: "", assigned_to_name: "", photo_path: null, documents: [],
     ...extrasFromAsset({}),
   });
@@ -291,7 +300,10 @@ export default function AssetFormPage() {
             required span2 testid="asset-name-input"/>
           <div>
             <Label className="label-mono">{t("col_category")}</Label>
-            <Select value={form.category} onValueChange={(v)=>update("category",v)}>
+            <Select value={form.category} onValueChange={(v)=>{
+              update("category", v);
+              if (!isEdit && !lifeTouched.current) update("useful_life_years", DEFAULT_USEFUL_LIFE[v] ?? 5);
+            }}>
               <SelectTrigger className={FIELD_CLS} data-testid="asset-category-select">
                 <SelectValue/>
               </SelectTrigger>
@@ -426,7 +438,8 @@ export default function AssetFormPage() {
         {/* Section 7: Financials */}
         <Section title={t("section_financials")}>
           <TextField label={t("useful_life")} type="number" min="1" value={form.useful_life_years}
-            onChange={(v)=>update("useful_life_years",v)} required testid="asset-life-input"/>
+            onChange={(v)=>{ lifeTouched.current = true; update("useful_life_years", v); }} required testid="asset-life-input"
+            hint={t("life_hint").replace("{n}", DEFAULT_USEFUL_LIFE[form.category] ?? 5)}/>
           <MoneyField label={t("residual_value")} usd={form.residual_value} min="0"
             onChangeUsd={(v)=>update("residual_value",v)} testid="asset-residual-input"/>
         </Section>

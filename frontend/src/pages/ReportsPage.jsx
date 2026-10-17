@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useLang } from "../context/LangContext";
 import api, { formatErr } from "../lib/api";
 import { toast } from "sonner";
-import { Package, TrendingDown, Wrench, ShieldCheck, ArrowLeftRight, FileSpreadsheet } from "lucide-react";
+import { Package, TrendingDown, Wrench, ShieldCheck, ArrowLeftRight, FileSpreadsheet, Hourglass } from "lucide-react";
 
 const REPORTS = [
   {
@@ -18,6 +18,13 @@ const REPORTS = [
     icon: TrendingDown,
     titleKey: "report_depreciation",
     descKey: "report_depreciation_desc",
+  },
+  {
+    key: "fully_depreciated",
+    endpoint: "/reports/fully-depreciated",
+    icon: Hourglass,
+    titleKey: "report_fully_depreciated",
+    descKey: "report_fully_depreciated_desc",
   },
   {
     key: "faults",
