@@ -1553,6 +1553,64 @@ async def download_file(path: str, request: Request, auth: Optional[str] = Query
 
 
 # ---- Assets ----
+# ---- Staff access rules ----
+# Staff see only assets of their own campus (plus anything assigned to them), may report faults / request transfers
+# only for assets they hold (or have on loan), and may borrow only "shared" assets nobody holds personally.
+def is_admin_user(user: dict) -> bool:
+    return user.get("role") in ADMIN_ROLES
+
+
+def asset_scope(user: dict, prefix: str = "") -> tuple:
+    """(sql_condition, params) limiting an assets query to what this user may see; ("", []) for admins."""
+    if is_admin_user(user):
+        return "", []
+    campus = (user.get("campus") or "").strip()
+    if campus:
+        return f"({prefix}campus = ? OR {prefix}assigned_to_user_id = ?)", [campus, user["id"]]
+    return f"({prefix}assigned_to_user_id = ?)", [user["id"]]
+
+
+def can_view_asset(user: dict, asset: dict) -> bool:
+    if is_admin_user(user):
+        return True
+    campus = (user.get("campus") or "").strip()
+    return asset.get("assigned_to_user_id") == user["id"] or bool(campus and asset.get("campus") == campus)
+
+
+def has_active_loan(conn, user: dict, asset_id: str) -> bool:
+    return bool(conn.execute("SELECT 1 FROM loan_requests WHERE asset_id = ? AND requested_by = ? AND status = 'active' LIMIT 1",
+                             (asset_id, user["id"])).fetchone())
+
+
+def loan_block_reason(user: dict, asset: dict):
+    """None when this user may request a loan on the asset, else a user-facing reason (Indonesian)."""
+    if is_admin_user(user):
+        return None
+    if not can_view_asset(user, asset):
+        return "Aset ini bukan di kampus Anda."
+    if (asset.get("user_type") or "") != "shared":
+        return "Hanya aset kategori Bersama (Shared) yang dapat dipinjam, misalnya laptop, kamera, atau perangkat di Lab Komputer."
+    if asset.get("status") != "active":
+        return "Aset ini sedang tidak aktif dan tidak dapat dipinjam."
+    holder_id, holder = asset.get("assigned_to_user_id"), (asset.get("assigned_to_name") or "").strip()
+    if holder_id == user["id"]:
+        return "Aset ini sudah di-assign kepada Anda."
+    if (holder_id or holder) and (asset.get("assignment_kind") or "personal") == "personal":
+        return "Aset ini di-assign personal kepada pengguna lain dan tidak dapat dipinjam."
+    return None
+
+
+def asset_permissions(conn, user: dict, asset: dict) -> dict:
+    admin = is_admin_user(user)
+    holder = asset.get("assigned_to_user_id") == user["id"]
+    return {
+        "can_report": admin or holder or has_active_loan(conn, user, asset["id"]),
+        "can_transfer": admin or holder,
+        "can_loan": loan_block_reason(user, asset) is None,
+        "loan_block_reason": loan_block_reason(user, asset),
+    }
+
+
 @api.get("/assets")
 async def list_assets(
     user: dict = Depends(get_current_user),
@@ -1585,6 +1643,10 @@ async def list_assets(
         conditions.append("(name LIKE ? OR asset_tag LIKE ? OR serial_number LIKE ?)")
         like = f"%{search}%"
         params.extend([like, like, like])
+    sc, sp = asset_scope(user)
+    if sc:
+        conditions.append(sc)
+        params.extend(sp)
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     rows = conn.execute(f"SELECT * FROM assets {where} ORDER BY created_at DESC", params).fetchall()
     conn.close()
@@ -1595,7 +1657,7 @@ async def list_assets(
 
 
 @api.post("/assets")
-async def create_asset(body: AssetIn, user: dict = Depends(get_current_user)):
+async def create_asset(body: AssetIn, user: dict = Depends(admin_required)):
     aid = str(uuid.uuid4())
     ts = now_iso()
     conn = get_conn()
@@ -1773,6 +1835,8 @@ async def export_assets(
     if campus:      conditions.append("campus = ?");                params.append(campus)
     if location:    conditions.append("location = ?");              params.append(location)
     if assigned_to: conditions.append("assigned_to_user_id = ?");   params.append(assigned_to)
+    _sc, _sp = asset_scope(user)
+    if _sc:         conditions.append(_sc);                         params.extend(_sp)
     if search:
         conditions.append("(name LIKE ? OR asset_tag LIKE ? OR serial_number LIKE ?)")
         like = f"%{search}%"
@@ -1985,6 +2049,10 @@ async def get_asset(aid: str, user: dict = Depends(get_current_user)):
         conn.close()
         raise HTTPException(404, "Asset not found")
     asset = row_to_dict(row)
+    if not can_view_asset(user, asset):
+        conn.close()
+        raise HTTPException(403, "Aset ini bukan di kampus Anda.")
+    asset["permissions"] = asset_permissions(conn, user, asset)
     asset["depreciation"] = calc_depreciation(asset["purchase_price"], asset["purchase_date"], asset.get("useful_life_years", 5), asset.get("residual_value") or 0)
     asset["ownership_history"] = [
         dict(r) for r in conn.execute("SELECT * FROM ownership_logs WHERE asset_id = ? ORDER BY at DESC", (aid,)).fetchall()
@@ -2001,7 +2069,7 @@ async def get_asset(aid: str, user: dict = Depends(get_current_user)):
 
 
 @api.put("/assets/{aid}")
-async def update_asset(aid: str, body: AssetUpdate, user: dict = Depends(get_current_user)):
+async def update_asset(aid: str, body: AssetUpdate, user: dict = Depends(admin_required)):
     updates = {k: v for k, v in body.model_dump(exclude_none=True).items()}
     if not updates:
         raise HTTPException(400, "No fields to update")
@@ -2036,7 +2104,7 @@ async def delete_asset(aid: str, _: dict = Depends(admin_required)):
 
 
 @api.post("/assets/{aid}/transfer")
-async def transfer_asset(aid: str, body: TransferIn, user: dict = Depends(get_current_user)):
+async def transfer_asset(aid: str, body: TransferIn, user: dict = Depends(admin_required)):
     conn = get_conn()
     row = conn.execute("SELECT * FROM assets WHERE id = ?", (aid,)).fetchone()
     if not row:
@@ -2077,10 +2145,13 @@ async def transfer_asset(aid: str, body: TransferIn, user: dict = Depends(get_cu
 @api.get("/faults")
 async def list_faults(user: dict = Depends(get_current_user), status: Optional[str] = None):
     conn = get_conn()
+    sc, sp = asset_scope(user)
+    conds, params = [], []
     if status:
-        rows = conn.execute("SELECT * FROM faults WHERE status = ? ORDER BY created_at DESC", (status,)).fetchall()
-    else:
-        rows = conn.execute("SELECT * FROM faults ORDER BY created_at DESC").fetchall()
+        conds.append("status = ?"); params.append(status)
+    if sc:
+        conds.append(f"(reported_by = ? OR asset_id IN (SELECT id FROM assets WHERE {sc}))"); params += [user["id"]] + sp
+    rows = conn.execute("SELECT * FROM faults" + (" WHERE " + " AND ".join(conds) if conds else "") + " ORDER BY created_at DESC", params).fetchall()
     faults = [dict(r) for r in rows]
     for f in faults:
         a = conn.execute("SELECT name, asset_tag FROM assets WHERE id = ?", (f["asset_id"],)).fetchone()
@@ -2093,10 +2164,13 @@ async def list_faults(user: dict = Depends(get_current_user), status: Optional[s
 @api.post("/faults")
 async def create_fault(body: FaultIn, user: dict = Depends(get_current_user)):
     conn = get_conn()
-    a = conn.execute("SELECT id FROM assets WHERE id = ?", (body.asset_id,)).fetchone()
+    a = conn.execute("SELECT * FROM assets WHERE id = ?", (body.asset_id,)).fetchone()
     if not a:
         conn.close()
         raise HTTPException(404, "Asset not found")
+    if not asset_permissions(conn, user, dict(a))["can_report"]:
+        conn.close()
+        raise HTTPException(403, "Anda hanya dapat melaporkan kerusakan untuk aset yang di-assign kepada Anda atau sedang Anda pinjam.")
     fid = str(uuid.uuid4())
     ts = now_iso()
     conn.execute("""
@@ -2112,7 +2186,7 @@ async def create_fault(body: FaultIn, user: dict = Depends(get_current_user)):
 
 
 @api.put("/faults/{fid}")
-async def update_fault(fid: str, body: FaultUpdate, user: dict = Depends(get_current_user)):
+async def update_fault(fid: str, body: FaultUpdate, user: dict = Depends(admin_required)):
     updates = {k: v for k, v in body.model_dump(exclude_none=True).items()}
     if updates.get("status") == "resolved":
         updates["resolved_at"] = now_iso()
@@ -2133,7 +2207,9 @@ async def update_fault(fid: str, body: FaultUpdate, user: dict = Depends(get_cur
 @api.get("/compliance")
 async def list_compliance(user: dict = Depends(get_current_user)):
     conn = get_conn()
-    rows = conn.execute("SELECT * FROM compliance ORDER BY due_date ASC").fetchall()
+    sc, sp = asset_scope(user)
+    rows = conn.execute("SELECT * FROM compliance" + (f" WHERE (asset_id IS NULL OR asset_id = '' OR asset_id IN (SELECT id FROM assets WHERE {sc}))" if sc else "")
+                        + " ORDER BY due_date ASC", sp).fetchall()
     items = [dict(r) for r in rows]
     today = datetime.now(timezone.utc)
     for c in items:
@@ -2199,7 +2275,7 @@ async def delete_compliance(cid: str, _: dict = Depends(admin_required)):
 # ---- Activity log ----
 @api.get("/activity")
 async def get_activity(
-    _: dict = Depends(get_current_user),
+    _: dict = Depends(admin_required),
     page: int = Query(1, ge=1),
     limit: int = Query(30, ge=1, le=100),
     event_type: Optional[str] = None,
@@ -2312,7 +2388,8 @@ async def get_activity(
 @api.get("/dashboard/stats")
 async def dashboard_stats(user: dict = Depends(get_current_user)):
     conn = get_conn()
-    rows = conn.execute("SELECT * FROM assets").fetchall()
+    sc, sp = asset_scope(user)
+    rows = conn.execute("SELECT * FROM assets" + (" WHERE " + sc if sc else ""), sp).fetchall()
     assets = [row_to_dict(r) for r in rows]
     total_assets = len(assets)
     total_value = sum(a.get("purchase_price", 0) for a in assets)
@@ -2344,10 +2421,12 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
         except Exception:
             pass
 
+    fscope = f" AND asset_id IN (SELECT id FROM assets WHERE {sc})" if sc else ""
     open_faults = conn.execute(
-        "SELECT COUNT(*) FROM faults WHERE status IN ('open','in_progress')"
+        "SELECT COUNT(*) FROM faults WHERE status IN ('open','in_progress')" + fscope, sp
     ).fetchone()[0]
-    recent_fault_rows = conn.execute("SELECT * FROM faults ORDER BY created_at DESC LIMIT 5").fetchall()
+    recent_fault_rows = conn.execute(
+        "SELECT * FROM faults" + (f" WHERE asset_id IN (SELECT id FROM assets WHERE {sc})" if sc else "") + " ORDER BY created_at DESC LIMIT 5", sp).fetchall()
     recent_faults = []
     for f in recent_fault_rows:
         fd = dict(f)
@@ -2355,7 +2434,8 @@ async def dashboard_stats(user: dict = Depends(get_current_user)):
         fd["asset_name"] = a["name"] if a else "(deleted)"
         recent_faults.append(fd)
 
-    compliance_rows = conn.execute("SELECT * FROM compliance").fetchall()
+    compliance_rows = conn.execute(
+        "SELECT * FROM compliance" + (f" WHERE asset_id IN (SELECT id FROM assets WHERE {sc})" if sc else ""), sp).fetchall()
     overdue = 0
     upcoming = 0
     for c in compliance_rows:
@@ -2419,10 +2499,13 @@ class TransferRequestIn(BaseModel):
 @api.post("/transfer-requests")
 async def create_transfer_request(asset_id: str, body: TransferRequestIn, user: dict = Depends(get_current_user)):
     conn = get_conn()
-    asset = conn.execute("SELECT id, name, asset_tag, assigned_to_name FROM assets WHERE id = ?", (asset_id,)).fetchone()
+    asset = conn.execute("SELECT id, name, asset_tag, assigned_to_name, assigned_to_user_id FROM assets WHERE id = ?", (asset_id,)).fetchone()
     if not asset:
         conn.close()
         raise HTTPException(404, "Asset not found")
+    if not is_admin_user(user) and asset["assigned_to_user_id"] != user["id"]:
+        conn.close()
+        raise HTTPException(403, "Anda hanya dapat meminta transfer untuk aset yang di-assign kepada Anda.")
     require_user(conn, body.new_owner_user_id, body.new_owner_name)
     rid = str(uuid.uuid4())
     conn.execute("""
@@ -3213,10 +3296,14 @@ class LoanRequestIn(BaseModel):
 @api.post("/assets/{aid}/loan-request")
 async def create_loan_request(aid: str, body: LoanRequestIn, user: dict = Depends(get_current_user)):
     conn = get_conn()
-    asset = conn.execute("SELECT id,name,asset_tag FROM assets WHERE id = ?", (aid,)).fetchone()
+    asset = conn.execute("SELECT * FROM assets WHERE id = ?", (aid,)).fetchone()
     if not asset:
         conn.close()
         raise HTTPException(404, "Asset not found")
+    why = loan_block_reason(user, dict(asset))
+    if why:
+        conn.close()
+        raise HTTPException(403, why)
     rid = str(uuid.uuid4())
     ts = now_iso()
     conn.execute(

@@ -79,8 +79,12 @@ export default function AssetDetailPage() {
   };
 
   const isAdmin = isAdminRole(user?.role);
-  // Staff can only act on assets in their own campus
-  const canActOnAsset = isAdmin || !asset || !user?.campus || !asset.campus || user.campus === asset.campus;
+  // What this user may do with the asset is decided by the server (asset.permissions): staff may report / transfer
+  // only assets assigned to them (or on loan to them) and borrow only free "shared" assets.
+  const perms = asset?.permissions || {};
+  const canReport = isAdmin || !!perms.can_report;
+  const canTransferAsset = isAdmin || !!perms.can_transfer;
+  const canLoan = isAdmin || !!perms.can_loan;
 
   // Load users + rooms when transfer dialog opens; lock campus for staff
   useEffect(() => {
@@ -222,9 +226,15 @@ export default function AssetDetailPage() {
             {asset.name}
           </h1>
           <div className="text-sm text-slate-500 mt-2">{asset.description}</div>
+          {!isAdmin && (
+            <div className="mt-3 text-xs text-slate-500 bg-slate-100 border border-slate-200 px-3 py-2 max-w-xl" data-testid="staff-view-note">
+              {t("staff_view_only")}
+              {!canLoan && perms.loan_block_reason ? <div className="mt-1 text-slate-600">{perms.loan_block_reason}</div> : null}
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2">
-          {canActOnAsset && <Dialog open={faultOpen} onOpenChange={setFaultOpen}>
+          {canReport && <Dialog open={faultOpen} onOpenChange={setFaultOpen}>
             <DialogTrigger asChild>
               <Button variant="outline" className="rounded-none" data-testid="report-fault-button">
                 <Wrench className="w-4 h-4 mr-2" strokeWidth={1.75}/> {t("report_fault")}
@@ -257,7 +267,7 @@ export default function AssetDetailPage() {
             </DialogContent>
           </Dialog>}
 
-          {canActOnAsset && <Dialog open={transferOpen} onOpenChange={setTransferOpen}>
+          {canTransferAsset && <Dialog open={transferOpen} onOpenChange={setTransferOpen}>
             <DialogTrigger asChild>
               <Button variant="outline" className="rounded-none" data-testid="transfer-button">
                 <ArrowRightLeft className="w-4 h-4 mr-2" strokeWidth={1.75}/> {t("transfer")}
@@ -360,7 +370,7 @@ export default function AssetDetailPage() {
             </DialogContent>
           </Dialog>}
 
-          {canActOnAsset && <Dialog open={loanOpen} onOpenChange={setLoanOpen}>
+          {canLoan && <Dialog open={loanOpen} onOpenChange={setLoanOpen}>
             <DialogTrigger asChild>
               <Button variant="outline" className="rounded-none" data-testid="loan-request-button">
                 <BookOpen className="w-4 h-4 mr-2" strokeWidth={1.75}/> {t("loan_request")}
