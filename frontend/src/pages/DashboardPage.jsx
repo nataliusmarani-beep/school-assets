@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
-import api, { fmtCurrency, fmtDate } from "../lib/api";
+import api, { fmtCurrency, fmtDate, formatErr } from "../lib/api";
+import { Button } from "../components/ui/button";
+import { toast } from "sonner";
 import { useLang } from "../context/LangContext";
 import { useAuth } from "../context/AuthContext";
 import {
   Boxes, CircleDollarSign, TrendingDown, Wrench,
-  ShieldAlert, CalendarClock, ArrowUpRight,
+  ShieldAlert, CalendarClock, ArrowUpRight, Mail,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
@@ -31,10 +33,27 @@ export default function DashboardPage() {
   const isAdmin = user?.role === "admin";
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
 
   useEffect(() => {
     api.get("/dashboard/stats").then((r) => setStats(r.data)).finally(() => setLoading(false));
   }, []);
+
+  const sendReminders = async () => {
+    if (!window.confirm(t("due_send_confirm"))) return;
+    setSending(true);
+    try {
+      const { data } = await api.post("/reminders/send-now");
+      if (!data.items) toast.info(t("due_send_none"));
+      else if (!data.email_configured) toast.error(t("due_send_no_email"));
+      else if (!data.emails) toast.error(t("due_send_no_recipients"));
+      else toast.success(t("due_sent").replace("{items}", data.items).replace("{emails}", data.emails));
+    } catch (err) {
+      toast.error(formatErr(err));
+    } finally {
+      setSending(false);
+    }
+  };
 
   if (loading) return (
     <div className="p-8 text-sm text-slate-500" data-testid="dashboard-loading">{t("loading")}</div>
@@ -124,8 +143,19 @@ export default function DashboardPage() {
 
       {/* Inspections & maintenance due */}
       <div className="bg-white border border-slate-200 p-6 mb-6" data-testid="due-items-card">
-        <div className="label-mono mb-1">{t("action_required")}</div>
-        <h2 className="font-display text-xl font-medium text-slate-900 mb-5">{t("due_title")}</h2>
+        <div className="flex items-start justify-between gap-4 mb-5">
+          <div>
+            <div className="label-mono mb-1">{t("action_required")}</div>
+            <h2 className="font-display text-xl font-medium text-slate-900">{t("due_title")}</h2>
+          </div>
+          {isAdmin && (
+            <Button type="button" variant="outline" onClick={sendReminders} disabled={sending}
+              className="rounded-none shrink-0" data-testid="send-reminders-button">
+              <Mail className="w-3.5 h-3.5 mr-2" strokeWidth={1.75} />
+              {sending ? t("due_sending") : t("due_send_now")}
+            </Button>
+          )}
+        </div>
         {(!stats.due_items || stats.due_items.length === 0) ? (
           <div className="text-sm text-slate-500">{t("due_none")}</div>
         ) : (
