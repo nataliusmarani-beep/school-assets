@@ -606,6 +606,17 @@ def _send_via_resend(to_addr: str, subject: str, body_html: str, cc: list) -> No
     }
     if cc:
         payload["cc"] = cc
+    # Embed the logo inline (CID) so Outlook shows it without "download pictures" prompts.
+    try:
+        logo_url = _email_logo_url()
+        if logo_url and logo_url in body_html:
+            import base64
+            f = next((BUILD_DIR / "static" / "media").glob("ypj-logo*.png"))
+            payload["html"] = body_html.replace(logo_url, "cid:ypjlogo")
+            payload["attachments"] = [{"filename": "ypj-logo.png", "content_id": "ypjlogo",
+                                       "content": base64.b64encode(f.read_bytes()).decode()}]
+    except Exception as exc:
+        logger.warning("Inline logo skipped: %s", exc)
     req = urllib.request.Request(
         "https://api.resend.com/emails", data=_json.dumps(payload).encode(), method="POST",
         headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json",
