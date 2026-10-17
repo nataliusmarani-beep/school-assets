@@ -15,6 +15,7 @@ import time
 import threading
 import urllib.request
 import smtplib
+import socket
 from email.utils import formataddr
 import bcrypt
 import jwt
@@ -574,6 +575,20 @@ def calc_depreciation(purchase_price: float, purchase_date: str, useful_life_yea
 
 
 # ---- Email helper ----
+class _SMTP4(smtplib.SMTP):
+    """SMTP over IPv4 only (Railway has no outbound IPv6 route -> Errno 101)."""
+    def _get_socket(self, host, port, timeout):
+        ip = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)[0][4][0]
+        return socket.create_connection((ip, port), timeout, self.source_address)
+
+
+class _SMTP4_SSL(smtplib.SMTP_SSL):
+    def _get_socket(self, host, port, timeout):
+        ip = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)[0][4][0]
+        sock = socket.create_connection((ip, port), timeout, self.source_address)
+        return self.context.wrap_socket(sock, server_hostname=self._host)
+
+
 def email_configured() -> bool:
     return bool(SMTP_HOST and SMTP_USER and SMTP_PASSWORD)
 
@@ -614,9 +629,9 @@ def send_email(to_addr: str, subject: str, body_html: str, cc: list = None) -> b
         msg.attach(MIMEText(body_html, "html", "utf-8"))
         all_recipients = [to_addr] + clean_cc
         if SMTP_PORT == 465:
-            smtp = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=20)
+            smtp = _SMTP4_SSL(SMTP_HOST, SMTP_PORT, timeout=20)
         else:
-            smtp = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20)
+            smtp = _SMTP4(SMTP_HOST, SMTP_PORT, timeout=20)
         with smtp as s:
             s.ehlo()
             if SMTP_PORT != 465:
