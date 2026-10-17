@@ -15,6 +15,7 @@ import time
 import threading
 import urllib.request
 import smtplib
+from email.utils import formataddr
 import bcrypt
 import jwt
 from email.mime.text import MIMEText
@@ -41,11 +42,12 @@ UPLOADS_DIR = DATA_DIR / "uploads"
 UPLOADS_DIR.mkdir(exist_ok=True)
 
 # Email config (set in Railway environment variables)
-SMTP_HOST     = os.environ.get("SMTP_HOST", "")
-SMTP_PORT     = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USER     = os.environ.get("SMTP_USER", "")
-SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+SMTP_PASSWORD = (os.environ.get("SMTP_PASSWORD") or os.environ.get("SMTP_PASS") or "").replace(" ", "")
+SMTP_HOST     = os.environ.get("SMTP_HOST") or ("smtp.gmail.com" if SMTP_USER else "")
+SMTP_PORT     = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_FROM     = os.environ.get("SMTP_FROM", SMTP_USER)
+SMTP_FROM_NAME = os.environ.get("SMTP_FROM_NAME", "YPJ Assets Management")
 APP_URL       = os.environ.get("APP_URL", "https://your-app.railway.app")
 
 # Loan notification recipients (set in Railway environment variables)
@@ -572,29 +574,61 @@ def calc_depreciation(purchase_price: float, purchase_date: str, useful_life_yea
 
 
 # ---- Email helper ----
-def send_email(to_addr: str, subject: str, body_html: str, cc: list = None):
-    """Send an HTML email; cc is an optional list of additional recipients."""
-    if not SMTP_HOST or not SMTP_USER:
-        logger.warning("Email not configured — skipping send to %s", to_addr)
-        return
+def email_configured() -> bool:
+    return bool(SMTP_HOST and SMTP_USER and SMTP_PASSWORD)
+
+
+def _email_shell(body: str) -> str:
+    """Common look for all emails (same style as YPJ KK Inventory)."""
+    return f"""
+  <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:32px 24px;background:#f8fafc">
+    <div style="background:#1a2f5e;padding:16px 24px;border-radius:10px 10px 0 0">
+      <div style="color:white;font-size:18px;font-weight:800">&#127979; YPJ Assets Management</div>
+    </div>
+    <div style="background:white;padding:28px 24px;border-radius:0 0 10px 10px;border:1px solid #e2e8f0;border-top:none">
+      {body}
+      <p style="margin:24px 0 0;"><a href="{APP_URL}" style="background:#1a2f5e;color:#fff;padding:10px 20px;text-decoration:none;border-radius:6px;font-size:14px;font-weight:600">Open Asset Registry</a></p>
+      <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0">
+      <p style="color:#94a3b8;font-size:12px;margin:0">
+        Yayasan Pendidikan Jayawijaya &mdash; Kuala Kencana Campus<br>
+        This is an automated message. Please do not reply directly.
+      </p>
+    </div>
+  </div>"""
+
+
+# ---- Email helper ----
+def send_email(to_addr: str, subject: str, body_html: str, cc: list = None) -> bool:
+    """Send an HTML email through Gmail SMTP (or any SMTP). Returns True on success."""
+    if not email_configured():
+        logger.warning("Email not configured (SMTP_USER / SMTP_PASSWORD) — skipping send to %s", to_addr)
+        return False
     try:
         clean_cc = [a for a in (cc or []) if a and a != to_addr]
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
-        msg["From"]    = SMTP_FROM or SMTP_USER
+        msg["From"]    = formataddr((SMTP_FROM_NAME, SMTP_FROM or SMTP_USER))
         msg["To"]      = to_addr
         if clean_cc:
             msg["Cc"] = ", ".join(clean_cc)
-        msg.attach(MIMEText(body_html, "html"))
+        msg.attach(MIMEText(body_html, "html", "utf-8"))
         all_recipients = [to_addr] + clean_cc
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
+        if SMTP_PORT == 465:
+            smtp = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=20)
+        else:
+            smtp = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20)
+        with smtp as s:
             s.ehlo()
-            s.starttls()
+            if SMTP_PORT != 465:
+                s.starttls()
+                s.ehlo()
             s.login(SMTP_USER, SMTP_PASSWORD)
             s.sendmail(SMTP_FROM or SMTP_USER, all_recipients, msg.as_string())
         logger.info("Email sent to %s (CC: %s) — %s", to_addr, clean_cc, subject)
+        return True
     except Exception as exc:
         logger.error("Email send failed: %s", exc)
+        return False
 
 
 def get_loan_cc(req: dict, conn, extra: list = None) -> list:
@@ -637,28 +671,12 @@ def _loan_html(req: dict, heading: str, detail_lines: list, footer: str = "") ->
         f"<td style='padding:4px 8px;font-weight:500;'>{v}</td></tr>"
         for k, v in detail_lines
     )
-    return f"""
-    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
-      <div style="background:#0f172a;color:#fff;padding:16px 24px;">
-        <strong>YPJ School Assets Management</strong>
-      </div>
-      <div style="padding:24px;">
-        <h2 style="margin-top:0;">{heading}</h2>
-        <table style="border-collapse:collapse;width:100%;margin-bottom:16px;">
+    return _email_shell(f"""
+        <h2 style="margin-top:0;color:#1a2f5e;">{heading}</h2>
+        <table style="border-collapse:collapse;margin:16px 0;font-size:14px;">
           {rows}
         </table>
-        {footer}
-        <p style="margin-top:24px;">
-          <a href="{APP_URL}" style="background:#0f172a;color:#fff;padding:10px 20px;text-decoration:none;">
-            Open Asset Registry
-          </a>
-        </p>
-      </div>
-      <div style="background:#f8fafc;padding:12px 24px;font-size:12px;color:#94a3b8;">
-        YPJ School Assets Management &mdash; automated notification
-      </div>
-    </div>
-    """
+        {footer}""")
 
 
 # ---- Scheduler: return-date reminders ----
@@ -754,30 +772,17 @@ def _reminder_html(campus: str, items: list) -> str:
         f"</tr>"
         for i in items
     )
-    return f"""
-    <div style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;">
-      <div style="background:#0f172a;color:#fff;padding:16px 24px;">
-        <strong>YPJ School Assets Management</strong>
-      </div>
-      <div style="padding:24px;">
-        <h2 style="margin-top:0;">Asset due-date reminder{f' — {_h.escape(campus)}' if campus else ''}</h2>
-        <table style="border-collapse:collapse;width:100%;margin-bottom:16px;font-size:14px;">
-          <tr style="text-align:left;color:#64748b;font-size:12px;">
-            <th style="padding:6px 8px;">Type</th><th style="padding:6px 8px;">Asset</th><th style="padding:6px 8px;">Due</th>
+    return _email_shell(f"""
+        <h2 style="margin-top:0;color:#1a2f5e;">Asset due-date reminder{f' — {_h.escape(campus)}' if campus else ''}</h2>
+        <div style="background:#fffbeb;border-left:4px solid #d97706;padding:12px 16px;border-radius:4px;font-size:13px;color:#92400e;margin-bottom:16px">
+          &#9888;&#65039; The following assets need attention.
+        </div>
+        <table style="border-collapse:collapse;width:100%;font-size:14px;">
+          <tr style="background:#f1f5f9;text-align:left;color:#475569;font-size:12px;">
+            <th style="padding:8px;">Type</th><th style="padding:8px;">Asset</th><th style="padding:8px;">Due</th>
           </tr>
           {rows}
-        </table>
-        <p style="margin-top:24px;">
-          <a href="{APP_URL}" style="background:#0f172a;color:#fff;padding:10px 20px;text-decoration:none;">
-            Open Asset Registry
-          </a>
-        </p>
-      </div>
-      <div style="background:#f8fafc;padding:12px 24px;font-size:12px;color:#94a3b8;">
-        YPJ School Assets Management &mdash; automated notification
-      </div>
-    </div>
-    """
+        </table>""")
 
 
 def send_asset_due_reminders(force: bool = False, today=None) -> dict:
@@ -804,7 +809,7 @@ def send_asset_due_reminders(force: bool = False, today=None) -> dict:
     for it in picked:
         by_campus.setdefault(it["campus"], []).append(it)
 
-    configured = bool(SMTP_HOST and SMTP_USER)
+    configured = email_configured()
     sent = 0
     for campus, group in by_campus.items():
         recipients = [a for a in CAMPUS_HEAD_EMAILS.get(campus, []) if a]
