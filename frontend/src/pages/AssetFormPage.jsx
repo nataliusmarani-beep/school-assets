@@ -200,8 +200,8 @@ export default function AssetFormPage() {
     return res.data;
   };
 
-  const MAX_PHOTO_BYTES = 500 * 1024;       // 500 KB
-  const MAX_DOC_BYTES   = 2 * 1024 * 1024; // 2 MB
+  const MAX_PHOTO_BYTES = 100 * 1024;       // 100 KB
+  const MAX_DOC_BYTES   = 1024 * 1024;     // 1 MB
 
   const handlePhoto = async (e) => {
     const file = e.target.files?.[0];
