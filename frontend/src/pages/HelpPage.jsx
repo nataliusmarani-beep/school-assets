@@ -3,14 +3,20 @@ import { useLang } from "../context/LangContext";
 import {
   HelpCircle, LayoutDashboard, Plus, Search, ArrowLeftRight,
   Wrench, ShieldCheck, TrendingDown, Users, Upload,
+  FileSignature, BookOpen, CalendarDays, ScanLine, Laptop,
 } from "lucide-react";
 
 const SECTION_IDS = [
   { id: "getting-started",  icon: HelpCircle,      titleKey: "help_s1_title" },
+  { id: "policies",         icon: FileSignature,   titleKey: "help_s11_title" },
   { id: "dashboard",        icon: LayoutDashboard, titleKey: "help_s2_title" },
   { id: "register-asset",   icon: Plus,            titleKey: "help_s3_title" },
   { id: "find-filter",      icon: Search,          titleKey: "help_s4_title" },
   { id: "transfer",         icon: ArrowLeftRight,  titleKey: "help_s5_title" },
+  { id: "loans",            icon: BookOpen,        titleKey: "help_s12_title" },
+  { id: "schedule",         icon: CalendarDays,    titleKey: "help_s13_title" },
+  { id: "qr",               icon: ScanLine,        titleKey: "help_s14_title" },
+  { id: "byod",             icon: Laptop,          titleKey: "help_s15_title" },
   { id: "faults",           icon: Wrench,          titleKey: "help_s6_title" },
   { id: "compliance",       icon: ShieldCheck,     titleKey: "help_s7_title" },
   { id: "depreciation",     icon: TrendingDown,    titleKey: "help_s8_title" },
@@ -134,7 +140,15 @@ export default function HelpPage() {
             <hr className="border-slate-200 mb-6" />
             <P>{t("help_s1_intro")}</P>
             <P><Bold>{t("help_s1_roles_heading")}</Bold></P>
-            <Ul items={[t("help_s1_role_admin"), t("help_s1_role_staff")]} />
+            <Ul items={[t("help_s1_role_admin"), t("help_s1_role_staff"), t("help_s1_role_ict"), t("help_s1_role_leader")]} />
+          </section>
+
+          <section>
+            <SectionHeader id="policies" icon={FileSignature} title={t("help_s11_title")} />
+            <hr className="border-slate-200 mb-6" />
+            <P>{t("help_s11_intro")}</P>
+            <Ol items={[t("help_s11_step1"), t("help_s11_step2"), t("help_s11_step3")]} />
+            <P>{t("help_s11_note")}</P>
           </section>
 
           <section>
@@ -168,6 +182,37 @@ export default function HelpPage() {
             <P>{t("help_s5_intro")}</P>
             <Ol items={[t("help_s5_step1"), t("help_s5_step2"), t("help_s5_step3"), t("help_s5_step4")]} />
             <P>{t("help_s5_note")}</P>
+          </section>
+
+          <section>
+            <SectionHeader id="loans" icon={BookOpen} title={t("help_s12_title")} />
+            <hr className="border-slate-200 mb-6" />
+            <P>{t("help_s12_intro")}</P>
+            <Ol items={[t("help_s12_step1"), t("help_s12_step2"), t("help_s12_step3"), t("help_s12_step4"), t("help_s12_step5"), t("help_s12_step6")]} />
+            <P>{t("help_s12_note")}</P>
+            <P><Bold>{t("help_s12_ict")}</Bold></P>
+          </section>
+
+          <section>
+            <SectionHeader id="schedule" icon={CalendarDays} title={t("help_s13_title")} />
+            <hr className="border-slate-200 mb-6" />
+            <P>{t("help_s13_intro")}</P>
+            <Ul items={[t("help_s13_tip1"), t("help_s13_tip2"), t("help_s13_tip3")]} />
+          </section>
+
+          <section>
+            <SectionHeader id="qr" icon={ScanLine} title={t("help_s14_title")} />
+            <hr className="border-slate-200 mb-6" />
+            <P>{t("help_s14_intro")}</P>
+            <Ul items={[t("help_s14_tip1"), t("help_s14_tip2"), t("help_s14_tip3")]} />
+          </section>
+
+          <section>
+            <SectionHeader id="byod" icon={Laptop} title={t("help_s15_title")} />
+            <hr className="border-slate-200 mb-6" />
+            <P>{t("help_s15_intro")}</P>
+            <Ol items={[t("help_s15_step1"), t("help_s15_step2"), t("help_s15_step3"), t("help_s15_step4")]} />
+            <P>{t("help_s15_note")}</P>
           </section>
 
           <section>
