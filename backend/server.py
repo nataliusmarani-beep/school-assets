@@ -1776,8 +1776,16 @@ async def update_user(uid: str, body: UserPatch, actor: dict = Depends(admin_req
 
 
 # ---- File upload ----
+LOAN_PHOTO_MAX_BYTES = 50 * 1024   # condition photos of the loan module: at most 50 KB each, one before + one after per unit
+
+
+def _check_loan_photo_size(data: bytes):
+    if len(data) > LOAN_PHOTO_MAX_BYTES:
+        raise HTTPException(413, f"Foto kondisi maksimal {LOAN_PHOTO_MAX_BYTES // 1024} KB (ukuran foto ini {len(data) // 1024} KB).")
+
+
 @api.post("/upload")
-async def upload_file(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+async def upload_file(file: UploadFile = File(...), purpose: str = Query(""), user: dict = Depends(get_current_user)):
     ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "bin"
     file_id = str(uuid.uuid4())
     rel_path = f"{user['id']}/{file_id}.{ext}"
@@ -1785,6 +1793,8 @@ async def upload_file(file: UploadFile = File(...), user: dict = Depends(get_cur
     dest.mkdir(exist_ok=True)
     full_path = dest / f"{file_id}.{ext}"
     data = await file.read()
+    if purpose == "loan":
+        _check_loan_photo_size(data)
     full_path.write_bytes(data)
     content_type = file.content_type or "application/octet-stream"
     conn = get_conn()
@@ -3783,6 +3793,7 @@ async def deliver_loan(
         dest = UPLOADS_DIR / "loans" / rid
         dest.mkdir(parents=True, exist_ok=True)
         data = await image.read()
+        _check_loan_photo_size(data)
         (dest / f"pre_{file_id}.{ext}").write_bytes(data)
         img_path = rel_path
         conn.execute(
@@ -3845,6 +3856,7 @@ async def return_loan(
         dest = UPLOADS_DIR / "loans" / rid
         dest.mkdir(parents=True, exist_ok=True)
         data = await image.read()
+        _check_loan_photo_size(data)
         (dest / f"post_{file_id}.{ext}").write_bytes(data)
         img_path = rel_path
         conn.execute(

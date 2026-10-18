@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import QrScanner from "./QrScanner";
 import api, { API, formatErr } from "../../lib/api";
-import { compressImage } from "../../lib/image";
+import { compressToMaxBytes, LOAN_PHOTO_MAX_BYTES } from "../../lib/image";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
@@ -25,10 +25,11 @@ export function PhotoField({ label, value, onChange, hint, required }) {
     if (!file) return;
     setBusy(true);
     try {
-      const small = await compressImage(file);
+      const small = await compressToMaxBytes(file);
+      if (!small) { toast.error(`Foto terlalu besar: maksimal ${LOAN_PHOTO_MAX_BYTES / 1024} KB.`); return; }
       const fd = new FormData();
       fd.append("file", small);
-      const r = await api.post("/upload", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      const r = await api.post("/upload?purpose=loan", fd, { headers: { "Content-Type": "multipart/form-data" } });
       onChange(r.data.path);
     } catch (err) {
       toast.error(formatErr(err));

@@ -20,3 +20,19 @@ export function compressImage(file, maxSide = 1280, quality = 0.8) {
     img.src = url;
   });
 }
+
+// Loan condition photos are capped (50 KB): shrink step by step until the JPEG fits, or give up with null.
+export const LOAN_PHOTO_MAX_BYTES = 50 * 1024;
+
+export async function compressToMaxBytes(file, maxBytes = LOAN_PHOTO_MAX_BYTES) {
+  if (!file || !file.type.startsWith("image/")) return null;
+  const sides = [960, 800, 640, 520, 420, 340, 280];
+  const qualities = [0.7, 0.55, 0.42, 0.32];
+  for (const side of sides) {
+    for (const q of qualities) {
+      const out = await compressImage(file, side, q);
+      if (out && out.size <= maxBytes) return out;
+    }
+  }
+  return null;
+}

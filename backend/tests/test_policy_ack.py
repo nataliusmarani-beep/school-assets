@@ -63,3 +63,13 @@ def test_cannot_assign_to_user_without_policy(client, make_user, db):
     assert r.status_code == 403 and "belum menyetujui" in r.json()["detail"]
     r = client.post("/api/assignments/bulk", headers=auth(admin), json={"asset_ids": [aid], "to_user_id": signed["id"], "kind": "personal"})
     assert r.status_code == 200 and r.json()["created"] == 1
+
+
+def test_loan_photo_upload_limited_to_50kb(client, make_user):
+    u = make_user("staff")
+    small, big = b"x" * 40_000, b"x" * 60_000
+    ok = client.post("/api/upload?purpose=loan", headers=auth(u), files={"file": ("a.jpg", small, "image/jpeg")})
+    assert ok.status_code == 200
+    r = client.post("/api/upload?purpose=loan", headers=auth(u), files={"file": ("b.jpg", big, "image/jpeg")})
+    assert r.status_code == 413 and "50 KB" in r.json()["detail"]
+    assert client.post("/api/upload", headers=auth(u), files={"file": ("b.jpg", big, "image/jpeg")}).status_code == 200  # other uploads unchanged
