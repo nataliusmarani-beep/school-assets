@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { toast } from "sonner";
 import { ArrowLeft } from "lucide-react";
 import { StatusBadge } from "./LoansPage";
-import { UnitCheck, emptyUnit, fileSrc, fmtDateTime } from "../components/loans/LoanForms";
+import { UnitCheck, CartCheck, emptyUnit, emptyCart, cartBody, fileSrc, fmtDateTime } from "../components/loans/LoanForms";
 import { campusLabel } from "../lib/campus";
 
 function Row({ k, children }) {
@@ -51,6 +51,7 @@ export default function LoanDetailPage() {
   const [decision, setDecision] = useState({ decision: "approved", units: "", start_at: "", end_at: "", note: "" });
   const [note, setNote] = useState("");
   const [unit, setUnit] = useState(null);
+  const [cart, setCart] = useState(emptyCart());
 
   const load = useCallback(() => {
     api.get(`/loans/${id}`).then((r) => setLoan(r.data)).catch((e) => toast.error(formatErr(e)));
@@ -67,10 +68,15 @@ export default function LoanDetailPage() {
   if (!loan) return <div className="p-10 text-sm text-slate-500">…</div>;
   const p = loan.permissions;
   const a = loan.asset || {};
-  const openOut = () => { setUnit(emptyUnit(loan.asset_id, loan.accessories)); setDialog("out"); };
+  const isCart = !!loan.resource_id;
+  // rows of the cart check dialog: at check-out every active unit, at check-in the units still out
+  const cartRows = dialog === "in"
+    ? loan.units.filter((u) => u.status === "out").map((u) => ({ asset_id: u.asset_id, name: u.asset_name, tag: u.asset_tag, who: u.student_name ? `${u.student_name}${u.student_no ? ` (${u.student_no})` : ""}` : "" }))
+    : (loan.cart_units || []).map((u) => ({ asset_id: u.id, name: u.name, tag: u.asset_tag, who: "" }));
+  const openOut = () => { setUnit(emptyUnit(loan.asset_id, loan.accessories)); setCart(emptyCart()); setDialog("out"); };
   const openIn = () => {
     const out = loan.units.find((u) => u.status === "out");
-    setUnit(emptyUnit(out?.asset_id || loan.asset_id, loan.accessories)); setDialog("in");
+    setUnit(emptyUnit(out?.asset_id || loan.asset_id, loan.accessories)); setCart(emptyCart()); setDialog("in");
   };
   const openDecide = () => {
     setDecision({ decision: "approved", units: String(loan.units_requested), start_at: loan.start_at, end_at: loan.end_at, note: "" });
@@ -88,6 +94,11 @@ export default function LoanDetailPage() {
         </div>
         <StatusBadge status={loan.status} t={t} />
       </div>
+
+      {isCart && loan.units_out > 0 && ["in_use", "overdue"].includes(loan.status) && (
+        <div className={`mt-4 border p-3 text-sm ${loan.status === "overdue" ? "border-rose-300 bg-rose-50 text-rose-800" : "border-amber-200 bg-amber-50 text-amber-800"}`} data-testid="units-out-banner">
+          {loan.units_out} {t("ln_units_still_out")}: {loan.units.filter((u) => u.status === "out").map((u) => `${u.asset_tag}${u.user_label ? ` (${u.user_label})` : ""}`).join(", ")}
+        </div>)}
 
       <div className="flex gap-2 flex-wrap mt-5" data-testid="loan-actions">
         {p.can_supervise && <Button className="rounded-none" onClick={() => { setNote(""); setDialog("supervisor"); }} data-testid="loan-supervisor-btn">{t("ln_act_supervisor")}</Button>}
@@ -120,7 +131,24 @@ export default function LoanDetailPage() {
         </div>
       </div>
 
-      {loan.units.length > 0 && (
+      {loan.units.length > 0 && isCart && (
+        <div className="mt-6 bg-white border border-slate-200 p-5" data-testid="loan-units">
+          <div className="label-mono mb-3">{t("ln_unit_records")} ({loan.units.length})</div>
+          <PhotoPair unit={{ pre_photo: loan.units.find((u) => u.pre_photo)?.pre_photo, post_photo: loan.units.find((u) => u.post_photo)?.post_photo }} t={t} />
+          <div className="overflow-x-auto mt-4"><table className="w-full text-xs">
+            <thead><tr className="text-left border-b border-slate-200">{["ln_asset", "ln_borrower", "ln_status", "ln_checkout", "ln_checkin"].map((k) => <th key={k} className="label-mono py-2 px-2">{t(k)}</th>)}</tr></thead>
+            <tbody>{loan.units.map((u) => (
+              <tr key={u.id} className={`border-b border-slate-100 align-top ${u.status === "out" && loan.status === "overdue" ? "bg-rose-50" : ""}`}>
+                <td className="py-2 px-2"><span className="font-mono">{u.asset_tag}</span><div className="text-slate-500">{u.asset_name}</div></td>
+                <td className="py-2 px-2">{u.user_label || "—"}{u.class_name ? <div className="text-slate-400">{u.class_name}</div> : null}</td>
+                <td className="py-2 px-2">{t(`ln_unit_${u.status}`)}</td>
+                <td className="py-2 px-2">{fmtDateTime(u.out_at)}{u.out_check?.note ? <div className="text-rose-600">{u.out_check.note}</div> : null}</td>
+                <td className="py-2 px-2">{fmtDateTime(u.in_at)}{u.in_check?.note ? <div className="text-rose-600">{u.in_check.note}</div> : null}
+                  {u.condition_changed ? <div className="mt-1 flex gap-2">{[u.pre_photo, u.post_photo].filter((x, i, arr) => x && arr.indexOf(x) === i && x !== loan.units[0].pre_photo && x !== loan.units[0].post_photo).map((ph) => <a key={ph} href={fileSrc(ph)} target="_blank" rel="noreferrer"><img src={fileSrc(ph)} alt="" className="h-12 w-16 object-cover border border-slate-200" /></a>)}</div> : null}</td>
+              </tr>))}</tbody></table></div>
+        </div>)}
+
+      {loan.units.length > 0 && !isCart && (
         <div className="mt-6 space-y-4" data-testid="loan-units">
           <div className="label-mono">{t("ln_unit_records")}</div>
           {loan.units.map((u) => (
@@ -181,9 +209,11 @@ export default function LoanDetailPage() {
         <DialogContent className="rounded-none max-w-xl max-h-[90vh] overflow-y-auto" data-testid="loan-check-dialog">
           <DialogHeader><DialogTitle>{dialog === "in" ? t("ln_act_checkin") : t("ln_act_checkout")}</DialogTitle></DialogHeader>
           <div className="text-xs text-slate-500">{a.name} · <span className="font-mono">{a.asset_tag}</span> · {t("ln_borrower")}: {loan.requester_name}</div>
-          {unit && <UnitCheck t={t} mode={dialog} accessories={loan.accessories} value={unit} onChange={setUnit} />}
+          {isCart
+            ? <CartCheck t={t} mode={dialog} units={cartRows} value={cart} onChange={setCart} />
+            : unit && <UnitCheck t={t} mode={dialog} accessories={loan.accessories} value={unit} onChange={setUnit} />}
           <DialogFooter><Button className="rounded-none" disabled={busy} data-testid="loan-check-save"
-            onClick={() => act(() => api.post(`/loans/${id}/${dialog === "in" ? "check-in" : "check-out"}`, { units: [unit] }), t("ln_saved"))}>{t("save_changes")}</Button></DialogFooter>
+            onClick={() => act(() => api.post(`/loans/${id}/${dialog === "in" ? "check-in" : "check-out"}`, isCart ? cartBody(cart) : { units: [unit] }), t("ln_saved"))}>{t("save_changes")}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

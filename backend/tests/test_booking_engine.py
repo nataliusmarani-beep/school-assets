@@ -320,3 +320,99 @@ def test_supervisor_and_cancel_flow(db):
     with pytest.raises(be.BookingError):
         be.cancel(db, booking_id=b["id"], by_id="stranger", can_manage=False, now=NOW)
     assert be.cancel(db, booking_id=b["id"], by_id="u1", can_manage=False, now=NOW)["status"] == "cancelled"
+
+
+# ---- Tahap 2: carts, fixed sessions ----
+def add_cart_units(db, n=4, rid="cart1"):
+    for i in range(1, n + 1):
+        add_asset(db, f"lap{i}", category="IT Equipment")
+        db.execute("UPDATE asset_loan_settings SET resource_id = ? WHERE asset_id = ?", (rid, f"lap{i}"))
+    db.commit()
+
+
+def sched(db, **kw):
+    base = dict(campus=KK, resource_id="cart1", weekday=0, period_from=3, period_to=4, units=3, valid_from="2026-07-20", valid_to="2026-12-18")
+    base.update(kw)
+    return base
+
+
+def test_capacity_follows_active_units(db):
+    add_resource(db, capacity=30)
+    assert be.resource_capacity(db, "cart1") == 30            # no units registered: configured capacity
+    add_cart_units(db, 4)
+    assert be.resource_capacity(db, "cart1") == 4
+    db.execute("UPDATE assets SET status = 'in_repair' WHERE id = 'lap1'")
+    db.commit()
+    assert be.resource_capacity(db, "cart1") == 3
+
+
+def test_schedule_validation(db):
+    add_resource(db, capacity=30)
+    add_cart_units(db, 4)
+    assert be.validate_schedule(db, sched(db, units=3), now=NOW) == []
+    assert any("Jumlah unit" in p for p in be.validate_schedule(db, sched(db, units=9), now=NOW))
+    assert any("Jam" in p for p in be.validate_schedule(db, sched(db, period_from=4, period_to=3), now=NOW))
+    assert any("Master jam" in p for p in be.validate_schedule(db, sched(db, period_to=9), now=NOW))
+    add_fixed(db, units=3)                                      # existing Monday 3-4 class
+    clash = be.validate_schedule(db, sched(db, period_from=4, period_to=4, units=3), now=NOW)
+    assert any("Bentrok dengan jadwal tetap" in p for p in clash)
+    assert be.validate_schedule(db, sched(db, weekday=1), now=NOW) == []
+
+
+def test_schedule_blocked_by_approved_booking(db):
+    add_resource(db, capacity=30)
+    b = be.reserve(db, data=req(kind="off_schedule", category="IT Equipment", resource_id="cart1", units=5,
+                                start_at="2026-08-10T09:00", end_at="2026-08-10T10:00"), now=NOW)
+    be.decide(db, booking_id=b["id"], decision="approved", by_id="i", by_name="I", now=NOW)
+    problems = be.validate_schedule(db, sched(db, units=30), now=NOW)
+    assert any(b["number"] in p for p in problems)
+
+
+def test_fixed_session_materializes_once_and_counts_once(db):
+    add_resource(db, capacity=30)
+    add_cart_units(db, 4)
+    sid = add_fixed(db, units=3)
+    mon = datetime(2026, 8, 10)
+    mon_slot = dict(start=datetime(2026, 8, 10, 9, 0), end=datetime(2026, 8, 10, 10, 0))
+    assert be.check_availability(db, resource_id="cart1", units=1, **mon_slot)["free"] == 1     # 4 units - 3 held by the class
+    b = be.materialize_fixed(db, schedule_id=sid, day=mon.date(), by_id="ict", by_name="ICT", now=datetime(2026, 8, 10, 8, 0))
+    assert b["kind"] == "fixed" and b["status"] == "approved" and b["units_approved"] == 3
+    assert be.materialize_fixed(db, schedule_id=sid, day=mon.date(), by_id="ict", by_name="ICT", now=datetime(2026, 8, 10, 8, 5))["id"] == b["id"]
+    assert be.check_availability(db, resource_id="cart1", units=1, **mon_slot)["free"] == 1     # not counted twice
+    with pytest.raises(be.BookingError) as e:                                                   # not a class day
+        be.materialize_fixed(db, schedule_id=sid, day=datetime(2026, 8, 11).date(), by_id="i", by_name="I", now=NOW)
+    assert e.value.code == "no_session"
+
+
+def test_cart_checkout_all_units_with_group_photo_and_pairing(db):
+    add_resource(db, capacity=30)
+    add_cart_units(db, 3)
+    for i, (name, no) in enumerate([("Ani", "1"), ("Budi", "2")], start=1):
+        db.execute("INSERT INTO unit_assignments (id,campus,academic_year,semester,resource_id,asset_id,class_name,student_name,student_no) "
+                   "VALUES (?,?,?,?,?,?,?,?,?)", (be.new_id(), KK, "2026-2027", "Ganjil", "cart1", f"lap{i}", "7A", name, no))
+    db.commit()
+    add_file(db, "loans/cart.jpg")
+    sid = add_fixed(db, units=3)
+    b = be.materialize_fixed(db, schedule_id=sid, day=datetime(2026, 8, 10).date(), by_id="ict", by_name="ICT", now=datetime(2026, 8, 10, 8, 0))
+    units = be.bulk_units(db, b)
+    assert [u["asset_id"] for u in units] == ["lap1", "lap2", "lap3"]
+    assert units[0]["student_name"] == "Ani" and units[1]["user_label"] == "Budi (No. 2)"
+    out = be.check_out(db, booking_id=b["id"], units=units, now=datetime(2026, 8, 10, 8, 30), by_id="ict", by_name="ICT", group_photo="loans/cart.jpg")
+    assert out["status"] == "in_use"
+    # one tablet is missing at the end of class: the others come back, the booking stays open and flags it
+    back = be.bulk_units(db, out, only_unreturned=True, exclude=["lap3"])
+    res = be.check_in(db, booking_id=b["id"], units=back, now=datetime(2026, 8, 10, 10, 15), by_id="ict", by_name="ICT", group_photo="loans/cart.jpg")
+    assert res["still_out"] == 1 and res["booking"]["status"] == "in_use"
+    assert be.mark_overdue(db, datetime(2026, 8, 10, 11, 0)) == 1
+    late = be.check_in(db, booking_id=b["id"], units=[dict(unit(asset_id="lap3", result="ok"), photo="loans/cart.jpg")], now=datetime(2026, 8, 10, 11, 30), by_id="ict", by_name="ICT")
+    assert late["booking"]["status"] == "completed"
+
+
+def test_cart_checkout_requires_group_photo(db):
+    add_resource(db, capacity=30)
+    add_cart_units(db, 2)
+    sid = add_fixed(db, units=2)
+    b = be.materialize_fixed(db, schedule_id=sid, day=datetime(2026, 8, 10).date(), by_id="i", by_name="I", now=datetime(2026, 8, 10, 8, 0))
+    with pytest.raises(be.BookingError) as e:
+        be.check_out(db, booking_id=b["id"], units=be.bulk_units(db, b), now=datetime(2026, 8, 10, 8, 30), by_id="i", by_name="I")
+    assert e.value.code == "photo"

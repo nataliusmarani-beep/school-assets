@@ -51,7 +51,7 @@ export function PhotoField({ label, value, onChange, hint, required }) {
 }
 
 /* One unit's condition check, used for both check-out and check-in. */
-export function UnitCheck({ t, mode, accessories, value, onChange }) {
+export function UnitCheck({ t, mode, accessories, value, onChange, photoOptional = false }) {
   const v = value;
   const set = (patch) => onChange({ ...v, ...patch });
   const setAcc = (name, ok) => set({ accessories: v.accessories.map((a) => (a.name === name ? { ...a, ok } : a)) });
@@ -115,7 +115,7 @@ export function UnitCheck({ t, mode, accessories, value, onChange }) {
       </div>
 
       {!(mode === "in" && v.result === "lost") && (
-        <PhotoField required label={t(mode === "in" ? "ln_photo_after" : "ln_photo_before")} value={v.photo}
+        <PhotoField required={!photoOptional} label={t(mode === "in" ? "ln_photo_after" : "ln_photo_before")} value={v.photo}
           onChange={(p) => set({ photo: p })} hint={t("ln_photo_hint")} />
       )}
     </div>
@@ -126,3 +126,46 @@ export const emptyUnit = (assetId, accessoryNames) => ({
   asset_id: assetId, physical: "baik", function: "normal", note: "", photo: "", result: "ok",
   accessories: accessoryNames.map((name) => ({ name, ok: true })),
 });
+
+/* Cart / lab hand-over: every unit at once. Untick a unit that is not handed over / not back; flag a unit that has a problem. */
+export function CartCheck({ t, mode, units, value, onChange }) {
+  const v = value;
+  const toggleOut = (id, on) => { const ex = new Set(v.excluded); on ? ex.delete(id) : ex.add(id); onChange({ ...v, excluded: ex }); };
+  const setProblem = (id, unit) => { const pr = { ...v.problems }; unit ? (pr[id] = unit) : delete pr[id]; onChange({ ...v, problems: pr }); };
+  const present = units.filter((u) => !v.excluded.has(u.asset_id)).length;
+  return (
+    <div className="space-y-4" data-testid="cart-check">
+      <PhotoField required label={t("ln_photo_cart")} value={v.groupPhoto} onChange={(p) => onChange({ ...v, groupPhoto: p })} hint={t("ln_photo_cart_hint")} />
+      <div>
+        <div className="flex items-center justify-between">
+          <Label className="label-mono">{t(mode === "in" ? "ln_cart_units_back" : "ln_cart_units_out")}</Label>
+          <span className="text-xs text-slate-500">{present}/{units.length}</span>
+        </div>
+        <div className="mt-2 border border-slate-200 max-h-72 overflow-y-auto divide-y divide-slate-100">
+          {units.map((u) => {
+            const off = v.excluded.has(u.asset_id);
+            const pr = v.problems[u.asset_id];
+            return (
+              <div key={u.asset_id} className={`px-3 py-2 text-sm ${off ? "bg-amber-50" : ""}`}>
+                <div className="flex items-center gap-3">
+                  <input type="checkbox" checked={!off} onChange={(e) => toggleOut(u.asset_id, e.target.checked)} data-testid={`cart-unit-${u.tag}`} />
+                  <span className="flex-1 truncate">{u.name} <span className="font-mono text-xs text-slate-400">{u.tag}</span>{u.who ? <span className="text-xs text-slate-500"> · {u.who}</span> : null}</span>
+                  {off && <span className="text-xs text-amber-700">{t(mode === "in" ? "ln_not_returned" : "ln_not_handed")}</span>}
+                  {!off && <button type="button" className={`text-xs underline ${pr ? "text-rose-600" : "text-slate-500"}`} data-testid={`cart-problem-${u.tag}`}
+                    onClick={() => { if (pr) { setProblem(u.asset_id, null); } else { setProblem(u.asset_id, { ...emptyUnit(u.asset_id, []), result: mode === "in" ? "damaged" : "ok", physical: mode === "in" ? "retak" : "lecet" }); } }}>
+                    {pr ? t("ln_problem_remove") : t("ln_problem_flag")}</button>}
+                </div>
+                {pr && !off && (
+                  <div className="mt-3 border-l-2 border-rose-300 pl-3">
+                    <UnitCheck t={t} mode={mode} accessories={[]} value={pr} onChange={(x) => setProblem(u.asset_id, x)} photoOptional />
+                  </div>)}
+              </div>);
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export const emptyCart = () => ({ groupPhoto: "", excluded: new Set(), problems: {} });
+export const cartBody = (v) => ({ all_units: true, group_photo: v.groupPhoto, exclude: [...v.excluded], units: Object.values(v.problems) });

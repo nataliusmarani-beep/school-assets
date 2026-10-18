@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS resources (
     name TEXT NOT NULL,
     kind TEXT NOT NULL,                             -- laptop_cart | ipad_cart | computer_lab | room
     capacity INTEGER NOT NULL DEFAULT 1,
+    category TEXT NOT NULL DEFAULT 'IT Equipment',  -- decides the rules and who confirms (ICT Admin for ICT categories)
     location TEXT NOT NULL DEFAULT '',
     pic_user_id TEXT,
     active INTEGER NOT NULL DEFAULT 1,
@@ -123,6 +124,7 @@ CREATE TABLE IF NOT EXISTS bookings (
     decided_at TEXT,
     terms_accepted INTEGER NOT NULL DEFAULT 0,
     legacy_loan_id TEXT,
+    schedule_id TEXT,                               -- set for a fixed-schedule session that was handed over (kind 'fixed')
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -207,8 +209,17 @@ def new_id() -> str:
     return str(uuid.uuid4())
 
 
+def _ensure_column(conn, table: str, column: str, ddl: str):
+    if column not in [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+
 def init_booking_schema(conn):
     conn.executescript(SCHEMA_SQL)
+    # columns added after the first release of the module
+    _ensure_column(conn, "resources", "category", "TEXT NOT NULL DEFAULT 'IT Equipment'")
+    _ensure_column(conn, "bookings", "schedule_id", "TEXT")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_bookings_fixed_session ON bookings(schedule_id, start_at) WHERE schedule_id IS NOT NULL")
     for category, days, approval, leave in DEFAULT_POLICIES:
         conn.execute("""INSERT OR IGNORE INTO loan_policies
                         (id, campus, category, max_loan_days, requires_approval, can_leave_campus)
@@ -325,7 +336,13 @@ def fixed_occurrences(conn, resource_id: str, day_from: date, day_to: date, camp
         last = min(day_to, date.fromisoformat(s["valid_to"]))
         while d <= last:
             if d.weekday() == s["weekday"] and d.isoformat() not in skipped and d.isoformat() not in holidays:
+                start_dt = parse_dt(f"{d.isoformat()}T{t_from}")
+                done = conn.execute("SELECT id, status FROM bookings WHERE schedule_id = ? AND start_at = ?",
+                                    (s["id"], start_dt.strftime(FMT))).fetchone()
                 out.append({"schedule_id": s["id"], "resource_id": resource_id, "units": s["units"],
+                            "materialized": bool(done), "booking_id": done["id"] if done else None,
+                            "booking_status": done["status"] if done else None,
+                            "subject": s["subject"], "period_from": s["period_from"], "period_to": s["period_to"],
                             "start": parse_dt(f"{d.isoformat()}T{t_from}"), "end": parse_dt(f"{d.isoformat()}T{t_to}"),
                             "class_name": s["class_name"], "teacher_name": s["teacher_name"]})
             d += timedelta(days=1)
@@ -368,7 +385,7 @@ def check_availability(conn, *, resource_id: Optional[str] = None, asset_id: Opt
         r = conn.execute("SELECT capacity, active FROM resources WHERE id = ?", (resource_id,)).fetchone()
         if not r or not r["active"]:
             raise BookingError("Sumber daya (cart/lab) tidak ditemukan atau tidak aktif.", "resource")
-        capacity = r["capacity"]
+        capacity = resource_capacity(conn, resource_id)
     else:
         capacity = 1
     committed = _booking_rows(conn, resource_id=resource_id, asset_id=asset_id, statuses=COMMITTED_STATUSES,
@@ -380,6 +397,8 @@ def check_availability(conn, *, resource_id: Optional[str] = None, asset_id: Opt
                           "requester": b["requester_name"]})
     if resource_id:
         for occ in fixed_occurrences(conn, resource_id, start.date(), end.date()):
+            if occ["materialized"]:
+                continue            # already handed over: the booking above (if still active) holds the units instead
             if overlaps(occ["start"], occ["end"], start, end):
                 slots.append((occ["start"], occ["end"], occ["units"]))
                 conflicts.append({"type": "fixed", "id": occ["schedule_id"], "start": occ["start"].strftime(FMT),
@@ -391,6 +410,15 @@ def check_availability(conn, *, resource_id: Optional[str] = None, asset_id: Opt
     free = max(capacity - used, 0)
     return {"capacity": capacity, "used": used, "free": free, "pending": pending,
             "ok": units <= free, "conflicts": conflicts if units > free else []}
+
+
+def resource_capacity(conn, resource_id: str) -> int:
+    """Units that can be used right now: the active borrowable units assigned to the cart / lab,
+    or the configured capacity when no individual units are registered."""
+    r = conn.execute("SELECT capacity FROM resources WHERE id = ?", (resource_id,)).fetchone()
+    n = conn.execute("""SELECT COUNT(*) FROM asset_loan_settings s JOIN assets a ON a.id = s.asset_id
+                        WHERE s.resource_id = ? AND s.borrowable = 1 AND a.status = 'active'""", (resource_id,)).fetchone()[0]
+    return n if n else (r["capacity"] if r else 0)
 
 
 def next_booking_number(conn, year: int) -> str:
@@ -780,3 +808,169 @@ def check_in(conn, *, booking_id: str, units: list, now: datetime, by_id: str, b
         raise
     return {"booking": dict(conn.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()),
             "faults": faults, "still_out": still_out}
+
+
+# ---- Fixed schedules ----
+def validate_schedule(conn, data: dict, exclude_id: Optional[str] = None, now: Optional[datetime] = None) -> list:
+    """Problems with a fixed schedule: bad periods / dates, too many units, another fixed class on the same cart at the
+    same time, or already-approved bookings in the way. Returns a list of Indonesian messages (empty = fine)."""
+    problems = []
+    r = conn.execute("SELECT capacity, campus, active FROM resources WHERE id = ?", (data["resource_id"],)).fetchone()
+    if not r or not r["active"]:
+        return ["Cart/lab tidak ditemukan atau tidak aktif."]
+    if r["campus"] != data["campus"]:
+        problems.append("Cart/lab bukan milik kampus ini.")
+    if not 0 <= int(data["weekday"]) <= 6:
+        problems.append("Hari tidak valid.")
+    if int(data["period_from"]) > int(data["period_to"]):
+        problems.append("Jam mulai harus sebelum atau sama dengan jam selesai.")
+    try:
+        period_times(conn, data["campus"], int(data["period_from"]), int(data["period_to"]))
+    except BookingError as e:
+        problems.append(e.message)
+    try:
+        v_from, v_to = date.fromisoformat(data["valid_from"]), date.fromisoformat(data["valid_to"])
+        if v_to < v_from:
+            problems.append("Tanggal berakhir harus setelah tanggal mulai.")
+    except ValueError:
+        return problems + ["Tanggal berlaku tidak valid."]
+    capacity = resource_capacity(conn, data["resource_id"])
+    if int(data["units"]) < 1 or int(data["units"]) > capacity:
+        problems.append(f"Jumlah unit harus 1 sampai {capacity}.")
+    if problems:
+        return problems
+    # another fixed class on the same cart, same weekday, overlapping periods and validity
+    for o in conn.execute("""SELECT * FROM fixed_schedules WHERE resource_id = ? AND status = 'active' AND weekday = ? AND id != ?
+                             AND valid_from <= ? AND valid_to >= ? AND period_from <= ? AND period_to >= ?""",
+                          (data["resource_id"], data["weekday"], exclude_id or "", data["valid_to"], data["valid_from"],
+                           data["period_to"], data["period_from"])):
+        if int(data["units"]) + o["units"] > capacity:
+            problems.append(f"Bentrok dengan jadwal tetap kelas {o['class_name']} ({o['teacher_name']}) pada jam yang sama.")
+    # approved bookings that would be displaced: ICT must settle those first
+    today = (now or datetime.now()).date()
+    t_from, t_to = period_times(conn, data["campus"], int(data["period_from"]), int(data["period_to"]))
+    d = max(v_from, today)
+    while d <= v_to:
+        if d.weekday() == int(data["weekday"]):
+            start, end = parse_dt(f"{d.isoformat()}T{t_from}"), parse_dt(f"{d.isoformat()}T{t_to}")
+            for b in _booking_rows(conn, resource_id=data["resource_id"], asset_id=None, statuses=COMMITTED_STATUSES,
+                                   start=start, end=end, exclude_booking_id=None):
+                problems.append(f"Sudah ada pengajuan disetujui {b['number']} ({b['requester_name']}) pada {b['start_at'].replace('T', ' ')}.")
+        d += timedelta(days=1)
+    return problems[:10]
+
+
+def materialize_fixed(conn, *, schedule_id: str, day: date, by_id: str, by_name: str, now: datetime) -> dict:
+    """Turn one session of a fixed schedule into a booking so it can be handed over and returned like any loan.
+    Idempotent: the same session always returns the same booking."""
+    s = conn.execute("SELECT * FROM fixed_schedules WHERE id = ?", (schedule_id,)).fetchone()
+    if not s:
+        raise BookingError("Jadwal tidak ditemukan.", "missing")
+    occ = [o for o in fixed_occurrences(conn, s["resource_id"], day, day) if o["schedule_id"] == schedule_id]
+    if not occ:
+        raise BookingError("Tidak ada sesi jadwal ini pada tanggal tersebut (libur, dibatalkan, atau di luar masa berlaku).", "no_session")
+    o = occ[0]
+    if o["booking_id"]:
+        return dict(conn.execute("SELECT * FROM bookings WHERE id = ?", (o["booking_id"],)).fetchone())
+    res = conn.execute("SELECT category FROM resources WHERE id = ?", (s["resource_id"],)).fetchone()
+    if conn.in_transaction:
+        conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        bid, ts = new_id(), now.strftime(FMT)
+        conn.execute("""INSERT INTO bookings (id, number, campus, kind, resource_id, category, requester_id, requester_name, start_at, end_at,
+            units_requested, units_approved, class_name, subject, purpose, status, decided_by, decided_by_name, decided_at, terms_accepted,
+            schedule_id, created_at, updated_at) VALUES (?,?,?,'fixed',?,?,?,?,?,?,?,?,?,?,?,'approved',?,?,?,1,?,?,?)""",
+                     (bid, next_booking_number(conn, now.year), s["campus"], s["resource_id"], res["category"],
+                      s["teacher_user_id"] or by_id, s["teacher_name"] or by_name, o["start"].strftime(FMT), o["end"].strftime(FMT),
+                      s["units"], s["units"], s["class_name"], s["subject"], f"Jadwal tetap {s['class_name']} {s['subject']}".strip(),
+                      by_id, by_name, ts, s["id"], ts, ts))
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    return dict(conn.execute("SELECT * FROM bookings WHERE id = ?", (bid,)).fetchone())
+
+
+def resource_units(conn, resource_id: str, active_only: bool = True) -> list:
+    sql = """SELECT a.id, a.name, a.asset_tag, a.status, a.serial_number FROM asset_loan_settings s JOIN assets a ON a.id = s.asset_id
+             WHERE s.resource_id = ?"""
+    if active_only:
+        sql += " AND a.status = 'active' AND s.borrowable = 1"
+    return [dict(r) for r in conn.execute(sql + " ORDER BY a.asset_tag", (resource_id,))]
+
+
+def bulk_units(conn, booking: dict, exclude: Optional[list] = None, only_unreturned: bool = False) -> list:
+    """Unit rows for "all units of the cart" flows. Check-out: every active unit of the resource (minus `exclude`),
+    all marked fine, with the semester's student pairing filled in. Check-in: every unit currently out."""
+    exclude = set(exclude or [])
+    if only_unreturned:
+        ids = [r["asset_id"] for r in conn.execute("SELECT asset_id FROM booking_units WHERE booking_id = ? AND status = 'out'", (booking["id"],))]
+    else:
+        ids = [u["id"] for u in resource_units(conn, booking["resource_id"])]
+    out = []
+    for aid in ids:
+        if aid in exclude:
+            continue
+        pair = conn.execute("""SELECT * FROM unit_assignments WHERE resource_id = ? AND asset_id = ?
+                               ORDER BY academic_year DESC, semester DESC LIMIT 1""", (booking["resource_id"], aid)).fetchone()
+        out.append({"asset_id": aid, "physical": "baik", "function": "normal", "note": "", "result": "ok",
+                    "accessories": [{"name": n, "ok": True} for n in accessory_names(conn, aid)],
+                    "student_name": pair["student_name"] if pair else "", "student_no": pair["student_no"] if pair else "",
+                    "class_name": (pair["class_name"] if pair else "") or booking.get("class_name", ""),
+                    "user_label": (f"{pair['student_name']} (No. {pair['student_no']})".strip() if pair and pair["student_name"] else booking["requester_name"])})
+    return out
+
+
+# ---- Weekly calendar ----
+def week_cells(conn, res: dict, monday: date, periods: list, holidays: dict) -> list:
+    """For each day of the week and each lesson period: capacity, units used / free, and what occupies the slot.
+    Fixed sessions marked "Libur" are listed too (kind 'libur') but hold nothing."""
+    capacity = resource_capacity(conn, res["id"])
+    week_start = datetime.combine(monday, datetime.min.time())
+    week_end = week_start + timedelta(days=7)
+    committed = _booking_rows(conn, resource_id=res["id"], asset_id=None, statuses=COMMITTED_STATUSES, start=week_start, end=week_end,
+                              exclude_booking_id=None)
+    pending = _booking_rows(conn, resource_id=res["id"], asset_id=None, statuses=PENDING_STATUSES, start=week_start, end=week_end,
+                            exclude_booking_id=None)
+    fixed = [o for o in fixed_occurrences(conn, res["id"], monday, monday + timedelta(days=6)) if not o["materialized"]]
+    libur = []
+    for s in conn.execute("SELECT * FROM fixed_schedules WHERE resource_id = ? AND status = 'active'", (res["id"],)).fetchall():
+        for e in conn.execute("SELECT date, note FROM schedule_exceptions WHERE schedule_id = ? AND date >= ? AND date <= ?",
+                              (s["id"], monday.isoformat(), (monday + timedelta(days=6)).isoformat())):
+            try:
+                t_from, t_to = period_times(conn, s["campus"], s["period_from"], s["period_to"])
+            except BookingError:
+                continue
+            libur.append({"schedule_id": s["id"], "exception": e["date"], "start": parse_dt(f"{e['date']}T{t_from}"), "end": parse_dt(f"{e['date']}T{t_to}"),
+                          "class_name": s["class_name"], "note": e["note"]})
+    days = []
+    for i in range(7):
+        d = monday + timedelta(days=i)
+        cells = []
+        for p in periods:
+            start, end = parse_dt(f"{d.isoformat()}T{p['start_time']}"), parse_dt(f"{d.isoformat()}T{p['end_time']}")
+            slots, items = [], []
+            for b in committed:
+                bs, be_ = parse_dt(b["start_at"]), parse_dt(b["end_at"])
+                if overlaps(bs, be_, start, end):
+                    n = b["units_approved"] or b["units_requested"]
+                    slots.append((bs, be_, n))
+                    items.append({"type": "fixed" if b["kind"] == "fixed" else "booking", "booking_id": b["id"], "number": b["number"], "units": n,
+                                  "label": (f"{b['class_name']} · {b['requester_name']}" if b["kind"] == "fixed" else b["requester_name"]),
+                                  "status": b["status"], "schedule_id": b["schedule_id"]})
+            for o in fixed:
+                if overlaps(o["start"], o["end"], start, end):
+                    slots.append((o["start"], o["end"], o["units"]))
+                    items.append({"type": "fixed", "schedule_id": o["schedule_id"], "units": o["units"], "date": d.isoformat(),
+                                  "label": f"{o['class_name']} · {o['teacher_name']}" + (f" ({o['subject']})" if o.get("subject") else ""), "status": "scheduled"})
+            for x in libur:
+                if overlaps(x["start"], x["end"], start, end):
+                    items.append({"type": "libur", "schedule_id": x["schedule_id"], "units": 0, "label": f"{x['class_name']} · Libur", "date": x["exception"]})
+            waiting = [{"type": "pending", "booking_id": b["id"], "number": b["number"], "units": b["units_requested"], "label": b["requester_name"]}
+                       for b in pending if overlaps(parse_dt(b["start_at"]), parse_dt(b["end_at"]), start, end)]
+            used = _peak_usage(slots, start, end)
+            cells.append({"period_no": p["period_no"], "start": start.strftime(FMT), "end": end.strftime(FMT), "used": used,
+                          "free": max(capacity - used, 0), "capacity": capacity, "items": items, "pending": waiting})
+        days.append({"date": d.isoformat(), "weekday": i, "holiday": holidays.get(d.isoformat()), "cells": cells})
+    return days

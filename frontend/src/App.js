@@ -19,6 +19,8 @@ import PoliciesPage from "./pages/PoliciesPage";
 import TransferRequestsPage from "./pages/TransferRequestsPage";
 import LoansPage from "./pages/LoansPage";
 import LoanDetailPage from "./pages/LoanDetailPage";
+import SchedulePage from "./pages/SchedulePage";
+import LoanSetupPage from "./pages/LoanSetupPage";
 import MyAssetsPage from "./pages/MyAssetsPage";
 import UserAssetsPage from "./pages/UserAssetsPage";
 import ClassroomsPage from "./pages/ClassroomsPage";
@@ -88,6 +90,12 @@ function App() {
             }/>
             <Route path="/loans" element={
               <ProtectedRoute><Layout><LoansPage /></Layout></ProtectedRoute>
+            }/>
+            <Route path="/schedule" element={
+              <ProtectedRoute><Layout><SchedulePage /></Layout></ProtectedRoute>
+            }/>
+            <Route path="/loans/setup" element={
+              <ProtectedRoute><Layout><LoanSetupPage /></Layout></ProtectedRoute>
             }/>
             <Route path="/loans/:id" element={
               <ProtectedRoute><Layout><LoanDetailPage /></Layout></ProtectedRoute>

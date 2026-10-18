@@ -3,6 +3,7 @@ import { useAuth } from "../../context/AuthContext";
 import { useLang } from "../../context/LangContext";
 import {
   LayoutDashboard,
+  CalendarDays,
   Boxes,
   Wrench,
   ShieldCheck,
@@ -35,6 +36,7 @@ const NAV_LINKS = [
   { to: "/compliance", labelKey: "nav_compliance", icon: ShieldCheck, testid: "nav-compliance" },
   { to: "/transfer-requests", labelKey: "nav_transfer_requests", icon: ArrowRightLeft, testid: "nav-transfers", badge: "pendingTransfers" },
   { to: "/loans", labelKey: "nav_loan_requests", icon: BookOpen, testid: "nav-loans", badge: "pendingLoans" },
+  { to: "/schedule", labelKey: "nav_schedule", icon: CalendarDays, testid: "nav-schedule" },
   { to: "/users", labelKey: "nav_users", icon: Users, testid: "nav-users", adminOnly: true },
   { to: "/reports", labelKey: "nav_reports", icon: BarChart3, testid: "nav-reports", adminOnly: true },
   { to: "/activity-logs", labelKey: "nav_activity", icon: History, testid: "nav-activity", adminOnly: true },

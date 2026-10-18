@@ -945,6 +945,17 @@ def _loan_html(req: dict, heading: str, detail_lines: list, footer: str = "") ->
         {footer}""")
 
 
+def mark_overdue_loans():
+    """Every 15 minutes: loans past their end time that are still out become "Terlambat"."""
+    conn = get_conn()
+    try:
+        n = booking_engine.mark_overdue(conn, _local_now())
+        if n:
+            logger.warning("Marked %d loan(s) overdue", n)
+    finally:
+        conn.close()
+
+
 # ---- Scheduler: return-date reminders ----
 def send_return_reminders():
     """Runs daily at 08:00; emails borrowers whose return date is tomorrow, with CC chain."""
@@ -3785,7 +3796,11 @@ def _loan_context(conn, bid: str):
     b = dict(b)
     a = conn.execute("SELECT id, name, asset_tag, category, campus, location, brand, model, serial_number, status FROM assets WHERE id = ?",
                      (b["asset_id"],)).fetchone() if b["asset_id"] else None
-    return b, (dict(a) if a else {})
+    if a:
+        return b, dict(a)
+    r = conn.execute("SELECT name, kind, category, campus, location FROM resources WHERE id = ?", (b["resource_id"],)).fetchone() if b["resource_id"] else None
+    # a cart / lab loan reads like an asset in titles and e-mails
+    return b, ({"name": r["name"], "asset_tag": r["kind"], "category": r["category"], "campus": r["campus"], "location": r["location"], "is_resource": True} if r else {})
 
 
 def _loan_visible(user: dict, b: dict) -> bool:
@@ -3811,6 +3826,10 @@ def _loan_view(conn, user: dict, b: dict, asset: dict) -> dict:
         units.append(u)
     out["units"] = units
     out["accessories"] = booking_engine.accessory_names(conn, b["asset_id"]) if b["asset_id"] else []
+    if b["resource_id"]:
+        out["units_out"] = sum(1 for u in units if u["status"] == "out")
+        out["units_not_returned"] = out["units_out"] if b["status"] == "overdue" else 0
+        out["cart_units"] = booking_engine.resource_units(conn, b["resource_id"])
     manage = can_manage_loan(user, b["campus"], b["category"])
     out["permissions"] = {
         "can_decide": manage and b["status"] == "pending_ict",
@@ -3824,9 +3843,14 @@ def _loan_view(conn, user: dict, b: dict, asset: dict) -> dict:
 
 
 class LoanIn(BaseModel):
-    asset_id: str
-    start_at: str
-    end_at: str
+    asset_id: Optional[str] = None            # a single item ...
+    resource_id: Optional[str] = None         # ... or units of a cart / lab outside the fixed schedule
+    units: int = Field(1, ge=1)
+    date: Optional[str] = None                # with period_from/period_to instead of start_at/end_at
+    period_from: Optional[int] = None
+    period_to: Optional[int] = None
+    start_at: Optional[str] = None
+    end_at: Optional[str] = None
     purpose: str = ""
     class_name: str = ""
     subject: str = ""
@@ -3897,19 +3921,44 @@ async def loan_availability(asset_id: str, start_at: str, end_at: str, _: dict =
 
 @api.post("/loans")
 async def create_loan(body: LoanIn, user: dict = Depends(get_current_user)):
-    conn = get_conn()
-    a = conn.execute("SELECT * FROM assets WHERE id = ?", (body.asset_id,)).fetchone()
-    if not a:
-        conn.close()
-        raise HTTPException(404, "Aset tidak ditemukan")
-    a = dict(a)
-    manage = can_manage_loan(user, a["campus"], a["category"])
+    if bool(body.asset_id) == bool(body.resource_id):
+        raise HTTPException(400, "Pilih satu aset atau satu cart/lab.")
     if user["role"] not in ADMIN_ROLES + ("ict_admin", "staff"):
-        conn.close()
         raise HTTPException(403, "Akun ini tidak dapat mengajukan peminjaman")
-    if not manage and (user.get("campus") or "") != a["campus"]:
+    conn = get_conn()
+    if body.asset_id:
+        a = conn.execute("SELECT * FROM assets WHERE id = ?", (body.asset_id,)).fetchone()
+        if not a:
+            conn.close()
+            raise HTTPException(404, "Aset tidak ditemukan")
+        target = {"campus": a["campus"], "category": a["category"], "kind": "item", "asset_id": a["id"], "resource_id": None}
+        info = dict(a)
+    else:
+        r = conn.execute("SELECT * FROM resources WHERE id = ? AND active = 1", (body.resource_id,)).fetchone()
+        if not r:
+            conn.close()
+            raise HTTPException(404, "Cart/lab tidak ditemukan")
+        target = {"campus": r["campus"], "category": r["category"], "kind": "off_schedule", "asset_id": None, "resource_id": r["id"]}
+        info = {"name": r["name"], "asset_tag": r["kind"], "category": r["category"], "campus": r["campus"]}
+    manage = can_manage_loan(user, target["campus"], target["category"])
+    if not manage and (user.get("campus") or "") != target["campus"]:
         conn.close()
-        raise HTTPException(403, "Aset ini bukan di kampus Anda.")
+        raise HTTPException(403, "Aset ini bukan di kampus Anda." if body.asset_id else "Cart/lab ini bukan di kampus Anda.")
+    # time window: lesson periods of one day, or free start/end
+    start_at, end_at = body.start_at, body.end_at
+    if body.date and body.period_from:
+        try:
+            t_from, t_to = booking_engine.period_times(conn, target["campus"], body.period_from, body.period_to or body.period_from)
+        except booking_engine.BookingError as e:
+            conn.close()
+            raise HTTPException(400, e.message)
+        start_at, end_at = f"{body.date}T{t_from}", f"{body.date}T{t_to}"
+    if not start_at or not end_at:
+        conn.close()
+        raise HTTPException(400, "Isi waktu mulai dan selesai, atau pilih tanggal dan jam pelajaran.")
+    if body.resource_id and body.take_home:
+        conn.close()
+        raise HTTPException(400, "Laptop/iPad/Lab tidak dapat dibawa keluar sekolah.")
     supervisor_id = None
     if body.take_home:
         sup = user.get("supervisor") or ""
@@ -3922,17 +3971,19 @@ async def create_loan(body: LoanIn, user: dict = Depends(get_current_user)):
     if override and not manage:
         conn.close()
         raise HTTPException(403, "Hanya Admin ICT yang dapat mengecualikan aturan.")
-    data = {"campus": a["campus"], "kind": "item", "asset_id": a["id"], "category": a["category"], "requester_id": user["id"],
-            "requester_name": user["name"], "start_at": body.start_at, "end_at": body.end_at, "units": 1,
-            "class_name": body.class_name, "subject": body.subject, "purpose": body.purpose, "use_location": body.use_location,
-            "note": body.note, "take_home": body.take_home, "supervisor_id": supervisor_id, "terms_accepted": body.terms_accepted}
+    data = {"campus": target["campus"], "kind": target["kind"], "asset_id": target["asset_id"], "resource_id": target["resource_id"],
+            "category": target["category"], "requester_id": user["id"], "requester_name": user["name"], "start_at": start_at, "end_at": end_at,
+            "units": body.units if body.resource_id else 1, "class_name": body.class_name, "subject": body.subject, "purpose": body.purpose,
+            "use_location": body.use_location, "note": body.note, "take_home": body.take_home, "supervisor_id": supervisor_id,
+            "terms_accepted": body.terms_accepted}
     try:
         b = booking_engine.reserve(conn, data=data, now=_local_now(), override=override, override_reason=body.override_reason)
     except booking_engine.BookingError as e:
         conn.close()
         raise HTTPException(409 if e.code in ("conflict", "overdue") else 400, e.message)
     warnings = b.pop("warnings", [])
-    detail = [("Keperluan", b["purpose"] or "—")]
+    a = info
+    detail = [("Keperluan", b["purpose"] or "—")] + ([("Jumlah unit", str(b["units_requested"]))] if body.resource_id else [])
     queue_email(conn, user["email"], f'[YPJ Assets] Pengajuan {b["number"]}: {a["name"]}',
                 _loan_mail(b, a, "Pengajuan Peminjaman Diterima", detail,
                            "<p>Pengajuan Anda telah diterima" + (" dan menunggu persetujuan supervisor." if b["status"] == "pending_supervisor"
@@ -3946,7 +3997,7 @@ async def create_loan(body: LoanIn, user: dict = Depends(get_current_user)):
                                    f'<p>{b["requester_name"]} meminta membawa aset ini keluar sekolah. Mohon beri keputusan di aplikasi YPJ Assets.</p>'),
                         "loan_supervisor", b["id"])
     elif b["status"] == "pending_ict":
-        for addr in loan_manager_emails(conn, a["campus"], a["category"]):
+        for addr in loan_manager_emails(conn, target["campus"], target["category"]):
             queue_email(conn, addr, f'[YPJ Assets] Pengajuan baru {b["number"]}: {a["name"]}',
                         _loan_mail(b, a, "Pengajuan Menunggu Konfirmasi", detail, "<p>Mohon konfirmasi di aplikasi YPJ Assets.</p>"),
                         "loan_new", b["id"])
@@ -3981,7 +4032,9 @@ async def list_loans(user: dict = Depends(get_current_user), scope: str = "mine"
         conds.append("b.status = ?"); params.append(status)
     if campus:
         conds.append("b.campus = ?"); params.append(campus)
-    rows = conn.execute(f"""SELECT b.*, a.name AS asset_name, a.asset_tag FROM bookings b LEFT JOIN assets a ON a.id = b.asset_id
+    booking_engine.mark_overdue(conn, _local_now())
+    rows = conn.execute(f"""SELECT b.*, COALESCE(a.name, r.name) AS asset_name, COALESCE(a.asset_tag, r.kind) AS asset_tag
+                            FROM bookings b LEFT JOIN assets a ON a.id = b.asset_id LEFT JOIN resources r ON r.id = b.resource_id
                             {'WHERE ' + ' AND '.join(conds) if conds else ''} ORDER BY b.created_at DESC LIMIT 500""", params).fetchall()
     out = []
     for r in rows:
@@ -3995,6 +4048,7 @@ async def list_loans(user: dict = Depends(get_current_user), scope: str = "mine"
 @api.get("/loans/pending-count")
 async def loans_pending_count(user: dict = Depends(get_current_user)):
     conn = get_conn()
+    booking_engine.mark_overdue(conn, _local_now())
     mine = conn.execute("SELECT COUNT(*) FROM bookings WHERE supervisor_id = ? AND status = 'pending_supervisor'", (user["id"],)).fetchone()[0]
     manage = 0
     if user["role"] in ("super_admin", "ict_admin", "admin"):
@@ -4042,6 +4096,511 @@ async def put_loan_policy(body: PolicyIn, user: dict = Depends(get_current_user)
     row = dict(conn.execute("SELECT * FROM loan_policies WHERE campus = ? AND category = ?", (body.campus, body.category)).fetchone())
     conn.close()
     return row
+
+
+# ---- Carts / labs, school periods, holidays, fixed schedules (phase 2) ----
+def can_setup_campus(user: dict, campus: str) -> bool:
+    """Periods and holidays belong to a campus: its ICT Admin, any admin and the super admin set them up."""
+    role = user.get("role")
+    if role in ADMIN_ROLES:
+        return True
+    return role == "ict_admin" and bool(user.get("campus")) and user.get("campus") == campus
+
+
+def _visible_campuses(user: dict, campus: Optional[str]) -> list:
+    """Campuses a reader may look at. Staff and ICT Admins see their own campus; admins, leaders and the super admin any."""
+    own = (user.get("campus") or "").strip()
+    if user["role"] in ("staff", "ict_admin") and own:
+        return [own]
+    if campus:
+        return [campus]
+    return [c for c in VALID_CAMPUSES if c]
+
+
+def _resource_or_404(conn, rid: str) -> dict:
+    r = conn.execute("SELECT * FROM resources WHERE id = ?", (rid,)).fetchone()
+    if not r:
+        conn.close()
+        raise HTTPException(404, "Cart/lab tidak ditemukan")
+    return dict(r)
+
+
+def _guard_resource_read(conn, user: dict, res: dict):
+    if res["campus"] not in _visible_campuses(user, res["campus"]):
+        conn.close()
+        raise HTTPException(403, "Cart/lab ini bukan di kampus Anda")
+
+
+def _resource_view(conn, r) -> dict:
+    d = dict(r)
+    d["unit_count"] = len(booking_engine.resource_units(conn, d["id"], active_only=False))
+    d["effective_capacity"] = booking_engine.resource_capacity(conn, d["id"])
+    return d
+
+
+class ResourceIn(BaseModel):
+    campus: str
+    name: str = Field(..., min_length=1)
+    kind: Literal["laptop_cart", "ipad_cart", "computer_lab", "room"] = "laptop_cart"
+    category: str = "IT Equipment"
+    capacity: int = Field(1, ge=1)
+    location: str = ""
+    active: bool = True
+
+
+@api.get("/loans/resources")
+async def list_resources(user: dict = Depends(get_current_user), campus: Optional[str] = None):
+    conn = get_conn()
+    camps = _visible_campuses(user, campus)
+    rows = conn.execute(f"SELECT * FROM resources WHERE campus IN ({','.join('?' * len(camps))}) ORDER BY campus, name", camps).fetchall()
+    out = [_resource_view(conn, r) for r in rows]
+    conn.close()
+    return out
+
+
+@api.post("/loans/resources")
+async def create_resource(body: ResourceIn, user: dict = Depends(get_current_user)):
+    if body.campus not in [c for c in VALID_CAMPUSES if c] or not can_manage_loan(user, body.campus, body.category):
+        raise HTTPException(403, "Tidak diizinkan membuat cart/lab untuk kampus dan kategori ini")
+    conn = get_conn()
+    rid = str(uuid.uuid4())
+    conn.execute("INSERT INTO resources (id, campus, name, kind, category, capacity, location, active, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                 (rid, body.campus, body.name.strip(), body.kind, body.category, body.capacity, body.location.strip(), int(body.active), now_iso()))
+    conn.commit()
+    out = _resource_view(conn, conn.execute("SELECT * FROM resources WHERE id = ?", (rid,)).fetchone())
+    conn.close()
+    return out
+
+
+@api.put("/loans/resources/{rid}")
+async def update_resource(rid: str, body: ResourceIn, user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    res = _resource_or_404(conn, rid)
+    if not (can_manage_loan(user, res["campus"], res["category"]) and can_manage_loan(user, res["campus"], body.category)) or body.campus != res["campus"]:
+        conn.close()
+        raise HTTPException(403, "Tidak diizinkan mengubah cart/lab ini")
+    conn.execute("UPDATE resources SET name = ?, kind = ?, category = ?, capacity = ?, location = ?, active = ? WHERE id = ?",
+                 (body.name.strip(), body.kind, body.category, body.capacity, body.location.strip(), int(body.active), rid))
+    conn.commit()
+    out = _resource_view(conn, conn.execute("SELECT * FROM resources WHERE id = ?", (rid,)).fetchone())
+    conn.close()
+    return out
+
+
+@api.get("/loans/resources/{rid}/units")
+async def resource_units_list(rid: str, user: dict = Depends(get_current_user)):
+    """Units of a cart/lab with this semester's student pairing."""
+    conn = get_conn()
+    res = _resource_or_404(conn, rid)
+    _guard_resource_read(conn, user, res)
+    out = []
+    for u in booking_engine.resource_units(conn, rid, active_only=False):
+        pair = conn.execute("""SELECT class_name, student_name, student_no, academic_year, semester FROM unit_assignments
+                               WHERE resource_id = ? AND asset_id = ? ORDER BY academic_year DESC, semester DESC LIMIT 1""", (rid, u["id"])).fetchone()
+        out.append({**u, "pairing": dict(pair) if pair else None})
+    conn.close()
+    return out
+
+
+class ResourceUnitsIn(BaseModel):
+    asset_ids: List[str]
+
+
+@api.put("/loans/resources/{rid}/units")
+async def set_resource_units(rid: str, body: ResourceUnitsIn, user: dict = Depends(get_current_user)):
+    """Replace which assets belong to the cart / lab. Assets must be on the same campus."""
+    conn = get_conn()
+    res = _resource_or_404(conn, rid)
+    if not can_manage_loan(user, res["campus"], res["category"]):
+        conn.close()
+        raise HTTPException(403, "Tidak diizinkan mengubah isi cart/lab ini")
+    ids = list(dict.fromkeys(body.asset_ids))
+    for aid in ids:
+        a = conn.execute("SELECT campus FROM assets WHERE id = ?", (aid,)).fetchone()
+        if not a or a["campus"] != res["campus"]:
+            conn.close()
+            raise HTTPException(400, "Semua unit harus berasal dari kampus yang sama dengan cart/lab.")
+    conn.execute("UPDATE asset_loan_settings SET resource_id = NULL WHERE resource_id = ?", (rid,))
+    for aid in ids:
+        conn.execute("""INSERT INTO asset_loan_settings (asset_id, borrowable, loan_type, resource_id) VALUES (?,1,'scheduled',?)
+                        ON CONFLICT(asset_id) DO UPDATE SET resource_id = excluded.resource_id""", (aid, rid))
+    conn.commit()
+    conn.close()
+    return {"ok": True, "units": len(ids)}
+
+
+class PairingItem(BaseModel):
+    asset_id: str
+    class_name: str = ""
+    student_name: str = ""
+    student_no: str = ""
+
+
+class PairingsIn(BaseModel):
+    academic_year: str
+    semester: str
+    items: List[PairingItem]
+
+
+@api.get("/loans/resources/{rid}/pairings")
+async def get_pairings(rid: str, academic_year: str, semester: str, user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    res = _resource_or_404(conn, rid)
+    _guard_resource_read(conn, user, res)
+    rows = [dict(r) for r in conn.execute("SELECT * FROM unit_assignments WHERE resource_id = ? AND academic_year = ? AND semester = ?",
+                                          (rid, academic_year, semester))]
+    conn.close()
+    return rows
+
+
+@api.put("/loans/resources/{rid}/pairings")
+async def put_pairings(rid: str, body: PairingsIn, user: dict = Depends(get_current_user)):
+    """Fix unit <-> student pairs for a semester (e.g. iPad 12 is always the student with roll number 12)."""
+    conn = get_conn()
+    res = _resource_or_404(conn, rid)
+    if not can_manage_loan(user, res["campus"], res["category"]):
+        conn.close()
+        raise HTTPException(403, "Tidak diizinkan")
+    members = {u["id"] for u in booking_engine.resource_units(conn, rid, active_only=False)}
+    for it in body.items:
+        if it.asset_id not in members:
+            conn.close()
+            raise HTTPException(400, "Unit bukan bagian dari cart/lab ini")
+    conn.execute("DELETE FROM unit_assignments WHERE resource_id = ? AND academic_year = ? AND semester = ?", (rid, body.academic_year, body.semester))
+    for it in body.items:
+        if not (it.student_name.strip() or it.student_no.strip()):
+            continue
+        conn.execute("""INSERT OR REPLACE INTO unit_assignments (id, campus, academic_year, semester, resource_id, asset_id, class_name, student_name, student_no)
+                        VALUES (?,?,?,?,?,?,?,?,?)""", (str(uuid.uuid4()), res["campus"], body.academic_year, body.semester, rid, it.asset_id,
+                                                       it.class_name.strip(), it.student_name.strip(), it.student_no.strip()))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+# -- school periods & holidays --
+class PeriodItem(BaseModel):
+    period_no: int = Field(..., ge=1, le=20)
+    start_time: str
+    end_time: str
+
+
+class PeriodsIn(BaseModel):
+    campus: str
+    periods: List[PeriodItem]
+
+
+_HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+@api.get("/loans/periods")
+async def list_periods(user: dict = Depends(get_current_user), campus: Optional[str] = None):
+    conn = get_conn()
+    camps = _visible_campuses(user, campus)
+    rows = conn.execute(f"SELECT campus, period_no, start_time, end_time FROM school_periods WHERE campus IN ({','.join('?' * len(camps))}) ORDER BY campus, period_no", camps).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@api.put("/loans/periods")
+async def put_periods(body: PeriodsIn, user: dict = Depends(get_current_user)):
+    """Replace the master list of lesson periods of a campus."""
+    if body.campus not in [c for c in VALID_CAMPUSES if c] or not can_setup_campus(user, body.campus):
+        raise HTTPException(403, "Tidak diizinkan")
+    nos = [p.period_no for p in body.periods]
+    if len(set(nos)) != len(nos):
+        raise HTTPException(400, "Nomor jam pelajaran tidak boleh ganda")
+    ordered = sorted(body.periods, key=lambda p: p.period_no)
+    prev_end = ""
+    for p in ordered:
+        if not (_HHMM.match(p.start_time) and _HHMM.match(p.end_time)) or p.end_time <= p.start_time:
+            raise HTTPException(400, f"Jam ke-{p.period_no}: format HH:MM dan jam selesai harus setelah jam mulai")
+        if p.start_time < prev_end:
+            raise HTTPException(400, f"Jam ke-{p.period_no} tumpang tindih dengan jam sebelumnya")
+        prev_end = p.end_time
+    conn = get_conn()
+    used = conn.execute("SELECT DISTINCT period_from, period_to FROM fixed_schedules WHERE campus = ? AND status = 'active'", (body.campus,)).fetchall()
+    keep = set(nos)
+    for u in used:
+        if u["period_from"] not in keep or u["period_to"] not in keep:
+            conn.close()
+            raise HTTPException(409, "Jam pelajaran yang masih dipakai jadwal tetap tidak boleh dihapus.")
+    conn.execute("DELETE FROM school_periods WHERE campus = ?", (body.campus,))
+    for p in ordered:
+        conn.execute("INSERT INTO school_periods (id, campus, period_no, start_time, end_time) VALUES (?,?,?,?,?)",
+                     (str(uuid.uuid4()), body.campus, p.period_no, p.start_time, p.end_time))
+    conn.commit()
+    conn.close()
+    return {"ok": True, "periods": len(ordered)}
+
+
+class HolidayIn(BaseModel):
+    campus: str = ""
+    date: str
+    name: str = ""
+
+
+@api.get("/loans/holidays")
+async def list_holidays(user: dict = Depends(get_current_user), campus: Optional[str] = None):
+    conn = get_conn()
+    camps = _visible_campuses(user, campus)
+    rows = conn.execute(f"SELECT * FROM holidays WHERE campus IN ('', {','.join('?' * len(camps))}) ORDER BY date", camps).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@api.post("/loans/holidays")
+async def add_holiday(body: HolidayIn, user: dict = Depends(get_current_user)):
+    """campus '' = a holiday for every campus (admins only)."""
+    try:
+        date_obj = datetime.strptime(body.date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(400, "Tanggal tidak valid")
+    if body.campus and body.campus not in [c for c in VALID_CAMPUSES if c]:
+        raise HTTPException(400, "Kampus tidak valid")
+    if (not body.campus and user["role"] not in ADMIN_ROLES) or (body.campus and not can_setup_campus(user, body.campus)):
+        raise HTTPException(403, "Tidak diizinkan")
+    conn = get_conn()
+    hid = str(uuid.uuid4())
+    try:
+        conn.execute("INSERT INTO holidays (id, campus, date, name) VALUES (?,?,?,?)", (hid, body.campus, date_obj.strftime("%Y-%m-%d"), body.name.strip()))
+    except sqlite3.IntegrityError:
+        conn.close()
+        raise HTTPException(409, "Hari libur ini sudah ada")
+    conn.commit()
+    row = dict(conn.execute("SELECT * FROM holidays WHERE id = ?", (hid,)).fetchone())
+    conn.close()
+    return row
+
+
+@api.delete("/loans/holidays/{hid}")
+async def delete_holiday(hid: str, user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    h = conn.execute("SELECT * FROM holidays WHERE id = ?", (hid,)).fetchone()
+    if not h:
+        conn.close()
+        raise HTTPException(404, "Hari libur tidak ditemukan")
+    if (not h["campus"] and user["role"] not in ADMIN_ROLES) or (h["campus"] and not can_setup_campus(user, h["campus"])):
+        conn.close()
+        raise HTTPException(403, "Tidak diizinkan")
+    conn.execute("DELETE FROM holidays WHERE id = ?", (hid,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+# -- fixed schedules --
+class ScheduleIn(BaseModel):
+    resource_id: str
+    academic_year: str
+    semester: str
+    class_name: str = Field(..., min_length=1)
+    subject: str = ""
+    teacher_user_id: Optional[str] = None
+    teacher_name: str = ""
+    weekday: int = Field(..., ge=0, le=6)
+    period_from: int = Field(..., ge=1)
+    period_to: int = Field(..., ge=1)
+    units: int = Field(1, ge=1)
+    valid_from: str
+    valid_to: str
+    status: Literal["active", "cancelled"] = "active"
+
+
+def _schedule_payload(conn, body: ScheduleIn) -> dict:
+    res = _resource_or_404(conn, body.resource_id)
+    data = body.model_dump()
+    data["campus"] = res["campus"]
+    if body.teacher_user_id:
+        t = conn.execute("SELECT name FROM users WHERE id = ?", (body.teacher_user_id,)).fetchone()
+        if not t:
+            conn.close()
+            raise HTTPException(400, "Guru pengampu tidak ditemukan")
+        data["teacher_name"] = t["name"]
+    return {**data, "_res": res}
+
+
+@api.get("/loans/schedules")
+async def list_schedules(user: dict = Depends(get_current_user), resource_id: Optional[str] = None, campus: Optional[str] = None):
+    conn = get_conn()
+    camps = _visible_campuses(user, campus)
+    conds, params = [f"s.campus IN ({','.join('?' * len(camps))})"], list(camps)
+    if resource_id:
+        conds.append("s.resource_id = ?"); params.append(resource_id)
+    rows = conn.execute(f"""SELECT s.*, r.name AS resource_name FROM fixed_schedules s JOIN resources r ON r.id = s.resource_id
+                            WHERE {' AND '.join(conds)} ORDER BY s.weekday, s.period_from""", params).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["exceptions"] = [dict(e) for e in conn.execute("SELECT * FROM schedule_exceptions WHERE schedule_id = ? ORDER BY date", (d["id"],))]
+        out.append(d)
+    conn.close()
+    return out
+
+
+@api.post("/loans/schedules")
+async def create_schedule(body: ScheduleIn, user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    data = _schedule_payload(conn, body)
+    res = data.pop("_res")
+    if not can_manage_loan(user, res["campus"], res["category"]):
+        conn.close()
+        raise HTTPException(403, "Hanya Admin ICT untuk kampus ini yang dapat mengisi jadwal tetap")
+    problems = booking_engine.validate_schedule(conn, data, now=_local_now())
+    if problems:
+        conn.close()
+        raise HTTPException(409, " ".join(problems))
+    sid = str(uuid.uuid4())
+    conn.execute("""INSERT INTO fixed_schedules (id, campus, academic_year, semester, resource_id, class_name, subject, teacher_user_id, teacher_name,
+                    weekday, period_from, period_to, units, valid_from, valid_to, status, created_by, created_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 (sid, data["campus"], data["academic_year"], data["semester"], data["resource_id"], data["class_name"].strip(), data["subject"].strip(),
+                  data["teacher_user_id"], data["teacher_name"].strip(), data["weekday"], data["period_from"], data["period_to"], data["units"],
+                  data["valid_from"], data["valid_to"], data["status"], user["id"], now_iso()))
+    conn.commit()
+    row = dict(conn.execute("SELECT * FROM fixed_schedules WHERE id = ?", (sid,)).fetchone())
+    conn.close()
+    return row
+
+
+@api.put("/loans/schedules/{sid}")
+async def update_schedule(sid: str, body: ScheduleIn, user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    old = conn.execute("SELECT * FROM fixed_schedules WHERE id = ?", (sid,)).fetchone()
+    if not old:
+        conn.close()
+        raise HTTPException(404, "Jadwal tidak ditemukan")
+    data = _schedule_payload(conn, body)
+    res = data.pop("_res")
+    if not can_manage_loan(user, res["campus"], res["category"]) or res["campus"] != old["campus"]:
+        conn.close()
+        raise HTTPException(403, "Tidak diizinkan")
+    if data["status"] == "active":
+        problems = booking_engine.validate_schedule(conn, data, exclude_id=sid, now=_local_now())
+        if problems:
+            conn.close()
+            raise HTTPException(409, " ".join(problems))
+    conn.execute("""UPDATE fixed_schedules SET academic_year=?, semester=?, resource_id=?, class_name=?, subject=?, teacher_user_id=?, teacher_name=?,
+                    weekday=?, period_from=?, period_to=?, units=?, valid_from=?, valid_to=?, status=? WHERE id = ?""",
+                 (data["academic_year"], data["semester"], data["resource_id"], data["class_name"].strip(), data["subject"].strip(), data["teacher_user_id"],
+                  data["teacher_name"].strip(), data["weekday"], data["period_from"], data["period_to"], data["units"], data["valid_from"],
+                  data["valid_to"], data["status"], sid))
+    conn.commit()
+    row = dict(conn.execute("SELECT * FROM fixed_schedules WHERE id = ?", (sid,)).fetchone())
+    conn.close()
+    return row
+
+
+class ExceptionIn(BaseModel):
+    date: str
+    note: str = ""
+
+
+@api.post("/loans/schedules/{sid}/exceptions")
+async def add_schedule_exception(sid: str, body: ExceptionIn, user: dict = Depends(get_current_user)):
+    """Mark one session "Libur": the slot opens up for other requests."""
+    conn = get_conn()
+    s = conn.execute("SELECT s.*, r.category FROM fixed_schedules s JOIN resources r ON r.id = s.resource_id WHERE s.id = ?", (sid,)).fetchone()
+    if not s:
+        conn.close()
+        raise HTTPException(404, "Jadwal tidak ditemukan")
+    if not can_manage_loan(user, s["campus"], s["category"]):
+        conn.close()
+        raise HTTPException(403, "Tidak diizinkan")
+    try:
+        d = datetime.strptime(body.date, "%Y-%m-%d").date()
+    except ValueError:
+        conn.close()
+        raise HTTPException(400, "Tanggal tidak valid")
+    if d.weekday() != s["weekday"] or not (s["valid_from"] <= body.date <= s["valid_to"]):
+        conn.close()
+        raise HTTPException(400, "Tanggal ini bukan sesi jadwal tersebut")
+    if conn.execute("SELECT 1 FROM bookings WHERE schedule_id = ? AND start_at LIKE ? AND status IN ('in_use','overdue','completed','problem')",
+                    (sid, body.date + "%")).fetchone():
+        conn.close()
+        raise HTTPException(409, "Sesi ini sudah diserahterimakan dan tidak dapat ditandai libur.")
+    try:
+        conn.execute("INSERT INTO schedule_exceptions (id, schedule_id, date, kind, note) VALUES (?,?,?,'cancelled',?)", (str(uuid.uuid4()), sid, body.date, body.note.strip()))
+    except sqlite3.IntegrityError:
+        conn.close()
+        raise HTTPException(409, "Sesi ini sudah ditandai libur")
+    conn.execute("UPDATE bookings SET status = 'cancelled', decision_note = 'Sesi ditandai libur', updated_at = ? WHERE schedule_id = ? AND start_at LIKE ? AND status = 'approved'",
+                 (now_iso(), sid, body.date + "%"))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@api.delete("/loans/schedules/{sid}/exceptions/{eid}")
+async def delete_schedule_exception(sid: str, eid: str, user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    s = conn.execute("SELECT s.*, r.category FROM fixed_schedules s JOIN resources r ON r.id = s.resource_id WHERE s.id = ?", (sid,)).fetchone()
+    if not s or not can_manage_loan(user, s["campus"], s["category"]):
+        conn.close()
+        raise HTTPException(403 if s else 404, "Tidak diizinkan" if s else "Jadwal tidak ditemukan")
+    ex = conn.execute("SELECT * FROM schedule_exceptions WHERE id = ? AND schedule_id = ?", (eid, sid)).fetchone()
+    if not ex:
+        conn.close()
+        raise HTTPException(404, "Pengecualian tidak ditemukan")
+    # putting a session back must not exceed the cart's capacity
+    t_from, t_to = booking_engine.period_times(conn, s["campus"], s["period_from"], s["period_to"])
+    start, end = booking_engine.parse_dt(f"{ex['date']}T{t_from}"), booking_engine.parse_dt(f"{ex['date']}T{t_to}")
+    info = booking_engine.check_availability(conn, resource_id=s["resource_id"], units=s["units"], start=start, end=end)
+    if not info["ok"]:
+        conn.close()
+        raise HTTPException(409, "Slot ini sudah dipakai pengajuan lain, sesi tidak dapat dikembalikan.")
+    conn.execute("DELETE FROM schedule_exceptions WHERE id = ?", (eid,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+class SessionIn(BaseModel):
+    date: str
+
+
+@api.post("/loans/schedules/{sid}/session")
+async def open_schedule_session(sid: str, body: SessionIn, user: dict = Depends(get_current_user)):
+    """Start the hand-over of one fixed-schedule session (creates the booking the check-out works on)."""
+    conn = get_conn()
+    s = conn.execute("SELECT s.*, r.category FROM fixed_schedules s JOIN resources r ON r.id = s.resource_id WHERE s.id = ?", (sid,)).fetchone()
+    if not s:
+        conn.close()
+        raise HTTPException(404, "Jadwal tidak ditemukan")
+    if not can_manage_loan(user, s["campus"], s["category"]):
+        conn.close()
+        raise HTTPException(403, "Hanya Admin ICT untuk kampus ini yang dapat melakukan serah terima")
+    try:
+        day = datetime.strptime(body.date, "%Y-%m-%d").date()
+    except ValueError:
+        conn.close()
+        raise HTTPException(400, "Tanggal tidak valid")
+    b = _engine_call(booking_engine.materialize_fixed, conn, schedule_id=sid, day=day, by_id=user["id"], by_name=user["name"], now=_local_now())
+    _, a = _loan_context(conn, b["id"])
+    view = _loan_view(conn, user, b, a)
+    conn.close()
+    return view
+
+
+# -- calendar --
+@api.get("/loans/calendar")
+async def loan_calendar(resource_id: str, week_start: str, user: dict = Depends(get_current_user)):
+    """One week of a cart / lab: for every day and lesson period, how many units are used or free and by whom."""
+    conn = get_conn()
+    res = _resource_or_404(conn, resource_id)
+    _guard_resource_read(conn, user, res)
+    try:
+        monday = datetime.strptime(week_start, "%Y-%m-%d").date()
+    except ValueError:
+        conn.close()
+        raise HTTPException(400, "Tanggal tidak valid")
+    monday -= timedelta(days=monday.weekday())
+    periods = [dict(r) for r in conn.execute("SELECT period_no, start_time, end_time FROM school_periods WHERE campus = ? ORDER BY period_no", (res["campus"],))]
+    holidays = {r["date"]: r["name"] for r in conn.execute("SELECT date, name FROM holidays WHERE campus IN (?, '')", (res["campus"],))}
+    days = booking_engine.week_cells(conn, res, monday, periods, holidays)
+    resource = _resource_view(conn, conn.execute("SELECT * FROM resources WHERE id = ?", (resource_id,)).fetchone())
+    conn.close()
+    return {"resource": resource, "week_start": monday.isoformat(), "periods": periods, "days": days}
 
 
 @api.get("/loans/{bid}")
@@ -4144,8 +4703,25 @@ class UnitCheckIn(BaseModel):
 
 
 class CheckIn(BaseModel):
-    units: List[UnitCheckIn]
+    units: List[UnitCheckIn] = []
     group_photo: str = ""
+    all_units: bool = False            # cart / lab: every unit at once; `units` then only lists the exceptions
+    exclude: List[str] = []            # asset ids that are not handed over / not back
+
+
+def _bulk_merge(conn, booking: dict, body: "CheckIn", only_unreturned: bool) -> list:
+    """Unit rows for a check-out / check-in. With all_units the cart's units are filled in as "fine" and the entries
+    in body.units (problem units, with notes / photos) replace their default row."""
+    explicit = [u.model_dump() for u in body.units]
+    if not body.all_units:
+        return explicit
+    if not booking["resource_id"]:
+        raise HTTPException(400, "Pilihan semua unit hanya untuk cart/lab.")
+    rows = {u["asset_id"]: u for u in booking_engine.bulk_units(conn, booking, exclude=body.exclude, only_unreturned=only_unreturned)}
+    for u in explicit:
+        rows[u["asset_id"]] = {**rows.get(u["asset_id"], {}), **{k: v for k, v in u.items() if v not in ("", None, [])}}
+        rows[u["asset_id"]].setdefault("accessories", [])
+    return list(rows.values())
 
 
 @api.post("/loans/{bid}/check-out")
@@ -4155,7 +4731,8 @@ async def loan_check_out(bid: str, body: CheckIn, user: dict = Depends(get_curre
     if not can_manage_loan(user, b0["campus"], b0["category"]):
         conn.close()
         raise HTTPException(403, "Hanya Admin ICT untuk kampus dan kategori ini yang dapat melakukan serah terima")
-    b = _engine_call(booking_engine.check_out, conn, booking_id=bid, units=[u.model_dump() for u in body.units], now=_local_now(),
+    units = _bulk_merge(conn, b0, body, only_unreturned=False)
+    b = _engine_call(booking_engine.check_out, conn, booking_id=bid, units=units, now=_local_now(),
                      by_id=user["id"], by_name=user["name"], group_photo=body.group_photo)
     _, a = _loan_context(conn, bid)
     req_user = conn.execute("SELECT email FROM users WHERE id = ?", (b["requester_id"],)).fetchone()
@@ -4176,7 +4753,8 @@ async def loan_check_in(bid: str, body: CheckIn, user: dict = Depends(get_curren
     if not can_manage_loan(user, b0["campus"], b0["category"]):
         conn.close()
         raise HTTPException(403, "Hanya Admin ICT untuk kampus dan kategori ini yang dapat menerima pengembalian")
-    res = _engine_call(booking_engine.check_in, conn, booking_id=bid, units=[u.model_dump() for u in body.units], now=_local_now(),
+    units = _bulk_merge(conn, b0, body, only_unreturned=True)
+    res = _engine_call(booking_engine.check_in, conn, booking_id=bid, units=units, now=_local_now(),
                        by_id=user["id"], by_name=user["name"], group_photo=body.group_photo)
     b = res["booking"]
     _, a = _loan_context(conn, bid)
@@ -4858,6 +5436,7 @@ async def on_startup():
     scheduler.add_job(send_return_reminders, "cron", hour=8, minute=0)
     scheduler.add_job(send_asset_due_reminders, "cron", hour=8, minute=5)
     scheduler.add_job(send_assignment_reminders, "cron", hour=8, minute=10)
+    scheduler.add_job(mark_overdue_loans, "interval", minutes=15)
     scheduler.start()
     mode = "production" if BUILD_DIR.exists() else "development"
     logger.info(f"Startup complete [{mode}] — DB: {DB_PATH}")
