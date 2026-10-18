@@ -18,7 +18,7 @@ import { toast } from "sonner";
 import { useLang } from "../context/LangContext";
 import { CATEGORY_VALUES, CATEGORY_KEYS } from "../i18n";
 
-const CAMPUSES = ["YPJ Kuala Kencana", "YPJ Tembagapura"];
+const CAMPUSES = ["YPJ Kuala Kencana", "YPJ TPRA"];
 
 const UNIT_VALUES = ["paud", "sd", "smp", "admin", "shared"];
 const CONDITION_VALUES = ["good", "fair", "poor", "damaged"];

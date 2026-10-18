@@ -17,11 +17,11 @@ import { isAdminRole } from "../lib/roles";
 import { ownerName } from "../lib/format";
 import BulkTransferDialog from "../components/assets/BulkTransferDialog";
 
-const CAMPUSES = ["YPJ Kuala Kencana", "YPJ Tembagapura"];
+const CAMPUSES = ["YPJ Kuala Kencana", "YPJ TPRA"];
 
 const CAMPUS_DOT = {
   "YPJ Kuala Kencana": "bg-amber-400",
-  "YPJ Tembagapura": "bg-blue-500",
+  "YPJ TPRA": "bg-blue-500",
 };
 
 const STATUS_CLS = {

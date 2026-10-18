@@ -12,7 +12,7 @@ import { toast } from "sonner";
 import { Plus, Search, Pencil } from "lucide-react";
 import ClassroomEditDialog from "../components/assets/ClassroomEditDialog";
 
-const CAMPUSES = ["YPJ Kuala Kencana", "YPJ Tembagapura"];
+const CAMPUSES = ["YPJ Kuala Kencana", "YPJ TPRA"];
 const TYPES = ["kelas", "lab", "kantor", "lainnya"];
 const SEL = "mt-2 w-full h-10 px-3 text-sm border border-slate-300 bg-white rounded-none";
 

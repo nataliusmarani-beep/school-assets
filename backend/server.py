@@ -33,6 +33,11 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, EmailStr
+
+try:  # run as the package (uvicorn backend.server:app) or as a plain module (tests, local scripts)
+    from . import booking_engine
+except ImportError:
+    import booking_engine
 from apscheduler.schedulers.background import BackgroundScheduler
 
 
@@ -63,16 +68,16 @@ APP_URL       = (os.environ.get("APP_URL")
 # Loan notification recipients (set in Railway environment variables)
 # General inbox that receives new-request and return-complete alerts
 LOAN_NOTIFY_EMAIL  = os.environ.get("LOAN_NOTIFY_EMAIL", "")
-# Campus heads — keyed by campus slug (KK = Kuala Kencana, TB = Tembagapura)
-HEAD_KK_EMAIL       = os.environ.get("HEAD_KK_EMAIL", "")        # Head of Campus – YPJ Kuala Kencana
-HEAD_TB_EMAIL       = os.environ.get("HEAD_TB_EMAIL", "")        # Head of Campus – YPJ Tembagapura
-HEAD_ADMIN_KK_EMAIL = os.environ.get("HEAD_ADMIN_KK_EMAIL", "")  # Head of Administration – YPJ Kuala Kencana
-HEAD_ADMIN_TB_EMAIL = os.environ.get("HEAD_ADMIN_TB_EMAIL", "")  # Head of Administration – YPJ Tembagapura
+# Campus heads — keyed by campus slug (KK = Kuala Kencana, TPRA). The old *_TB_* variable names still work.
+HEAD_KK_EMAIL         = os.environ.get("HEAD_KK_EMAIL", "")        # Head of Campus – YPJ Kuala Kencana
+HEAD_TPRA_EMAIL       = os.environ.get("HEAD_TPRA_EMAIL") or os.environ.get("HEAD_TB_EMAIL", "")  # Head of Campus – YPJ TPRA
+HEAD_ADMIN_KK_EMAIL   = os.environ.get("HEAD_ADMIN_KK_EMAIL", "")  # Head of Administration – YPJ Kuala Kencana
+HEAD_ADMIN_TPRA_EMAIL = os.environ.get("HEAD_ADMIN_TPRA_EMAIL") or os.environ.get("HEAD_ADMIN_TB_EMAIL", "")  # Head of Administration – YPJ TPRA
 
 # Map campus name → (head-of-campus email, head-of-admin email)
 CAMPUS_HEAD_EMAILS: dict = {
     "YPJ Kuala Kencana": [HEAD_KK_EMAIL, HEAD_ADMIN_KK_EMAIL],
-    "YPJ Tembagapura":   [HEAD_TB_EMAIL, HEAD_ADMIN_TB_EMAIL],
+    "YPJ TPRA":   [HEAD_TPRA_EMAIL, HEAD_ADMIN_TPRA_EMAIL],
 }
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -429,8 +434,27 @@ def init_db():
     backfill_assignee_user_ids(conn)
     reset_free_text_owners(conn)
     migrate_money_to_idr(conn)
+    rename_campus_tembagapura_to_tpra(conn)
+    booking_engine.init_booking_schema(conn)
+    migrated = booking_engine.migrate_legacy_loans(conn)
+    if migrated:
+        logger.warning("Copied %d legacy loan request(s) into bookings", migrated)
     sync_classrooms(conn)
     conn.close()
+
+
+def rename_campus_tembagapura_to_tpra(conn):
+    """One time: the campus "YPJ Tembagapura" is now called "YPJ TPRA" (stored as plain text on users, assets, classrooms)."""
+    if conn.execute("SELECT 1 FROM app_meta WHERE key = 'campus_tpra_rename_v1'").fetchone():
+        return
+    changed = 0
+    for table in ("users", "assets", "classrooms"):
+        changed += conn.execute(f"UPDATE {table} SET campus = 'YPJ TPRA' WHERE campus = 'YPJ Tembagapura'").rowcount
+    conn.execute("INSERT OR REPLACE INTO app_meta (key, value) VALUES ('campus_tpra_rename_v1', ?)",
+                 (datetime.now(timezone.utc).isoformat(),))
+    conn.commit()
+    if changed:
+        logger.warning("Renamed campus to YPJ TPRA on %d row(s)", changed)
 
 
 def backfill_assignee_user_ids(conn):
@@ -538,15 +562,38 @@ async def get_current_user(request: Request) -> dict:
         raise HTTPException(401, "User not found")
     user = row_to_dict(row)
     user.pop("password_hash", None)
+    # Leaders are strictly view-only: refuse every write except signing out.
+    if user.get("role") == "leader" and request.method not in ("GET", "HEAD", "OPTIONS") \
+            and request.url.path not in LEADER_WRITE_ALLOWED:
+        raise HTTPException(403, "Leader accounts are view-only")
     return user
 
 
 ADMIN_ROLES = ("admin", "super_admin")  # super_admin can do everything an admin can, plus manage admin accounts
+ALL_ROLES = ("super_admin", "admin", "ict_admin", "leader", "staff")
+# ict_admin: PIC of the ICT-media categories for ONE campus (loans, schedules, hand-over). leader: read-only, sees everything.
+ICT_CATEGORIES = ("IT Equipment", "AV Equipment", "Music Equipment")
+LEADER_WRITE_ALLOWED = ("/api/auth/logout",)
 
 
 async def admin_required(user: dict = Depends(get_current_user)) -> dict:
     if user.get("role") not in ADMIN_ROLES:
         raise HTTPException(403, "Admin access required")
+    return user
+
+
+def is_ict_pic(user: dict, campus: str, category: str) -> bool:
+    """True when this user may run loans for an asset: super_admin always, ict_admin only for ICT categories on their own campus."""
+    if user.get("role") == "super_admin":
+        return True
+    return (user.get("role") == "ict_admin" and category in ICT_CATEGORIES
+            and bool(user.get("campus")) and user.get("campus") == (campus or ""))
+
+
+async def ict_pic_required(user: dict = Depends(get_current_user)) -> dict:
+    """Any account that may manage ICT loans (campus/category are checked per record with is_ict_pic)."""
+    if user.get("role") not in ("super_admin", "ict_admin"):
+        raise HTTPException(403, "ICT Admin access required")
     return user
 
 
@@ -561,7 +608,7 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str
     name: str
-    role: Literal["super_admin", "admin", "staff"] = "staff"
+    role: Literal["super_admin", "admin", "ict_admin", "leader", "staff"] = "staff"
     department: Optional[str] = None
     campus: Optional[str] = ""
     supervisor: Optional[str] = ""
@@ -1134,10 +1181,17 @@ def _guard_privileged_role(actor: dict, *roles):
         raise HTTPException(403, "Only a Super Admin can manage Super Admin accounts")
 
 
+def _require_campus_for_ict_admin(role: Optional[str], campus: Optional[str]):
+    """An ICT Admin is the PIC of one campus, so the account must have one."""
+    if role == "ict_admin" and not (campus or "").strip():
+        raise HTTPException(400, "ICT Admin harus memiliki kampus (setiap kampus punya Admin ICT sendiri).")
+
+
 @api.post("/auth/register")
 async def register(body: UserCreate, actor: dict = Depends(admin_required)):
     """Creating accounts is an admin action (there is no public sign-up)."""
     _guard_privileged_role(actor, body.role)
+    _require_campus_for_ict_admin(body.role, body.campus)
     conn = get_conn()
     email = body.email.lower()
     existing = conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
@@ -1263,7 +1317,7 @@ def _validate_user_rows(conn, rows: list) -> list:
             if c:
                 d["campus"] = c
             else:
-                errs.append('campus must be "YPJ Kuala Kencana" or "YPJ Tembagapura"')
+                errs.append('campus must be "YPJ Kuala Kencana" or "YPJ TPRA"')
         if d["password"] and len(d["password"]) < 6:
             errs.append("password must be at least 6 characters")
         if d["supervisor"] and not _EMAIL_RE.match(d["supervisor"]):
@@ -1294,7 +1348,7 @@ def _welcome_email_html(name: str, email: str, password: str, generated: bool) -
 @api.get("/users/import-template")
 async def users_import_template(_: dict = Depends(admin_required)):
     ex1 = "Budi Santoso,budi@fmi.com,staff,SD Administration,YPJ Kuala Kencana,Jeni Mansawan,jnelcema@fmi.com,0000123456,"
-    ex2 = "Sari Dewi,sari@fmi.com,staff,SMP,YPJ Tembagapura,,,,"
+    ex2 = "Sari Dewi,sari@fmi.com,staff,SMP,YPJ TPRA,,,,"
     buf = io.BytesIO(("﻿" + ",".join(USER_IMPORT_COLUMNS) + f"\n{ex1}\n{ex2}\n").encode("utf-8"))
     return StreamingResponse(buf, media_type="text/csv",
                              headers={"Content-Disposition": 'attachment; filename="user-import-template.csv"'})
@@ -1535,12 +1589,13 @@ async def update_user(uid: str, body: UserPatch, actor: dict = Depends(admin_req
     updates = {k: v for k, v in body.model_dump(exclude_none=True).items() if v is not None}
     if not updates:
         raise HTTPException(400, "No fields to update")
-    if "role" in updates and updates["role"] not in ("super_admin", "admin", "staff"):
+    if "role" in updates and updates["role"] not in ALL_ROLES:
         raise HTTPException(400, "Invalid role")
     chk = get_conn()
-    target = chk.execute("SELECT role FROM users WHERE id = ?", (uid,)).fetchone()
+    target = chk.execute("SELECT role, campus FROM users WHERE id = ?", (uid,)).fetchone()
     if target:
         _guard_privileged_role(actor, target["role"], updates.get("role"))
+        _require_campus_for_ict_admin(updates.get("role", target["role"]), updates.get("campus", target["campus"]))
         if target["role"] == "super_admin" and updates.get("role", "super_admin") != "super_admin" \
                 and chk.execute("SELECT COUNT(*) FROM users WHERE role='super_admin'").fetchone()[0] <= 1:
             chk.close()
@@ -1618,8 +1673,8 @@ def is_admin_user(user: dict) -> bool:
 
 
 def asset_scope(user: dict, prefix: str = "") -> tuple:
-    """(sql_condition, params) limiting an assets query to what this user may see; ("", []) for admins."""
-    if is_admin_user(user):
+    """(sql_condition, params) limiting an assets query to what this user may see; ("", []) for admins and leaders."""
+    if is_admin_user(user) or user.get("role") == "leader":
         return "", []
     campus = (user.get("campus") or "").strip()
     if campus:
@@ -1628,7 +1683,7 @@ def asset_scope(user: dict, prefix: str = "") -> tuple:
 
 
 def can_view_asset(user: dict, asset: dict) -> bool:
-    if is_admin_user(user):
+    if is_admin_user(user) or user.get("role") == "leader":
         return True
     campus = (user.get("campus") or "").strip()
     return asset.get("assigned_to_user_id") == user["id"] or bool(campus and asset.get("campus") == campus)
@@ -1787,7 +1842,7 @@ DEFAULT_USEFUL_LIFE = {
     "Books": 5, "Sports": 5, "Music Equipment": 8, "Other": 5,
 }
 VALID_STATUSES = ["active", "in_repair", "retired", "lost"]
-VALID_CAMPUSES = ["YPJ Kuala Kencana", "YPJ Tembagapura", ""]
+VALID_CAMPUSES = ["YPJ Kuala Kencana", "YPJ TPRA", ""]
 
 
 def _validate_import_row(row: dict, row_num: int, seen_tags: set) -> list:
@@ -4143,7 +4198,7 @@ def seed_data():
              "Teacher laptop with Windows 11 Pro", "YPJ Kuala Kencana", "Computer Lab A", "active",
              1250.00, "2023-08-15", 4, "2026-08-15", "DL5430X01", "Dell Technologies", staff_id, "Maria Hernandez"),
             ("Epson PowerLite Projector", "AV-PRJ-0014", "AV Equipment",
-             "Classroom projector 3500 lumens", "YPJ Tembagapura", "Room 204", "active",
+             "Classroom projector 3500 lumens", "YPJ TPRA", "Room 204", "active",
              680.00, "2022-03-10", 6, "2025-03-10", "EPL3500-204", "Epson", None, "Room 204"),
             ("Microscope Set Olympus CX23", "LAB-MIC-0007", "Lab Equipment",
              "Set of 8 student microscopes", "YPJ Kuala Kencana", "Biology Lab", "active",
@@ -4152,13 +4207,13 @@ def seed_data():
              "Set of 40 height-adjustable desks", "YPJ Kuala Kencana", "Room 112", "active",
              8000.00, "2020-07-20", 12, "2030-07-20", "SC-LOT-112", "Steelcase", None, "Room 112"),
             ("Toyota Hiace School Bus", "VEH-BUS-0001", "Vehicles",
-             "16-seater school transport van", "YPJ Tembagapura", "Main Garage", "active",
+             "16-seater school transport van", "YPJ TPRA", "Main Garage", "active",
              35000.00, "2019-04-12", 8, "2024-04-12", "TYT-HIACE-19", "Toyota", None, "Transport Dept"),
             ("iPad Pro 11\" Cart (30 units)", "IT-IPD-0030", "IT Equipment",
              "Mobile cart of iPads for classroom use", "YPJ Kuala Kencana", "Library", "active",
              27000.00, "2024-01-20", 5, "2027-01-20", "IPD-CART-LIB1", "Apple", None, "Library"),
             ("Smart Interactive Whiteboard", "AV-IWB-0003", "AV Equipment",
-             "Smart Board 6065 65-inch", "YPJ Tembagapura", "Room 301", "in_repair",
+             "Smart Board 6065 65-inch", "YPJ TPRA", "Room 301", "in_repair",
              3500.00, "2022-11-05", 7, "2025-11-05", "SB6065-301", "Smart Technologies", None, "Room 301"),
             ("Casio Digital Piano CDP-S110", "MUS-PIA-0002", "Music Equipment",
              "Compact digital piano for music room", "YPJ Kuala Kencana", "Music Room", "active",

@@ -326,7 +326,7 @@ export default function AssetDetailPage() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="YPJ Kuala Kencana">YPJ Kuala Kencana</SelectItem>
-                        <SelectItem value="YPJ Tembagapura">YPJ Tembagapura</SelectItem>
+                        <SelectItem value="YPJ TPRA">YPJ TPRA</SelectItem>
                       </SelectContent>
                     </Select>
                   )}

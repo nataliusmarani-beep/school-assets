@@ -110,6 +110,8 @@ function FormFields({ values, set, isEdit, t, allNames, allDepts, users, canSupe
             <SelectContent>
               <SelectItem value="staff">{t("staff")}</SelectItem>
               <SelectItem value="admin">{t("admin")}</SelectItem>
+              <SelectItem value="ict_admin">{t("ict_admin")}</SelectItem>
+              <SelectItem value="leader">{t("leader")}</SelectItem>
               {(canSuper || values.role === "super_admin") && <SelectItem value="super_admin">{t("super_admin")}</SelectItem>}
             </SelectContent>
           </Select></div>
@@ -123,7 +125,7 @@ function FormFields({ values, set, isEdit, t, allNames, allDepts, users, canSupe
           <SelectTrigger className="mt-2 rounded-none"><SelectValue placeholder={t("select_campus")} /></SelectTrigger>
           <SelectContent>
             <SelectItem value="YPJ Kuala Kencana">YPJ Kuala Kencana</SelectItem>
-            <SelectItem value="YPJ Tembagapura">YPJ Tembagapura</SelectItem>
+            <SelectItem value="YPJ TPRA">YPJ TPRA</SelectItem>
           </SelectContent>
         </Select></div>
 
@@ -288,7 +290,7 @@ export default function UsersPage() {
                     <span className={`text-xs px-2 py-0.5 border capitalize ${
                       isSuperAdmin(u.role) ? "bg-amber-50 text-amber-800 border-amber-300 font-medium"
                         : isAdminRole(u.role) ? "bg-blue-50 text-blue-800 border-blue-200" : "bg-slate-100 text-slate-600 border-slate-200"
-                    }`} data-testid={`role-badge-${u.id}`}>{isSuperAdmin(u.role) ? t("super_admin") : isAdminRole(u.role) ? t("admin") : t("staff")}</span>
+                    }`} data-testid={`role-badge-${u.id}`}>{isSuperAdmin(u.role) ? t("super_admin") : isAdminRole(u.role) ? t("admin") : ["ict_admin", "leader"].includes(u.role) ? t(u.role) : t("staff")}</span>
                   </td>
                   <td className="py-3 px-4 text-slate-700">{u.department || "—"}</td>
                   <td className="py-3 px-4 text-slate-700">
