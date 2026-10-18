@@ -21,6 +21,38 @@ function Section({ title, hint, children }) {
   return <div className="bg-white border border-slate-200 p-5 mb-6"><div className="label-mono mb-1">{title}</div>{hint && <p className="text-xs text-slate-500 mb-4">{hint}</p>}{children}</div>;
 }
 
+/* ---------- most laptops / iPads one teacher request may ask for ---------- */
+function PoolLimit({ campus, t }) {
+  const [policy, setPolicy] = useState(null);
+  const [val, setVal] = useState("10");
+  useEffect(() => {
+    api.get("/loans/policies").then((r) => {
+      const rows = r.data.filter((x) => x.category === "IT Equipment");
+      const p = rows.find((x) => x.campus === campus) || rows.find((x) => x.campus === "") || null;
+      setPolicy(p); setVal(String(p?.max_units ?? 10));
+    }).catch(() => {});
+  }, [campus]);
+  const save = async () => {
+    try {
+      const base = policy || { max_loan_days: 1, requires_approval: 1, can_leave_campus: 0, min_notice_days: 1, max_advance_days: 14 };
+      const r = await api.put("/loans/policies", {
+        campus, category: "IT Equipment", max_loan_days: base.max_loan_days, requires_approval: !!base.requires_approval,
+        can_leave_campus: !!base.can_leave_campus, min_notice_days: base.min_notice_days, max_advance_days: base.max_advance_days, max_units: Number(val),
+      });
+      setPolicy(r.data); toast.success(t("ln_saved"));
+    } catch (e) { toast.error(formatErr(e)); }
+  };
+  return (
+    <Section title={t("pool_limit_title")} hint={t("pool_limit_hint")}>
+      <div className="flex items-end gap-3">
+        <div><Label className="label-mono">{t("pool_max_per_request")}</Label>
+          <Input type="number" min="1" className="mt-2 rounded-none w-32" value={val} onChange={(e) => setVal(e.target.value)} data-testid="pool-limit-input" /></div>
+        <Button className="rounded-none" disabled={!(Number(val) >= 1)} onClick={save} data-testid="pool-limit-save">{t("save_changes")}</Button>
+      </div>
+    </Section>
+  );
+}
+
 /* ---------- carts & labs ---------- */
 function ResourcesTab({ campus, t, load, resources }) {
   const empty = { name: "", kind: "laptop_cart", category: "IT Equipment", capacity: 30, location: "", active: true };
@@ -50,6 +82,7 @@ function ResourcesTab({ campus, t, load, resources }) {
 
   return (
     <>
+      <PoolLimit campus={campus} t={t} />
       <Section title={t("su_add_resource")} hint={t("su_resource_hint")}>
         <div className="grid sm:grid-cols-5 gap-3">
           <div className="sm:col-span-2"><Label className="label-mono">{t("su_name")}</Label><Input className="mt-2 rounded-none" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Laptop Cart A" data-testid="resource-name" /></div>

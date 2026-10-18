@@ -10,7 +10,7 @@ import { Textarea } from "../components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { toast } from "sonner";
-import { Package, Search } from "lucide-react";
+import { Package, Search, Laptop, Tablet } from "lucide-react";
 import { canWrite } from "../lib/roles";
 import { fmtDateTime } from "../components/loans/LoanForms";
 import LoanDashboard from "../components/loans/LoanDashboard";
@@ -130,6 +130,77 @@ function RequestDialog({ asset, onClose, onDone, t, canOverride }) {
   );
 }
 
+/* Unscheduled laptop / iPad loan: the teacher only says how many; ICT picks the exact units when approving. */
+function PoolRequestDialog({ device, onClose, onDone, t }) {
+  const empty = { units: 1, start_at: "", end_at: "", purpose: "", class_name: "", subject: "", use_location: "", note: "", terms_accepted: false };
+  const [f, setF] = useState(empty);
+  const [avail, setAvail] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const set = (patch) => setF((p) => ({ ...p, ...patch }));
+  useEffect(() => { setF(empty); setAvail(null); }, [device]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!device || !f.start_at || !f.end_at || f.end_at <= f.start_at) { setAvail(null); return; }
+    const h = setTimeout(() => {
+      api.get("/loans/pool/availability", { params: { device_type: device, start_at: f.start_at, end_at: f.end_at } })
+        .then((r) => setAvail(r.data)).catch(() => setAvail(null));
+    }, 300);
+    return () => clearTimeout(h);
+  }, [device, f.start_at, f.end_at]);
+
+  if (!device) return null;
+  const label = device === "ipad" ? "iPad" : "Laptop";
+  const units = Number(f.units) || 0;
+  const tooMany = avail && (units > avail.free || units > avail.max_units);
+  const submit = async () => {
+    setBusy(true);
+    try {
+      const r = await api.post("/loans", { device_type: device, ...f, units });
+      toast.success(`${t("ln_submitted")} ${r.data.number}`);
+      (r.data.warnings || []).forEach((w) => toast.message(w));
+      onDone(r.data);
+    } catch (e) { toast.error(formatErr(e)); } finally { setBusy(false); }
+  };
+  return (
+    <Dialog open={!!device} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="rounded-none max-w-xl max-h-[90vh] overflow-y-auto" data-testid="pool-request-dialog">
+        <DialogHeader><DialogTitle>{t("pool_request_title")}: {label}</DialogTitle></DialogHeader>
+        <p className="text-xs text-slate-500 border border-slate-200 bg-slate-50 px-3 py-2">{t("pool_hint")}</p>
+        <div className="grid grid-cols-3 gap-3">
+          <div><Label className="label-mono">{t("pool_units")} *</Label>
+            <Input type="number" min="1" value={f.units} onChange={(e) => set({ units: e.target.value })} className="mt-2 rounded-none" data-testid="pool-units" /></div>
+          <div><Label className="label-mono">{t("ln_start")} *</Label>
+            <Input type="datetime-local" value={f.start_at} onChange={(e) => set({ start_at: e.target.value })} className="mt-2 rounded-none" data-testid="pool-start" /></div>
+          <div><Label className="label-mono">{t("ln_end")} *</Label>
+            <Input type="datetime-local" value={f.end_at} onChange={(e) => set({ end_at: e.target.value })} className="mt-2 rounded-none" data-testid="pool-end" /></div>
+        </div>
+        {avail && (
+          <div className={`text-xs px-3 py-2 border ${tooMany || avail.free === 0 ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`} data-testid="pool-availability">
+            {avail.free} {label} {t("pool_free_now")} · {t("pool_max_per_request")} {avail.max_units}
+          </div>)}
+        <div><Label className="label-mono">{t("ln_purpose")} *</Label>
+          <Textarea rows={2} value={f.purpose} onChange={(e) => set({ purpose: e.target.value })} className="mt-2 rounded-none" data-testid="pool-purpose" /></div>
+        <div className="grid grid-cols-2 gap-3">
+          <div><Label className="label-mono">{t("ln_class")}</Label>
+            <Input value={f.class_name} onChange={(e) => set({ class_name: e.target.value })} className="mt-2 rounded-none" /></div>
+          <div><Label className="label-mono">{t("ln_subject")}</Label>
+            <Input value={f.subject} onChange={(e) => set({ subject: e.target.value })} className="mt-2 rounded-none" /></div>
+        </div>
+        <div><Label className="label-mono">{t("ln_use_location")}</Label>
+          <Input value={f.use_location} onChange={(e) => set({ use_location: e.target.value })} className="mt-2 rounded-none" /></div>
+        <label className="flex items-start gap-2 text-sm border border-slate-200 p-3">
+          <input type="checkbox" checked={f.terms_accepted} onChange={(e) => set({ terms_accepted: e.target.checked })} className="mt-1" data-testid="pool-terms" />
+          <span>{t("ln_terms")}</span>
+        </label>
+        <DialogFooter>
+          <Button variant="outline" className="rounded-none" onClick={onClose}>{t("cancel")}</Button>
+          <Button className="rounded-none" disabled={busy || units < 1 || tooMany || !f.start_at || !f.end_at || !f.purpose.trim() || !f.terms_accepted} onClick={submit} data-testid="pool-submit">{t("ln_submit")}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function LoanTable({ rows, t, showRequester }) {
   if (!rows.length) return <div className="bg-white border border-slate-200 p-10 text-center text-sm text-slate-500">{t("ln_empty")}</div>;
   return (
@@ -177,6 +248,7 @@ export default function LoansPage() {
   const [category, setCategory] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [target, setTarget] = useState(null);
+  const [poolDevice, setPoolDevice] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(() => {
@@ -220,6 +292,14 @@ export default function LoansPage() {
 
       {tab === "dashboard" ? <LoanDashboard /> : tab === "borrow" ? (
         <>
+          <div className="bg-white border border-slate-200 p-5 mb-5" data-testid="pool-card">
+            <div className="font-semibold text-slate-900">{t("pool_card_title")}</div>
+            <p className="text-xs text-slate-500 mt-1 max-w-2xl">{t("pool_card_hint")}</p>
+            <div className="flex gap-3 mt-4 flex-wrap">
+              <Button variant="outline" className="rounded-none" onClick={() => setPoolDevice("laptop")} data-testid="pool-laptop"><Laptop className="w-4 h-4 mr-2" strokeWidth={1.75} /> {t("pool_laptops")}</Button>
+              <Button variant="outline" className="rounded-none" onClick={() => setPoolDevice("ipad")} data-testid="pool-ipad"><Tablet className="w-4 h-4 mr-2" strokeWidth={1.75} /> {t("pool_ipads")}</Button>
+            </div>
+          </div>
           <div className="flex gap-3 flex-wrap mb-5">
             <div className="relative flex-1 min-w-[220px] max-w-md">
               <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
@@ -269,6 +349,8 @@ export default function LoansPage() {
         </>
       )}
 
+      <PoolRequestDialog device={poolDevice} t={t} onClose={() => setPoolDevice(null)}
+        onDone={() => { setPoolDevice(null); setTab("mine"); }} />
       <RequestDialog asset={target} t={t} canOverride={manager} onClose={() => setTarget(null)}
         onDone={() => { setTarget(null); setTab("mine"); }} />
     </div>

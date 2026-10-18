@@ -219,6 +219,8 @@ def init_booking_schema(conn):
     # columns added after the first release of the module
     _ensure_column(conn, "resources", "category", "TEXT NOT NULL DEFAULT 'IT Equipment'")
     _ensure_column(conn, "bookings", "schedule_id", "TEXT")
+    _ensure_column(conn, "bookings", "device_type", "TEXT NOT NULL DEFAULT ''")          # 'laptop' | 'ipad' for kind 'pool'
+    _ensure_column(conn, "loan_policies", "max_units", "INTEGER NOT NULL DEFAULT 10")      # most units one request may ask for
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_bookings_fixed_session ON bookings(schedule_id, start_at) WHERE schedule_id IS NOT NULL")
     for category, days, approval, leave in DEFAULT_POLICIES:
         conn.execute("""INSERT OR IGNORE INTO loan_policies
@@ -245,7 +247,7 @@ def get_policy(conn, campus: str, category: str, asset_id: Optional[str] = None)
     row = conn.execute("""SELECT * FROM loan_policies WHERE category = ? AND campus IN (?, '')
                           ORDER BY campus = '' LIMIT 1""", (category, campus)).fetchone()
     policy = dict(row) if row else {"max_loan_days": 3, "requires_approval": 1, "can_leave_campus": 0,
-                                    "min_notice_days": 1, "max_advance_days": 14}
+                                    "min_notice_days": 1, "max_advance_days": 14, "max_units": 10}
     if asset_id:
         s = conn.execute("SELECT * FROM asset_loan_settings WHERE asset_id = ?", (asset_id,)).fetchone()
         if s:
@@ -374,6 +376,107 @@ def _peak_usage(slots: list, start: datetime, end: datetime) -> int:
     return max((sum(u for s, e, u in slots if s <= p < e) for p in points), default=0)
 
 
+# ---- Pool loans: a teacher asks for "N laptops / iPads"; ICT picks the exact units that are still free ----
+POOL_TYPES = {
+    "laptop": ("Laptop", ("laptop", "notebook", "macbook", "chromebook")),
+    "ipad": ("iPad", ("ipad", "tablet")),
+}
+POOL_CATEGORY = "IT Equipment"
+
+
+def pool_label(device_type: str) -> str:
+    return POOL_TYPES.get(device_type, (device_type or "", ()))[0]
+
+
+def _committed_marks() -> str:
+    return ",".join("?" * len(COMMITTED_STATUSES))
+
+
+def pool_free_units(conn, campus: str, device_type: str, start: datetime, end: datetime,
+                    exclude_booking_id: Optional[str] = None) -> list:
+    """Borrowable, active laptops / iPads of the campus that nobody holds during [start, end).
+    A unit is busy when it is out on loan, reserved for another approved pool request, or booked as a single item.
+    Units inside a cart also carry `cart_free`: how many more of that cart may be taken for this window."""
+    if device_type not in POOL_TYPES:
+        raise BookingError("Jenis perangkat tidak dikenal.", "device_type")
+    words = POOL_TYPES[device_type][1]
+    rows = conn.execute("""SELECT a.id, a.name, a.asset_tag, a.item_type, a.brand, a.model, a.serial_number, s.resource_id, r.name AS resource_name
+                           FROM assets a JOIN asset_loan_settings s ON s.asset_id = a.id LEFT JOIN resources r ON r.id = s.resource_id
+                           WHERE s.borrowable = 1 AND a.status = 'active' AND a.campus = ? AND a.category = ?
+                           ORDER BY a.asset_tag""", (campus, POOL_CATEGORY)).fetchall()
+    cands = []
+    for r in rows:
+        hay = f"{r['item_type']} {r['name']} {r['model']}".lower()
+        if any(w in hay for w in words):
+            cands.append(dict(r))
+    if not cands:
+        return []
+    ex, exp = (" AND b.id != ?", [exclude_booking_id]) if exclude_booking_id else ("", [])
+    fs, fe = end.strftime(FMT), start.strftime(FMT)
+    busy = {r[0] for r in conn.execute(f"SELECT u.asset_id FROM booking_units u JOIN bookings b ON b.id = u.booking_id WHERE u.status = 'out'{ex}", exp)}
+    busy |= {r[0] for r in conn.execute(
+        f"""SELECT u.asset_id FROM booking_units u JOIN bookings b ON b.id = u.booking_id
+            WHERE u.status = 'reserved' AND b.status IN ({_committed_marks()}) AND b.start_at < ? AND b.end_at > ?{ex}""",
+        [*COMMITTED_STATUSES, fs, fe, *exp])}
+    busy |= {r[0] for r in conn.execute(
+        f"""SELECT b.asset_id FROM bookings b WHERE b.asset_id IS NOT NULL AND b.status IN ({_committed_marks()})
+            AND b.start_at < ? AND b.end_at > ?{ex}""", [*COMMITTED_STATUSES, fs, fe, *exp])}
+    free, cart_cache = [], {}
+    for c in cands:
+        if c["id"] in busy:
+            continue
+        rid = c["resource_id"]
+        if rid:
+            if rid not in cart_cache:
+                try:
+                    cart_cache[rid] = check_availability(conn, resource_id=rid, units=1, start=start, end=end,
+                                                         exclude_booking_id=exclude_booking_id)["free"]
+                except BookingError:
+                    cart_cache[rid] = 0
+            c["cart_free"] = cart_cache[rid]
+            if c["cart_free"] <= 0:
+                continue
+        else:
+            c["cart_free"] = None
+        free.append(c)
+    return free
+
+
+def validate_pool_selection(conn, booking: dict, unit_ids: list, start: datetime, end: datetime) -> None:
+    """ICT's pick must be free units of the right kind, within what each cart can still give for that window."""
+    if len(set(unit_ids)) != len(unit_ids):
+        raise BookingError("Unit terpilih terduplikasi.", "units")
+    free = {u["id"]: u for u in pool_free_units(conn, booking["campus"], booking["device_type"], start, end, booking["id"])}
+    per_cart = {}
+    for uid in unit_ids:
+        u = free.get(uid)
+        if not u:
+            raise BookingError("Ada unit terpilih yang tidak tersedia pada waktu tersebut (sudah dipinjam/dipesan, rusak, atau bukan "
+                               f"{pool_label(booking['device_type'])}).", "units")
+        if u["resource_id"]:
+            per_cart[u["resource_id"]] = per_cart.get(u["resource_id"], 0) + 1
+            if per_cart[u["resource_id"]] > u["cart_free"]:
+                raise BookingError(f"Cart {u['resource_name']} hanya dapat memberi {u['cart_free']} unit pada waktu tersebut "
+                                   "(sisanya dipakai jadwal tetap/peminjaman lain).", "conflict")
+
+
+def _pool_slots(conn, *, asset_id=None, resource_id=None, start: datetime, end: datetime, exclude_booking_id=None) -> list:
+    """(start, end, units, row) for approved pool requests that hold this asset / part of this cart."""
+    ex, exp = (" AND b.id != ?", [exclude_booking_id]) if exclude_booking_id else ("", [])
+    base = f"""FROM booking_units u JOIN bookings b ON b.id = u.booking_id {{join}}
+               WHERE b.kind = 'pool' AND u.status IN ('reserved', 'out') AND b.status IN ({_committed_marks()})
+               AND b.start_at < ? AND b.end_at > ?{ex} AND {{cond}}"""
+    args = [*COMMITTED_STATUSES, end.strftime(FMT), start.strftime(FMT), *exp]
+    if asset_id:
+        q = "SELECT b.id, b.number, b.start_at, b.end_at, b.requester_name, 1 AS n " + base.format(join="", cond="u.asset_id = ?")
+        args.append(asset_id)
+    else:
+        q = ("SELECT b.id, b.number, b.start_at, b.end_at, b.requester_name, COUNT(*) AS n "
+             + base.format(join="JOIN asset_loan_settings s ON s.asset_id = u.asset_id", cond="s.resource_id = ?") + " GROUP BY b.id")
+        args.append(resource_id)
+    return [dict(r) for r in conn.execute(q, args)]
+
+
 def check_availability(conn, *, resource_id: Optional[str] = None, asset_id: Optional[str] = None, units: int = 1,
                        start: datetime, end: datetime, exclude_booking_id: Optional[str] = None) -> dict:
     """How many units are free for the whole window. Committed bookings and fixed schedules hold their units;
@@ -395,6 +498,10 @@ def check_availability(conn, *, resource_id: Optional[str] = None, asset_id: Opt
         slots.append((parse_dt(b["start_at"]), parse_dt(b["end_at"]), b["units_approved"] or b["units_requested"]))
         conflicts.append({"type": "booking", "id": b["id"], "number": b["number"], "start": b["start_at"], "end": b["end_at"],
                           "requester": b["requester_name"]})
+    for pb in _pool_slots(conn, asset_id=asset_id, resource_id=resource_id, start=start, end=end, exclude_booking_id=exclude_booking_id):
+        slots.append((parse_dt(pb["start_at"]), parse_dt(pb["end_at"]), pb["n"]))
+        conflicts.append({"type": "booking", "id": pb["id"], "number": pb["number"], "start": pb["start_at"], "end": pb["end_at"],
+                          "requester": pb["requester_name"]})
     if resource_id:
         for occ in fixed_occurrences(conn, resource_id, start.date(), end.date()):
             if occ["materialized"]:
@@ -445,7 +552,13 @@ def reserve(conn, *, data: dict, now: datetime, override: bool = False, override
     if units < 1:
         raise BookingError("Jumlah unit minimal 1.", "units")
     resource_id, asset_id = data.get("resource_id"), data.get("asset_id")
-    if bool(resource_id) == bool(asset_id):
+    device_type = data.get("device_type") or ""
+    if device_type:
+        if device_type not in POOL_TYPES or resource_id or asset_id:
+            raise BookingError("Pilih jenis perangkat (laptop/iPad) saja, tanpa memilih aset tertentu.", "target")
+        if data.get("take_home"):
+            raise BookingError("Laptop/iPad tidak dapat dibawa keluar sekolah.", "take_home")
+    elif bool(resource_id) == bool(asset_id):
         raise BookingError("Pilih satu aset atau satu cart/lab.", "target")
     take_home = bool(data.get("take_home"))
     if take_home and not data.get("supervisor_id") and not override:
@@ -467,9 +580,17 @@ def reserve(conn, *, data: dict, now: datetime, override: bool = False, override
                             (data["requester_id"],)).fetchone()
         if late and not override:
             raise BookingError(f"Anda masih memiliki pinjaman terlambat ({late['number']}). Kembalikan terlebih dahulu.", "overdue")
-        avail = check_availability(conn, resource_id=resource_id, asset_id=asset_id, units=units, start=start, end=end)
-        if not avail["ok"]:
-            raise BookingError(f"Tidak tersedia pada waktu tersebut. Tersisa {avail['free']} unit.", "conflict")
+        if device_type:
+            max_units = int(check["policy"].get("max_units") or 10)
+            if units > max_units and not override:
+                raise BookingError(f"Satu permintaan maksimal {max_units} unit untuk kategori ini.", "max_units")
+            free_n = len(pool_free_units(conn, data["campus"], device_type, start, end))
+            if units > free_n:
+                raise BookingError(f"Tidak tersedia pada waktu tersebut. Tersisa {free_n} {pool_label(device_type)}.", "conflict")
+        else:
+            avail = check_availability(conn, resource_id=resource_id, asset_id=asset_id, units=units, start=start, end=end)
+            if not avail["ok"]:
+                raise BookingError(f"Tidak tersedia pada waktu tersebut. Tersisa {avail['free']} unit.", "conflict")
         # Pending order: exceptional take-home waits for the supervisor first; otherwise ICT decides, unless the
         # category needs no approval and the request is not a last-minute one.
         policy = check["policy"]
@@ -483,13 +604,13 @@ def reserve(conn, *, data: dict, now: datetime, override: bool = False, override
         number = next_booking_number(conn, now.year)
         conn.execute("""INSERT INTO bookings (id, number, campus, kind, resource_id, asset_id, category, requester_id, requester_name,
             start_at, end_at, units_requested, units_approved, class_name, subject, purpose, use_location, note, take_home,
-            supervisor_id, is_late_request, override_reason, status, terms_accepted, created_at, updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            supervisor_id, is_late_request, override_reason, status, terms_accepted, created_at, updated_at, device_type)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                      (bid, number, data["campus"], data["kind"], resource_id, asset_id, data["category"], data["requester_id"],
                       data["requester_name"], start.strftime(FMT), end.strftime(FMT), units, units if status == "approved" else None,
                       data.get("class_name", ""), data.get("subject", ""), data.get("purpose", ""), data.get("use_location", ""),
                       data.get("note", ""), int(take_home), data.get("supervisor_id"), int(check["is_late"]),
-                      override_reason.strip() if override else "", status, 1, ts, ts))
+                      override_reason.strip() if override else "", status, 1, ts, ts, device_type))
         conn.commit()
     except BaseException:
         conn.rollback()
@@ -500,7 +621,8 @@ def reserve(conn, *, data: dict, now: datetime, override: bool = False, override
 
 
 def decide(conn, *, booking_id: str, decision: str, by_id: str, by_name: str, now: datetime, units: Optional[int] = None,
-           start_at: Optional[str] = None, end_at: Optional[str] = None, note: str = "") -> dict:
+           start_at: Optional[str] = None, end_at: Optional[str] = None, note: str = "",
+           unit_ids: Optional[list] = None) -> dict:
     """ICT decision: 'approved' | 'partially_approved' | 'rejected'. Partial approval may lower the units and/or move
     the time. Availability is re-checked under the write lock because the world may have changed since the request."""
     if decision not in ("approved", "partially_approved", "rejected"):
@@ -527,14 +649,26 @@ def decide(conn, *, booking_id: str, decision: str, by_id: str, by_name: str, no
             if decision == "partially_approved" and approved_units == b["units_requested"] \
                     and start.strftime(FMT) == b["start_at"] and end.strftime(FMT) == b["end_at"]:
                 raise BookingError("Persetujuan sebagian harus mengubah jumlah unit atau waktu.", "partial")
-            avail = check_availability(conn, resource_id=b["resource_id"], asset_id=b["asset_id"], units=approved_units,
-                                       start=start, end=end, exclude_booking_id=b["id"])
-            if not avail["ok"]:
-                raise BookingError(f"Bentrok: hanya tersisa {avail['free']} unit pada waktu tersebut.", "conflict")
+            if b["kind"] == "pool":
+                unit_ids = list(unit_ids or [])
+                if len(unit_ids) != approved_units:
+                    raise BookingError(f"Pilih tepat {approved_units} unit {pool_label(b['device_type'])} yang akan dipinjamkan.", "units")
+                validate_pool_selection(conn, dict(b), unit_ids, start, end)
+            else:
+                avail = check_availability(conn, resource_id=b["resource_id"], asset_id=b["asset_id"], units=approved_units,
+                                           start=start, end=end, exclude_booking_id=b["id"])
+                if not avail["ok"]:
+                    raise BookingError(f"Bentrok: hanya tersisa {avail['free']} unit pada waktu tersebut.", "conflict")
         conn.execute("""UPDATE bookings SET status = ?, units_approved = ?, start_at = ?, end_at = ?, decision_note = ?,
                         decided_by = ?, decided_by_name = ?, decided_at = ?, updated_at = ? WHERE id = ?""",
                      (decision, None if decision == "rejected" else approved_units, start.strftime(FMT), end.strftime(FMT),
                       note.strip(), by_id, by_name, now.strftime(FMT), now.strftime(FMT), booking_id))
+        if b["kind"] == "pool":      # the chosen units are held for this request from now on
+            conn.execute("DELETE FROM booking_units WHERE booking_id = ? AND status = 'reserved'", (booking_id,))
+            if decision != "rejected":
+                for uid in unit_ids:
+                    conn.execute("INSERT INTO booking_units (id, booking_id, asset_id, user_label, status) VALUES (?,?,?,?, 'reserved')",
+                                 (new_id(), booking_id, uid, b["requester_name"]))
         conn.commit()
     except BaseException:
         conn.rollback()
@@ -638,6 +772,7 @@ def cancel(conn, *, booking_id: str, by_id: str, can_manage: bool, now: datetime
         raise BookingError("Pengajuan yang sudah diserahkan atau selesai tidak dapat dibatalkan.", "state")
     conn.execute("UPDATE bookings SET status = 'cancelled', decision_note = ?, updated_at = ? WHERE id = ?",
                  (reason.strip() or b["decision_note"], now.strftime(FMT), booking_id))
+    conn.execute("DELETE FROM booking_units WHERE booking_id = ? AND status = 'reserved'", (booking_id,))
     conn.commit()
     return dict(conn.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone())
 
@@ -693,11 +828,19 @@ def check_out(conn, *, booking_id: str, units: list, now: datetime, by_id: str, 
         if len(units) > allowed:
             raise BookingError(f"Jumlah unit melebihi yang disetujui ({allowed}).", "units")
         seen = set()
+        reserved = {}
+        free_ids = set()
+        if b["kind"] == "pool":
+            reserved = {r["asset_id"]: r["id"] for r in conn.execute(
+                "SELECT id, asset_id FROM booking_units WHERE booking_id = ? AND status = 'reserved'", (booking_id,))}
+            free_ids = {x["id"] for x in pool_free_units(conn, b["campus"], b["device_type"], parse_dt(b["start_at"]), parse_dt(b["end_at"]), booking_id)}
         for u in units:
             aid = u.get("asset_id")
             if not aid or aid in seen:
                 raise BookingError("Unit tidak valid atau terduplikasi.", "units")
             seen.add(aid)
+            if b["kind"] == "pool" and aid not in reserved and aid not in free_ids:
+                raise BookingError("Unit pengganti tidak tersedia pada waktu pinjam ini.", "units")
             if b["asset_id"] and aid != b["asset_id"]:
                 raise BookingError("Unit tidak sesuai dengan aset yang disetujui.", "units")
             if b["resource_id"]:
@@ -723,10 +866,17 @@ def check_out(conn, *, booking_id: str, units: list, now: datetime, by_id: str, 
             check = {"physical": u["physical"], "function": u["function"], "accessories": u.get("accessories") or [],
                      "missing": u["_missing"], "note": (u.get("note") or "").strip(), "handed_by": by_name,
                      "received_by": b["requester_name"]}
+            if u["asset_id"] in reserved:      # pool loan: the reserved row becomes the hand-over record
+                conn.execute("""UPDATE booking_units SET status = 'out', out_at = ?, out_check = ?, pre_photo = ?, user_label = ?, class_name = ?
+                                WHERE id = ?""", (ts, json.dumps(check), u["_photo"], u.get("user_label") or b["requester_name"],
+                                                  u.get("class_name", ""), reserved[u["asset_id"]]))
+                continue
             conn.execute("""INSERT INTO booking_units (id, booking_id, asset_id, user_label, student_name, student_no, class_name,
                 status, out_at, out_check, pre_photo) VALUES (?,?,?,?,?,?,?,'out',?,?,?)""",
                          (new_id(), booking_id, u["asset_id"], u.get("user_label") or b["requester_name"], u.get("student_name", ""),
                           u.get("student_no", ""), u.get("class_name", ""), ts, json.dumps(check), u["_photo"]))
+        if b["kind"] == "pool":            # reserved units that were not handed over are released
+            conn.execute("DELETE FROM booking_units WHERE booking_id = ? AND status = 'reserved'", (booking_id,))
         conn.execute("UPDATE bookings SET status = 'in_use', updated_at = ? WHERE id = ?", (ts, booking_id))
         conn.commit()
     except BaseException:
@@ -903,6 +1053,8 @@ def bulk_units(conn, booking: dict, exclude: Optional[list] = None, only_unretur
     exclude = set(exclude or [])
     if only_unreturned:
         ids = [r["asset_id"] for r in conn.execute("SELECT asset_id FROM booking_units WHERE booking_id = ? AND status = 'out'", (booking["id"],))]
+    elif booking.get("kind") == "pool":      # the units ICT reserved when approving
+        ids = [r["asset_id"] for r in conn.execute("SELECT asset_id FROM booking_units WHERE booking_id = ? AND status = 'reserved'", (booking["id"],))]
     else:
         ids = [u["id"] for u in resource_units(conn, booking["resource_id"])]
     out = []
@@ -1016,8 +1168,10 @@ def resolve_scan(conn, code: str, now: datetime) -> Optional[dict]:
     today = now.date().isoformat()
     pickup = conn.execute("""SELECT id, number, requester_name, start_at, end_at FROM bookings
                              WHERE status IN ('approved','partially_approved') AND substr(start_at,1,10) <= ? AND substr(end_at,1,10) >= ?
-                             AND (asset_id = ? OR (resource_id IS NOT NULL AND resource_id = ?)) ORDER BY start_at LIMIT 1""",
-                          (today, today, a["id"], s["resource_id"] if s else None)).fetchone()
+                             AND (asset_id = ? OR (resource_id IS NOT NULL AND resource_id = ?)
+                                  OR id IN (SELECT booking_id FROM booking_units WHERE asset_id = ? AND status = 'reserved'))
+                             ORDER BY start_at LIMIT 1""",
+                          (today, today, a["id"], s["resource_id"] if s else None, a["id"])).fetchone()
     return {"asset": {k: a[k] for k in ("id", "name", "asset_tag", "category", "campus", "location", "brand", "model", "serial_number", "status")},
             "borrowable": bool(s and s["borrowable"]), "resource_id": s["resource_id"] if s else None,
             "out": dict(out) if out else None, "pickup": dict(pickup) if pickup else None,

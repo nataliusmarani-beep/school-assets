@@ -3966,6 +3966,10 @@ def _loan_context(conn, bid: str):
                      (b["asset_id"],)).fetchone() if b["asset_id"] else None
     if a:
         return b, dict(a)
+    if b["kind"] == "pool":
+        label = booking_engine.pool_label(b["device_type"])
+        return b, {"name": f'{b["units_requested"]} × {label}', "asset_tag": "pool", "category": b["category"], "campus": b["campus"],
+                   "location": "", "is_pool": True}
     r = conn.execute("SELECT name, kind, category, campus, location FROM resources WHERE id = ?", (b["resource_id"],)).fetchone() if b["resource_id"] else None
     # a cart / lab loan reads like an asset in titles and e-mails
     return b, ({"name": r["name"], "asset_tag": r["kind"], "category": r["category"], "campus": r["campus"], "location": r["location"], "is_resource": True} if r else {})
@@ -3998,6 +4002,12 @@ def _loan_view(conn, user: dict, b: dict, asset: dict) -> dict:
         out["units_out"] = sum(1 for u in units if u["status"] == "out")
         out["units_not_returned"] = out["units_out"] if b["status"] == "overdue" else 0
         out["cart_units"] = booking_engine.resource_units(conn, b["resource_id"])
+    elif b["kind"] == "pool":
+        out["units_out"] = sum(1 for u in units if u["status"] == "out")
+        out["units_not_returned"] = out["units_out"] if b["status"] == "overdue" else 0
+        out["device_label"] = booking_engine.pool_label(b["device_type"])
+        # what is still to be handed over: the units ICT reserved when approving
+        out["cart_units"] = [{"id": u["asset_id"], "name": u["asset_name"], "asset_tag": u["asset_tag"]} for u in units if u["status"] == "reserved"]
     manage = can_manage_loan(user, b["campus"], b["category"])
     out["permissions"] = {
         "can_decide": manage and b["status"] == "pending_ict",
@@ -4013,6 +4023,7 @@ def _loan_view(conn, user: dict, b: dict, asset: dict) -> dict:
 class LoanIn(BaseModel):
     asset_id: Optional[str] = None            # a single item ...
     resource_id: Optional[str] = None         # ... or units of a cart / lab outside the fixed schedule
+    device_type: Optional[str] = None         # ... or "N laptops / iPads": ICT picks the exact units when approving
     units: int = Field(1, ge=1)
     date: Optional[str] = None                # with period_from/period_to instead of start_at/end_at
     period_from: Optional[int] = None
@@ -4087,15 +4098,69 @@ async def loan_availability(asset_id: str, start_at: str, end_at: str, _: dict =
     return {**info, "blocked": reason}
 
 
+@api.get("/loans/pool/availability")
+async def pool_availability(device_type: str, start_at: str, end_at: str, campus: Optional[str] = None, user: dict = Depends(get_current_user)):
+    """How many laptops / iPads are free for a window (teachers see the count, ICT also the units)."""
+    own = (user.get("campus") or "").strip()
+    campus = own if (user["role"] in ("staff", "ict_admin") and own) else (campus or own)
+    conn = get_conn()
+    try:
+        start, end = booking_engine.parse_dt(start_at), booking_engine.parse_dt(end_at)
+        free = booking_engine.pool_free_units(conn, campus, device_type, start, end)
+        policy = booking_engine.get_policy(conn, campus, booking_engine.POOL_CATEGORY)
+    except booking_engine.BookingError as e:
+        conn.close()
+        raise HTTPException(400, e.message)
+    conn.close()
+    return {"device_type": device_type, "label": booking_engine.pool_label(device_type), "free": len(free),
+            "max_units": int(policy.get("max_units") or 10)}
+
+
+@api.get("/loans/{bid}/candidates")
+async def pool_candidates(bid: str, start_at: Optional[str] = None, end_at: Optional[str] = None, user: dict = Depends(get_current_user)):
+    """For ICT: the units that can still be lent for this request's window (plus the ones already reserved)."""
+    conn = get_conn()
+    b, _ = _loan_context(conn, bid)
+    if not can_manage_loan(user, b["campus"], b["category"]):
+        conn.close()
+        raise HTTPException(403, "Hanya Admin ICT untuk kampus dan kategori ini")
+    if b["kind"] != "pool":
+        conn.close()
+        raise HTTPException(400, "Pilih unit hanya untuk permintaan laptop/iPad per jenis.")
+    try:   # ICT may be looking at a changed window while deciding
+        win = (booking_engine.parse_dt(start_at or b["start_at"]), booking_engine.parse_dt(end_at or b["end_at"]))
+    except booking_engine.BookingError as e:
+        conn.close()
+        raise HTTPException(400, e.message)
+    free = booking_engine.pool_free_units(conn, b["campus"], b["device_type"], win[0], win[1], bid)
+    reserved = [r["asset_id"] for r in conn.execute("SELECT asset_id FROM booking_units WHERE booking_id = ? AND status = 'reserved'", (bid,))]
+    conn.close()
+    return {"units": free, "reserved": reserved, "units_requested": b["units_requested"], "label": booking_engine.pool_label(b["device_type"])}
+
+
 @api.post("/loans")
 async def create_loan(body: LoanIn, user: dict = Depends(get_current_user)):
-    if bool(body.asset_id) == bool(body.resource_id):
+    if body.device_type:
+        if body.asset_id or body.resource_id:
+            raise HTTPException(400, "Pilih jenis perangkat saja, atau satu aset/cart tertentu.")
+    elif bool(body.asset_id) == bool(body.resource_id):
         raise HTTPException(400, "Pilih satu aset atau satu cart/lab.")
     if user["role"] not in ADMIN_ROLES + ("ict_admin", "staff"):
         raise HTTPException(403, "Akun ini tidak dapat mengajukan peminjaman")
     conn = get_conn()
     ensure_policy_compliant(conn, user["id"])
-    if body.asset_id:
+    if body.device_type:
+        if body.device_type not in booking_engine.POOL_TYPES:
+            conn.close()
+            raise HTTPException(400, "Jenis perangkat harus laptop atau ipad.")
+        campus = (user.get("campus") or "").strip()
+        if not campus:
+            conn.close()
+            raise HTTPException(400, "Akun Anda belum memiliki kampus. Hubungi admin.")
+        target = {"campus": campus, "category": booking_engine.POOL_CATEGORY, "kind": "pool", "asset_id": None, "resource_id": None}
+        info = {"name": f"{body.units} × {booking_engine.pool_label(body.device_type)}", "asset_tag": "pool",
+                "category": booking_engine.POOL_CATEGORY, "campus": campus}
+    elif body.asset_id:
         a = conn.execute("SELECT * FROM assets WHERE id = ?", (body.asset_id,)).fetchone()
         if not a:
             conn.close()
@@ -4125,7 +4190,7 @@ async def create_loan(body: LoanIn, user: dict = Depends(get_current_user)):
     if not start_at or not end_at:
         conn.close()
         raise HTTPException(400, "Isi waktu mulai dan selesai, atau pilih tanggal dan jam pelajaran.")
-    if body.resource_id and body.take_home:
+    if (body.resource_id or body.device_type) and body.take_home:
         conn.close()
         raise HTTPException(400, "Laptop/iPad/Lab tidak dapat dibawa keluar sekolah.")
     supervisor_id = None
@@ -4142,7 +4207,8 @@ async def create_loan(body: LoanIn, user: dict = Depends(get_current_user)):
         raise HTTPException(403, "Hanya Admin ICT yang dapat mengecualikan aturan.")
     data = {"campus": target["campus"], "kind": target["kind"], "asset_id": target["asset_id"], "resource_id": target["resource_id"],
             "category": target["category"], "requester_id": user["id"], "requester_name": user["name"], "start_at": start_at, "end_at": end_at,
-            "units": body.units if body.resource_id else 1, "class_name": body.class_name, "subject": body.subject, "purpose": body.purpose,
+            "units": body.units if (body.resource_id or body.device_type) else 1, "device_type": body.device_type or "",
+            "class_name": body.class_name, "subject": body.subject, "purpose": body.purpose,
             "use_location": body.use_location, "note": body.note, "take_home": body.take_home, "supervisor_id": supervisor_id,
             "terms_accepted": body.terms_accepted}
     try:
@@ -4152,7 +4218,7 @@ async def create_loan(body: LoanIn, user: dict = Depends(get_current_user)):
         raise HTTPException(409 if e.code in ("conflict", "overdue") else 400, e.message)
     warnings = b.pop("warnings", [])
     a = info
-    detail = [("Keperluan", b["purpose"] or "—")] + ([("Jumlah unit", str(b["units_requested"]))] if body.resource_id else [])
+    detail = [("Keperluan", b["purpose"] or "—")] + ([("Jumlah unit", str(b["units_requested"]))] if (body.resource_id or body.device_type) else [])
     queue_email(conn, user["email"], f'[YPJ Assets] Pengajuan {b["number"]}: {a["name"]}',
                 _loan_mail(b, a, "Pengajuan Peminjaman Diterima", detail,
                            "<p>Pengajuan Anda telah diterima" + (" dan menunggu persetujuan supervisor." if b["status"] == "pending_supervisor"
@@ -4174,6 +4240,10 @@ async def create_loan(body: LoanIn, user: dict = Depends(get_current_user)):
     view["warnings"] = warnings
     conn.close()
     return view
+
+
+POOL_NAME_SQL = ("CASE WHEN b.kind = 'pool' THEN b.units_requested || ' × ' || "
+                 "CASE b.device_type WHEN 'ipad' THEN 'iPad' WHEN 'laptop' THEN 'Laptop' ELSE b.device_type END END")
 
 
 @api.get("/loans")
@@ -4202,7 +4272,7 @@ async def list_loans(user: dict = Depends(get_current_user), scope: str = "mine"
     if campus:
         conds.append("b.campus = ?"); params.append(campus)
     booking_engine.mark_overdue(conn, _local_now())
-    rows = conn.execute(f"""SELECT b.*, COALESCE(a.name, r.name) AS asset_name, COALESCE(a.asset_tag, r.kind) AS asset_tag
+    rows = conn.execute(f"""SELECT b.*, COALESCE(a.name, r.name, {POOL_NAME_SQL}) AS asset_name, COALESCE(a.asset_tag, r.kind, CASE WHEN b.kind = 'pool' THEN 'pool' END) AS asset_tag
                             FROM bookings b LEFT JOIN assets a ON a.id = b.asset_id LEFT JOIN resources r ON r.id = b.resource_id
                             {'WHERE ' + ' AND '.join(conds) if conds else ''} ORDER BY b.created_at DESC LIMIT 500""", params).fetchall()
     out = []
@@ -4235,6 +4305,7 @@ class PolicyIn(BaseModel):
     can_leave_campus: bool = False
     min_notice_days: int = Field(1, ge=0)
     max_advance_days: int = Field(14, ge=1)
+    max_units: int = Field(10, ge=1)          # most laptops / iPads one request may ask for
 
 
 @api.get("/loans/policies")
@@ -4255,12 +4326,13 @@ async def put_loan_policy(body: PolicyIn, user: dict = Depends(get_current_user)
         raise HTTPException(403, "Tidak diizinkan mengubah aturan ini")
     conn = get_conn()
     conn.execute("""INSERT INTO loan_policies (id, campus, category, max_loan_days, requires_approval, can_leave_campus, min_notice_days,
-                    max_advance_days) VALUES (?,?,?,?,?,?,?,?)
+                    max_advance_days, max_units) VALUES (?,?,?,?,?,?,?,?,?)
                     ON CONFLICT(campus, category) DO UPDATE SET max_loan_days = excluded.max_loan_days,
                     requires_approval = excluded.requires_approval, can_leave_campus = excluded.can_leave_campus,
-                    min_notice_days = excluded.min_notice_days, max_advance_days = excluded.max_advance_days""",
+                    min_notice_days = excluded.min_notice_days, max_advance_days = excluded.max_advance_days,
+                    max_units = excluded.max_units""",
                  (str(uuid.uuid4()), body.campus, body.category, body.max_loan_days, int(body.requires_approval),
-                  int(body.can_leave_campus), body.min_notice_days, body.max_advance_days))
+                  int(body.can_leave_campus), body.min_notice_days, body.max_advance_days, body.max_units))
     conn.commit()
     row = dict(conn.execute("SELECT * FROM loan_policies WHERE campus = ? AND category = ?", (body.campus, body.category)).fetchone())
     conn.close()
@@ -4969,7 +5041,7 @@ def _usage_report(conn, user: dict, month: str, campus: Optional[str]) -> dict:
     start, end = _month_range(month)
     conds, params = _loan_scope(user, campus)
     where = (" AND " + " AND ".join(conds)) if conds else ""
-    base = f"""SELECT b.*, COALESCE(r.name, a.name) AS target_name FROM bookings b LEFT JOIN resources r ON r.id = b.resource_id
+    base = f"""SELECT b.*, COALESCE(r.name, a.name, {POOL_NAME_SQL}) AS target_name FROM bookings b LEFT JOIN resources r ON r.id = b.resource_id
                LEFT JOIN assets a ON a.id = b.asset_id WHERE b.start_at >= ? AND b.start_at < ?{where}"""
     rows = [dict(r) for r in conn.execute(base, [start, end, *params])]
     used_status = ("in_use", "completed", "problem", "overdue")
@@ -5133,6 +5205,7 @@ class DecideIn(BaseModel):
     start_at: Optional[str] = None
     end_at: Optional[str] = None
     note: str = ""
+    unit_ids: List[str] = []           # laptop / iPad requests: the exact units ICT lends out
 
 
 @api.put("/loans/{bid}/decide")
@@ -5143,7 +5216,8 @@ async def decide_loan(bid: str, body: DecideIn, user: dict = Depends(get_current
         conn.close()
         raise HTTPException(403, "Hanya Admin ICT untuk kampus dan kategori ini yang dapat memutuskan")
     b = _engine_call(booking_engine.decide, conn, booking_id=bid, decision=body.decision, by_id=user["id"], by_name=user["name"],
-                     now=_local_now(), units=body.units, start_at=body.start_at, end_at=body.end_at, note=body.note)
+                     now=_local_now(), units=body.units, start_at=body.start_at, end_at=body.end_at, note=body.note,
+                     unit_ids=body.unit_ids)
     _, a = _loan_context(conn, bid)
     req_user = conn.execute("SELECT email FROM users WHERE id = ?", (b["requester_id"],)).fetchone()
     if req_user:
@@ -5200,8 +5274,8 @@ def _bulk_merge(conn, booking: dict, body: "CheckIn", only_unreturned: bool) -> 
     explicit = [u.model_dump() for u in body.units]
     if not body.all_units:
         return explicit
-    if not booking["resource_id"]:
-        raise HTTPException(400, "Pilihan semua unit hanya untuk cart/lab.")
+    if not booking["resource_id"] and booking["kind"] != "pool":
+        raise HTTPException(400, "Pilihan semua unit hanya untuk cart/lab atau permintaan laptop/iPad.")
     rows = {u["asset_id"]: u for u in booking_engine.bulk_units(conn, booking, exclude=body.exclude, only_unreturned=only_unreturned)}
     for u in explicit:
         rows[u["asset_id"]] = {**rows.get(u["asset_id"], {}), **{k: v for k, v in u.items() if v not in ("", None, [])}}

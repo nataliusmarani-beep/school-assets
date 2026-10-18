@@ -52,11 +52,30 @@ export default function LoanDetailPage() {
   const [note, setNote] = useState("");
   const [unit, setUnit] = useState(null);
   const [cart, setCart] = useState(emptyCart());
+  const [cands, setCands] = useState(null);         // laptop / iPad request: units ICT can still lend, { units, reserved }
+  const [picked, setPicked] = useState([]);
 
   const load = useCallback(() => {
     api.get(`/loans/${id}`).then((r) => setLoan(r.data)).catch((e) => toast.error(formatErr(e)));
   }, [id]);
   useEffect(() => { load(); }, [load]);
+
+  // candidate units for the window being decided (re-read when ICT changes the time)
+  useEffect(() => {
+    if (dialog !== "decide" || loan?.kind !== "pool" || decision.decision === "rejected") return undefined;
+    const h = setTimeout(() => {
+      api.get(`/loans/${id}/candidates`, { params: { start_at: decision.start_at || undefined, end_at: decision.end_at || undefined } })
+        .then((r) => {
+          setCands(r.data);
+          setPicked((cur) => {
+            const ok = new Set(r.data.units.map((u) => u.id));
+            const keep = cur.filter((x) => ok.has(x));
+            return keep.length ? keep : (r.data.reserved.filter((x) => ok.has(x)).length ? r.data.reserved.filter((x) => ok.has(x)) : []);
+          });
+        }).catch((e) => toast.error(formatErr(e)));
+    }, 250);
+    return () => clearTimeout(h);
+  }, [dialog, loan?.kind, id, decision.decision, decision.start_at, decision.end_at]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const act = async (fn, okMsg) => {
     setBusy(true);
@@ -68,7 +87,8 @@ export default function LoanDetailPage() {
   if (!loan) return <div className="p-10 text-sm text-slate-500">…</div>;
   const p = loan.permissions;
   const a = loan.asset || {};
-  const isCart = !!loan.resource_id;
+  const isPool = loan.kind === "pool";
+  const isCart = !!loan.resource_id || isPool;
   // rows of the cart check dialog: at check-out every active unit, at check-in the units still out
   const cartRows = dialog === "in"
     ? loan.units.filter((u) => u.status === "out").map((u) => ({ asset_id: u.asset_id, name: u.asset_name, tag: u.asset_tag, who: u.student_name ? `${u.student_name}${u.student_no ? ` (${u.student_no})` : ""}` : "" }))
@@ -80,6 +100,7 @@ export default function LoanDetailPage() {
   };
   const openDecide = () => {
     setDecision({ decision: "approved", units: String(loan.units_requested), start_at: loan.start_at, end_at: loan.end_at, note: "" });
+    setPicked([]); setCands(null);
     setDialog("decide");
   };
 
@@ -183,10 +204,29 @@ export default function LoanDetailPage() {
               <div><Label className="label-mono">{t("ln_end")}</Label>
                 <Input type="datetime-local" value={decision.end_at} onChange={(e) => setDecision({ ...decision, end_at: e.target.value })} className="mt-2 rounded-none" /></div>
             </div>)}
+          {isPool && decision.decision !== "rejected" && (
+            <div data-testid="pool-picker">
+              <Label className="label-mono">{t("pool_pick_units")} ({picked.length}/{Number(decision.units) || 0})</Label>
+              <p className="text-xs text-slate-500 mt-1">{t("pool_pick_hint")}</p>
+              <div className="mt-2 max-h-56 overflow-y-auto border border-slate-200 divide-y divide-slate-100">
+                {!cands && <div className="p-3 text-xs text-slate-400">…</div>}
+                {cands && cands.units.length === 0 && <div className="p-3 text-xs text-rose-600">{t("pool_none_free")}</div>}
+                {cands && cands.units.map((u) => (
+                  <label key={u.id} className="flex items-center gap-3 px-3 py-2 text-sm cursor-pointer hover:bg-slate-50">
+                    <input type="checkbox" checked={picked.includes(u.id)} data-testid={`pool-unit-${u.asset_tag}`}
+                      onChange={(e) => setPicked((cur) => e.target.checked ? [...cur, u.id] : cur.filter((x) => x !== u.id))} />
+                    <span className="font-mono text-xs">{u.asset_tag}</span>
+                    <span className="flex-1 truncate">{u.name}{u.serial_number ? ` · ${u.serial_number}` : ""}</span>
+                    {u.resource_name && <span className="text-xs text-slate-400">{u.resource_name}</span>}
+                  </label>))}
+              </div>
+              <Button type="button" variant="outline" size="sm" className="rounded-none mt-2" disabled={!cands}
+                onClick={() => setPicked(cands.units.slice(0, Number(decision.units) || 0).map((u) => u.id))} data-testid="pool-autopick">{t("pool_autopick")}</Button>
+            </div>)}
           <div><Label className="label-mono">{t("ln_decision_note")}{decision.decision !== "approved" ? " *" : ""}</Label>
             <Textarea rows={2} value={decision.note} onChange={(e) => setDecision({ ...decision, note: e.target.value })} className="mt-2 rounded-none" data-testid="loan-decision-note" /></div>
-          <DialogFooter><Button className="rounded-none" disabled={busy} data-testid="loan-decision-save"
-            onClick={() => act(() => api.put(`/loans/${id}/decide`, { decision: decision.decision, units: decision.units ? Number(decision.units) : null, start_at: decision.start_at || null, end_at: decision.end_at || null, note: decision.note }), t("ln_saved"))}>{t("save_changes")}</Button></DialogFooter>
+          <DialogFooter><Button className="rounded-none" disabled={busy || (isPool && decision.decision !== "rejected" && picked.length !== (Number(decision.units) || 0))} data-testid="loan-decision-save"
+            onClick={() => act(() => api.put(`/loans/${id}/decide`, { decision: decision.decision, units: decision.units ? Number(decision.units) : null, start_at: decision.start_at || null, end_at: decision.end_at || null, note: decision.note, unit_ids: isPool && decision.decision !== "rejected" ? picked : [] }), t("ln_saved"))}>{t("save_changes")}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
