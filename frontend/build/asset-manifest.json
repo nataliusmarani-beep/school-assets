@@ -1,15 +1,15 @@
 {
   "files": {
-    "main.css": "/static/css/main.5c431ebd.css",
-    "main.js": "/static/js/main.e9036dc4.js",
+    "main.css": "/static/css/main.d13130c2.css",
+    "main.js": "/static/js/main.23e5ef67.js",
     "static/media/ypj-logo.png": "/static/media/ypj-logo.06eace968b2283edb77d.png",
     "static/media/ypj-hero.jpg": "/static/media/ypj-hero.37626d00ab9beaa19cbd.jpg",
     "index.html": "/index.html",
-    "main.5c431ebd.css.map": "/static/css/main.5c431ebd.css.map",
-    "main.e9036dc4.js.map": "/static/js/main.e9036dc4.js.map"
+    "main.d13130c2.css.map": "/static/css/main.d13130c2.css.map",
+    "main.23e5ef67.js.map": "/static/js/main.23e5ef67.js.map"
   },
   "entrypoints": [
-    "static/css/main.5c431ebd.css",
-    "static/js/main.e9036dc4.js"
+    "static/css/main.d13130c2.css",
+    "static/js/main.23e5ef67.js"
   ]
 }

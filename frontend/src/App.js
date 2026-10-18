@@ -22,6 +22,9 @@ import LoanDetailPage from "./pages/LoanDetailPage";
 import SchedulePage from "./pages/SchedulePage";
 import LoanSetupPage from "./pages/LoanSetupPage";
 import ScanPage from "./pages/ScanPage";
+import ByodPage from "./pages/ByodPage";
+import ByodDetailPage from "./pages/ByodDetailPage";
+import ByodSignPage from "./pages/ByodSignPage";
 import QrLabelsPage from "./pages/QrLabelsPage";
 import MyAssetsPage from "./pages/MyAssetsPage";
 import UserAssetsPage from "./pages/UserAssetsPage";
@@ -44,6 +47,7 @@ function App() {
           <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route path="/set-password" element={<SetPasswordPage />} />
+            <Route path="/byod/sign" element={<ByodSignPage />} />
             <Route path="/forgot-password" element={<ForgotPasswordPage />} />
             <Route path="/" element={
               <ProtectedRoute><Layout><DashboardPage /></Layout></ProtectedRoute>
@@ -109,6 +113,12 @@ function App() {
               <ProtectedRoute><Layout><LoanDetailPage /></Layout></ProtectedRoute>
             }/>
             <Route path="/loan-requests" element={<Navigate to="/loans" replace />} />
+            <Route path="/byod" element={
+              <ProtectedRoute><Layout><ByodPage /></Layout></ProtectedRoute>
+            }/>
+            <Route path="/byod/:id" element={
+              <ProtectedRoute><Layout><ByodDetailPage /></Layout></ProtectedRoute>
+            }/>
             <Route path="/help" element={
               <ProtectedRoute><Layout><HelpPage /></Layout></ProtectedRoute>
             }/>

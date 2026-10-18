@@ -36,9 +36,10 @@ from starlette.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, EmailStr
 
 try:  # run as the package (uvicorn backend.server:app) or as a plain module (tests, local scripts)
-    from . import booking_engine
+    from . import booking_engine, byod
 except ImportError:
     import booking_engine
+    import byod
 from apscheduler.schedulers.background import BackgroundScheduler
 
 
@@ -455,6 +456,7 @@ def init_db():
     migrate_money_to_idr(conn)
     rename_campus_tembagapura_to_tpra(conn)
     booking_engine.init_booking_schema(conn)
+    byod.init_schema(conn)
     migrated = booking_engine.migrate_legacy_loans(conn)
     if migrated:
         logger.warning("Copied %d legacy loan request(s) into bookings", migrated)
@@ -5834,6 +5836,560 @@ def notify_class_handover_done(finished: list):
 
 
 # ---- Mount ----
+# ======================================================================================
+# BYOD: students may use their own laptop / iPad / tablet on the school WiFi for a project
+# ======================================================================================
+def _client_ip(request: Request) -> str:
+    fwd = request.headers.get("x-forwarded-for", "")
+    return (fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else ""))[:64]
+
+
+def _today_local():
+    return _local_now().date()
+
+
+def can_manage_byod(user: dict, campus: str) -> bool:
+    """Approves requests and revokes access: super_admin, or the ICT Admin of that campus."""
+    return is_ict_pic(user, campus, "IT Equipment")
+
+
+def _byod_visible(user: dict, r: dict) -> bool:
+    return (user.get("role") in ("leader", "admin", "super_admin") or r["teacher_id"] == user["id"] or can_manage_byod(user, r["campus"]))
+
+
+class ByodStudentIn(BaseModel):
+    name: str = Field(..., min_length=2, max_length=120)
+    class_name: str = ""
+    student_no: str = ""
+    parent_name: str = ""
+    parent_relation: str = ""
+    parent_email: str = ""
+    parent_phone: str = ""
+
+
+class ByodProjectIn(BaseModel):
+    name: str = Field(..., min_length=3, max_length=160)
+    subject: str = ""
+    location: str = ""
+    start_date: str
+    end_date: str
+    hour_from: str = "07:30"
+    hour_to: str = "15:30"
+    campus: str = ""                  # only needed by accounts without a campus (admin / super admin)
+    students: List[ByodStudentIn] = Field(..., min_length=1, max_length=40)
+
+
+def _byod_err(e: "byod.ByodError"):
+    return HTTPException(e.status, e.message)
+
+
+def _byod_link(token: str) -> str:
+    return f"{APP_URL}/byod/sign?token={token}"
+
+
+def _byod_send_parent_link(conn, req: dict, project: dict, token: str) -> dict:
+    """E-mail and/or WhatsApp the one-time link to the parent. Returns what was attempted."""
+    link = _byod_link(token)
+    subject = f'[YPJ Assets] Persetujuan BYOD untuk {req["student_name"]}'
+    lines = [("Siswa", req["student_name"] + (f' ({req["student_class"]})' if req["student_class"] else "")),
+             ("Project", project["name"]),
+             ("Periode", f'{project["start_date"]} s/d {project["end_date"]}, {project["hour_from"]}–{project["hour_to"]}'),
+             ("Guru pendamping", req["teacher_name"])]
+    rows = "".join(f"<tr><td style='padding:4px 8px;color:#64748b;'>{k}</td><td style='padding:4px 8px;font-weight:500;'>{v}</td></tr>" for k, v in lines)
+    body = _email_shell(f"""
+        <h2 style="margin:0 0 4px;font-size:22px;color:#0f172a;">Persetujuan Orang Tua — Bring Your Own Device</h2>
+        <p style="font-size:14px;color:#334155;">Yth. Orang Tua/Wali, putra/putri Anda diajukan untuk membawa perangkat pribadi (laptop/iPad/tablet)
+        guna mengerjakan project sekolah. Mohon baca ketentuan dan beri persetujuan melalui tautan berikut (berlaku {byod.TOKEN_DAYS} hari, satu kali pakai).</p>
+        <table style="border-collapse:collapse;margin:16px 0;font-size:14px;">{rows}</table>
+        <p style="font-size:12px;color:#64748b;">Tautan: {link}</p>""", cta_label="Buka Formulir Persetujuan", cta_url=link)
+    sent = {"email": False, "whatsapp": False}
+    if req["parent_email"]:
+        queue_email(conn, req["parent_email"], subject, body, "byod_parent", req["id"])
+        sent["email"] = True
+    if req["parent_phone"]:
+        try:
+            queue_whatsapp(conn, req["parent_phone"], subject, body, "byod_parent", req["id"])
+            sent["whatsapp"] = bool(WHATSAPP_TOKEN)
+        except Exception as exc:
+            logger.warning("BYOD WhatsApp failed: %s", exc)
+    return sent
+
+
+def _byod_notify(conn, to_addrs: list, subject: str, heading: str, req: dict, text: str, kind: str):
+    rows = [("No. Permohonan", req["number"]), ("Siswa", req["student_name"]), ("Periode", f'{req["valid_from"]} s/d {req["valid_to"]}')]
+    body = _loan_html(req, heading, rows, f"<p>{text}</p>")
+    for addr in dict.fromkeys(a for a in to_addrs if a):
+        queue_email(conn, addr, f"[YPJ Assets] {subject}: {req['number']}", body, kind, req["id"])
+
+
+def _byod_row(conn, rid: str) -> dict:
+    r = conn.execute("SELECT * FROM byod_requests WHERE id = ?", (rid,)).fetchone()
+    if not r:
+        conn.close()
+        raise HTTPException(404, "Permohonan BYOD tidak ditemukan")
+    return dict(r)
+
+
+def _byod_view(conn, user: dict, r: dict, full: bool = True) -> dict:
+    today = _today_local()
+    out = {k: v for k, v in r.items() if k not in ("token_hash", "token_expires_at", "parent_signature", "teacher_signature", "parent_ua", "teacher_ua")}
+    out["effective_status"] = byod.effective_status(r, today)
+    p = conn.execute("SELECT * FROM byod_projects WHERE id = ?", (r["project_id"],)).fetchone()
+    out["project"] = dict(p) if p else {}
+    out["devices"] = [dict(d) for d in conn.execute("SELECT * FROM byod_devices WHERE request_id = ? ORDER BY created_at", (r["id"],))]
+    if full:
+        out["parent_signature"], out["teacher_signature"] = r["parent_signature"], r["teacher_signature"]
+        out["events"] = [dict(e) for e in conn.execute("SELECT at, actor, action, detail FROM byod_events WHERE request_id = ? ORDER BY at", (r["id"],))]
+    owner, manage = r["teacher_id"] == user["id"], can_manage_byod(user, r["campus"])
+    st = r["status"]
+    out["permissions"] = {
+        "can_teacher_sign": owner and st == "waiting_teacher",
+        "can_resend": owner and st == "waiting_parent",
+        "can_cancel": (owner or manage) and st in ("waiting_parent", "waiting_teacher", "waiting_ict", "approved"),
+        "can_decide": manage and (st == "waiting_ict" or (st == "approved" and bool(r["pending_end_date"]))),
+        "can_revoke": manage and st == "approved",
+        "can_extend": owner and st == "approved" and not r["pending_end_date"] and r["extended_count"] < 1
+                      and out["effective_status"] in ("active", "scheduled"),
+    }
+    return out
+
+
+@api.post("/byod/projects")
+async def create_byod_project(body: ByodProjectIn, user: dict = Depends(get_current_user)):
+    if user["role"] not in ("staff", "ict_admin", "admin", "super_admin"):
+        raise HTTPException(403, "Akun ini tidak dapat membuat permohonan BYOD")
+    campus = (user.get("campus") or body.campus or "").strip()
+    if campus not in [c for c in VALID_CAMPUSES if c]:
+        raise HTTPException(400, "Kampus tidak valid atau belum diisi pada akun Anda.")
+    try:
+        byod.check_period(body.start_date, body.end_date, _today_local())
+        byod.check_hours(body.hour_from, body.hour_to)
+    except byod.ByodError as e:
+        raise _byod_err(e)
+    students = []
+    for s in body.students:
+        email = s.parent_email.strip().lower()
+        if email and not _EMAIL_RE.match(email):
+            raise HTTPException(400, f"Email orang tua {s.name} tidak valid.")
+        phone = normalize_phone(s.parent_phone)
+        if not email and not phone:
+            raise HTTPException(400, f"Isi email atau nomor WhatsApp orang tua untuk {s.name}.")
+        students.append((s, email, phone))
+    conn = get_conn()
+    ensure_policy_compliant(conn, user["id"])
+    ts, pid = now_iso(), str(uuid.uuid4())
+    conn.execute("""INSERT INTO byod_projects (id,campus,name,subject,location,start_date,end_date,hour_from,hour_to,teacher_id,teacher_name,created_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""", (pid, campus, body.name.strip(), body.subject.strip(), body.location.strip(),
+                                                           body.start_date[:10], body.end_date[:10], body.hour_from, body.hour_to, user["id"], user["name"], ts))
+    project = dict(conn.execute("SELECT * FROM byod_projects WHERE id = ?", (pid,)).fetchone())
+    created = []
+    for s, email, phone in students:
+        rid = str(uuid.uuid4())
+        tok, tok_hash, exp = byod.new_token()
+        conn.execute("""INSERT INTO byod_requests (id,number,project_id,campus,teacher_id,teacher_name,student_name,student_class,student_no,parent_name,
+                        parent_relation,parent_email,parent_phone,status,token_hash,token_expires_at,terms_version,valid_from,valid_to,created_at,updated_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, 'waiting_parent',?,?,?,?,?,?,?)""",
+                     (rid, byod.next_number(conn, _local_now().year), pid, campus, user["id"], user["name"], s.name.strip(), s.class_name.strip(),
+                      s.student_no.strip(), s.parent_name.strip(), s.parent_relation.strip(), email, phone, tok_hash, exp, byod.TERMS_VERSION,
+                      body.start_date[:10], body.end_date[:10], ts, ts))
+        req = dict(conn.execute("SELECT * FROM byod_requests WHERE id = ?", (rid,)).fetchone())
+        byod.add_event(conn, rid, user["name"], "created", "Permohonan dibuat oleh guru pendamping")
+        sent = _byod_send_parent_link(conn, req, project, tok)
+        byod.add_event(conn, rid, user["name"], "link_sent", ", ".join(k for k, v in sent.items() if v) or "tautan disalin manual")
+        created.append({"id": rid, "number": req["number"], "student_name": req["student_name"], "link": _byod_link(tok), "sent": sent})
+    conn.commit()
+    conn.close()
+    return {"project_id": pid, "requests": created}
+
+
+@api.get("/byod/requests")
+async def list_byod_requests(scope: str = "mine", status: Optional[str] = None, user: dict = Depends(get_current_user)):
+    """scope=mine: requests I opened as teacher; manage: what my campus ICT handles (all campuses for super admin / admin); all: leaders."""
+    conds, params = [], []
+    if scope == "all":
+        if user["role"] not in ("leader", "super_admin", "admin"):
+            raise HTTPException(403, "Tidak diizinkan")
+    elif scope == "manage":
+        if user["role"] in ("super_admin", "admin"):
+            pass
+        elif user["role"] == "ict_admin":
+            conds.append("r.campus = ?"); params.append(user.get("campus") or "")
+        else:
+            raise HTTPException(403, "Tidak diizinkan")
+    else:
+        conds.append("r.teacher_id = ?"); params.append(user["id"])
+    if status:
+        conds.append("r.status = ?"); params.append(status)
+    conn = get_conn()
+    rows = conn.execute(f"""SELECT r.*, p.name AS project_name FROM byod_requests r JOIN byod_projects p ON p.id = r.project_id
+                            {'WHERE ' + ' AND '.join(conds) if conds else ''} ORDER BY r.created_at DESC LIMIT 500""", params).fetchall()
+    today = _today_local()
+    out = []
+    for r in rows:
+        d = {k: v for k, v in dict(r).items() if k not in ("token_hash", "token_expires_at", "parent_signature", "teacher_signature", "parent_ua", "teacher_ua")}
+        d["effective_status"] = byod.effective_status(dict(r), today)
+        out.append(d)
+    conn.close()
+    return out
+
+
+@api.get("/byod/requests/{rid}")
+async def get_byod_request(rid: str, user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    r = _byod_row(conn, rid)
+    if not _byod_visible(user, r):
+        conn.close()
+        raise HTTPException(403, "Tidak diizinkan")
+    view = _byod_view(conn, user, r)
+    conn.close()
+    return view
+
+
+@api.post("/byod/requests/{rid}/resend")
+async def resend_byod_link(rid: str, user: dict = Depends(get_current_user)):
+    """New one-time link (the old one stops working)."""
+    conn = get_conn()
+    r = _byod_row(conn, rid)
+    if r["teacher_id"] != user["id"] or r["status"] != "waiting_parent":
+        conn.close()
+        raise HTTPException(403 if r["teacher_id"] != user["id"] else 409, "Tautan hanya dapat dikirim ulang oleh guru pendamping saat menunggu orang tua.")
+    tok, tok_hash, exp = byod.new_token()
+    conn.execute("UPDATE byod_requests SET token_hash = ?, token_expires_at = ?, updated_at = ? WHERE id = ?", (tok_hash, exp, now_iso(), rid))
+    project = dict(conn.execute("SELECT * FROM byod_projects WHERE id = ?", (r["project_id"],)).fetchone())
+    sent = _byod_send_parent_link(conn, r, project, tok)
+    byod.add_event(conn, rid, user["name"], "link_resent", ", ".join(k for k, v in sent.items() if v) or "tautan disalin manual")
+    conn.commit()
+    conn.close()
+    return {"link": _byod_link(tok), "sent": sent}
+
+
+# ---- public (parent, no account) ----
+def _byod_by_token(conn, token: str) -> dict:
+    r = conn.execute("SELECT * FROM byod_requests WHERE token_hash = ? AND token_hash != ''", (byod.hash_token(token),)).fetchone()
+    if not r:
+        conn.close()
+        raise HTTPException(404, "Tautan tidak valid atau formulir sudah ditandatangani.")
+    r = dict(r)
+    if r["status"] != "waiting_parent":
+        conn.close()
+        raise HTTPException(410, "Formulir ini sudah tidak menunggu persetujuan.")
+    if r["token_expires_at"] < now_iso():
+        conn.close()
+        raise HTTPException(410, "Tautan sudah kedaluwarsa. Mintalah guru pendamping mengirim ulang.")
+    return r
+
+
+@api.get("/public/byod/{token}")
+async def public_byod_form(token: str):
+    conn = get_conn()
+    r = _byod_by_token(conn, token)
+    p = dict(conn.execute("SELECT * FROM byod_projects WHERE id = ?", (r["project_id"],)).fetchone())
+    conn.close()
+    return {"number": r["number"], "student_name": r["student_name"], "student_class": r["student_class"], "student_no": r["student_no"],
+            "parent_name": r["parent_name"], "parent_relation": r["parent_relation"], "campus": r["campus"], "teacher_name": r["teacher_name"],
+            "terms_version": r["terms_version"], "expires_at": r["token_expires_at"],
+            "project": {k: p[k] for k in ("name", "subject", "location", "start_date", "end_date", "hour_from", "hour_to")},
+            "valid_from": r["valid_from"], "valid_to": r["valid_to"],
+            "max_devices": byod.MAX_DEVICES, "device_kinds": list(byod.DEVICE_KINDS)}
+
+
+class ByodDeviceIn(BaseModel):
+    kind: str
+    brand: str = ""
+    model: str = ""
+    os: str = ""
+    os_version: str = ""
+    mac: str = ""
+    serial: str = ""
+
+
+class ByodParentSignIn(BaseModel):
+    parent_name: str = Field(..., min_length=3, max_length=120)
+    parent_relation: str = Field(..., min_length=2, max_length=60)
+    devices: List[ByodDeviceIn]
+    statements: dict = {}
+    signature: str
+    text_hash: str = ""
+    lang: str = ""
+
+
+BYOD_STATEMENTS = ("own_device", "liability", "project_only", "rules", "monitoring", "revoke", "privacy")
+
+
+def _check_signature(data: str):
+    if not data.startswith("data:image/png;base64,") or len(data) > 80_000 or len(data) < 400:
+        raise HTTPException(400, "Tanda tangan belum diisi atau tidak valid. Gambar tanda tangan Anda pada kotak yang tersedia.")
+
+
+@api.post("/public/byod/{token}/sign")
+async def public_byod_sign(token: str, body: ByodParentSignIn, request: Request):
+    if not all(body.statements.get(k) is True for k in BYOD_STATEMENTS):
+        raise HTTPException(400, "Semua pernyataan wajib dicentang.")
+    _check_signature(body.signature)
+    try:
+        devices = byod.validate_devices([d.model_dump() for d in body.devices])
+    except byod.ByodError as e:
+        raise _byod_err(e)
+    conn = get_conn()
+    r = _byod_by_token(conn, token)
+    dup = byod.mac_in_use(conn, [d["mac"] for d in devices], exclude_request_id=r["id"], today=_today_local())
+    if dup:
+        conn.close()
+        raise HTTPException(409, f"MAC address {dup} sudah terdaftar pada permohonan BYOD lain. Periksa kembali atau hubungi guru pendamping.")
+    ts, ip = now_iso(), _client_ip(request)
+    conn.execute("DELETE FROM byod_devices WHERE request_id = ?", (r["id"],))
+    for d in devices:
+        conn.execute("""INSERT INTO byod_devices (id,request_id,kind,brand,model,os,os_version,mac,serial,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                     (str(uuid.uuid4()), r["id"], d["kind"], d["brand"], d["model"], d["os"], d["os_version"], d["mac"], d["serial"], ts))
+    conn.execute("""UPDATE byod_requests SET status = 'waiting_teacher', parent_name = ?, parent_relation = ?, parent_signed_at = ?, parent_signed_name = ?,
+                    parent_signature = ?, parent_ip = ?, parent_ua = ?, parent_text_hash = ?, parent_lang = ?, token_hash = '', updated_at = ? WHERE id = ?""",
+                 (body.parent_name.strip(), body.parent_relation.strip(), ts, body.parent_name.strip(), body.signature, ip,
+                  request.headers.get("user-agent", "")[:300], body.text_hash[:128], body.lang[:8], ts, r["id"]))
+    byod.add_event(conn, r["id"], body.parent_name.strip(), "parent_signed", f'{len(devices)} perangkat', ip)
+    teacher = conn.execute("SELECT email FROM users WHERE id = ?", (r["teacher_id"],)).fetchone()
+    r.update(parent_name=body.parent_name.strip())
+    if teacher:
+        _byod_notify(conn, [teacher["email"]], "Orang tua telah menandatangani", "Giliran Anda menandatangani", r,
+                     f'Orang tua {r["student_name"]} sudah menyetujui. Mohon tanda tangani permohonan di aplikasi YPJ Assets agar dilanjutkan ke ICT.', "byod_teacher")
+    conn.commit()
+    conn.close()
+    return {"ok": True, "number": r["number"]}
+
+
+# ---- teacher ----
+class ByodTeacherSignIn(BaseModel):
+    signed_name: str
+    signature: str
+    agree: bool = False
+
+
+@api.put("/byod/requests/{rid}/teacher-sign")
+async def byod_teacher_sign(rid: str, body: ByodTeacherSignIn, request: Request, user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    r = _byod_row(conn, rid)
+    if r["teacher_id"] != user["id"]:
+        conn.close()
+        raise HTTPException(403, "Hanya guru pendamping permohonan ini yang dapat menandatangani.")
+    if r["status"] != "waiting_teacher":
+        conn.close()
+        raise HTTPException(409, "Permohonan ini tidak sedang menunggu tanda tangan guru (orang tua harus menandatangani lebih dulu).")
+    if not body.agree:
+        conn.close()
+        raise HTTPException(400, "Centang pernyataan guru pendamping.")
+    if _norm_name(body.signed_name) != _norm_name(user.get("name", "")):
+        conn.close()
+        raise HTTPException(400, "Nama yang diketik harus sama dengan nama akun Anda.")
+    try:
+        _check_signature(body.signature)
+    except HTTPException:
+        conn.close()
+        raise
+    ts, ip = now_iso(), _client_ip(request)
+    conn.execute("""UPDATE byod_requests SET status = 'waiting_ict', teacher_signed_at = ?, teacher_signed_name = ?, teacher_signature = ?, teacher_ip = ?,
+                    teacher_ua = ?, updated_at = ? WHERE id = ?""", (ts, body.signed_name.strip(), body.signature, ip, request.headers.get("user-agent", "")[:300], ts, rid))
+    byod.add_event(conn, rid, user["name"], "teacher_signed", "", ip)
+    _byod_notify(conn, loan_manager_emails(conn, r["campus"], "IT Equipment"), "BYOD menunggu persetujuan ICT", "Permohonan BYOD Menunggu Persetujuan", r,
+                 "Orang tua dan guru pendamping sudah menandatangani. Mohon periksa perangkat dan beri keputusan di aplikasi YPJ Assets.", "byod_ict")
+    conn.commit()
+    r = _byod_row(conn, rid)
+    view = _byod_view(conn, user, r)
+    conn.close()
+    return view
+
+
+class ByodDecideIn(BaseModel):
+    decision: Literal["approved", "rejected"]
+    note: str = ""
+    devices: List[dict] = []          # corrections by ICT: [{id, mac?, brand?, model?, os?, os_version?}]
+
+
+@api.put("/byod/requests/{rid}/decide")
+async def byod_decide(rid: str, body: ByodDecideIn, user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    r = _byod_row(conn, rid)
+    if not can_manage_byod(user, r["campus"]):
+        conn.close()
+        raise HTTPException(403, "Hanya ICT Admin kampus ini yang dapat memutuskan.")
+    extension = r["status"] == "approved" and bool(r["pending_end_date"])
+    if r["status"] != "waiting_ict" and not extension:
+        conn.close()
+        raise HTTPException(409, "Permohonan ini tidak sedang menunggu keputusan ICT.")
+    if body.decision == "rejected" and not body.note.strip():
+        conn.close()
+        raise HTTPException(400, "Alasan penolakan wajib diisi.")
+    ts = now_iso()
+    if body.decision == "approved" and not extension:
+        try:
+            for c in body.devices:
+                d = conn.execute("SELECT * FROM byod_devices WHERE id = ? AND request_id = ?", (c.get("id"), rid)).fetchone()
+                if not d:
+                    raise byod.ByodError("Perangkat tidak ditemukan.", "device", 404)
+                fix = {k: (str(c[k]).strip() if k != "mac" else byod.normalize_mac(c[k])) for k in ("mac", "brand", "model", "os", "os_version") if c.get(k)}
+                if fix:
+                    conn.execute(f"UPDATE byod_devices SET {', '.join(k + ' = ?' for k in fix)} WHERE id = ?", [*fix.values(), d["id"]])
+            macs = [x["mac"] for x in conn.execute("SELECT mac FROM byod_devices WHERE request_id = ?", (rid,))]
+            dup = byod.mac_in_use(conn, macs, exclude_request_id=rid, today=_today_local())
+            if dup:
+                raise byod.ByodError(f"MAC address {dup} sudah terdaftar pada permohonan BYOD lain.", "mac", 409)
+        except byod.ByodError as e:
+            conn.rollback()
+            conn.close()
+            raise _byod_err(e)
+    if extension:
+        if body.decision == "approved":
+            conn.execute("UPDATE byod_requests SET valid_to = pending_end_date, pending_end_date = NULL, extended_count = extended_count + 1, ict_by = ?, ict_by_name = ?, ict_at = ?, ict_note = ?, updated_at = ? WHERE id = ?",
+                         (user["id"], user["name"], ts, body.note.strip(), ts, rid))
+        else:
+            conn.execute("UPDATE byod_requests SET pending_end_date = NULL, ict_note = ?, updated_at = ? WHERE id = ?", (body.note.strip(), ts, rid))
+        byod.add_event(conn, rid, user["name"], "extension_" + body.decision, body.note.strip())
+    else:
+        conn.execute("UPDATE byod_requests SET status = ?, ict_by = ?, ict_by_name = ?, ict_at = ?, ict_note = ?, updated_at = ? WHERE id = ?",
+                     (body.decision, user["id"], user["name"], ts, body.note.strip(), ts, rid))
+        byod.add_event(conn, rid, user["name"], body.decision, body.note.strip())
+    r = _byod_row(conn, rid)
+    teacher = conn.execute("SELECT email FROM users WHERE id = ?", (r["teacher_id"],)).fetchone()
+    if teacher:
+        approved = body.decision == "approved"
+        _byod_notify(conn, [teacher["email"]], "BYOD disetujui ICT" if approved else "BYOD ditolak ICT",
+                     "Permohonan BYOD Disetujui" if approved else "Permohonan BYOD Ditolak", r,
+                     ("Akses WiFi sekolah akan diberikan untuk perangkat siswa pada periode tersebut." if approved
+                      else f'Alasan: {body.note.strip()}'), "byod_decided")
+    conn.commit()
+    view = _byod_view(conn, user, r)
+    conn.close()
+    return view
+
+
+class ByodReasonIn(BaseModel):
+    reason: str = ""
+
+
+@api.put("/byod/requests/{rid}/cancel")
+async def byod_cancel(rid: str, body: ByodReasonIn, user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    r = _byod_row(conn, rid)
+    if not (r["teacher_id"] == user["id"] or can_manage_byod(user, r["campus"])):
+        conn.close()
+        raise HTTPException(403, "Tidak diizinkan")
+    if r["status"] not in ("waiting_parent", "waiting_teacher", "waiting_ict", "approved"):
+        conn.close()
+        raise HTTPException(409, "Permohonan ini tidak dapat dibatalkan lagi.")
+    conn.execute("UPDATE byod_requests SET status = 'cancelled', token_hash = '', end_reason = ?, updated_at = ? WHERE id = ?", (body.reason.strip(), now_iso(), rid))
+    byod.add_event(conn, rid, user["name"], "cancelled", body.reason.strip())
+    conn.commit()
+    view = _byod_view(conn, user, _byod_row(conn, rid))
+    conn.close()
+    return view
+
+
+@api.put("/byod/requests/{rid}/revoke")
+async def byod_revoke(rid: str, body: ByodReasonIn, user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    r = _byod_row(conn, rid)
+    if not can_manage_byod(user, r["campus"]):
+        conn.close()
+        raise HTTPException(403, "Hanya ICT Admin kampus ini yang dapat mencabut akses.")
+    if r["status"] != "approved":
+        conn.close()
+        raise HTTPException(409, "Hanya permohonan yang sudah disetujui yang dapat dicabut.")
+    if len(body.reason.strip()) < 3:
+        conn.close()
+        raise HTTPException(400, "Alasan pencabutan wajib diisi.")
+    conn.execute("UPDATE byod_requests SET status = 'revoked', pending_end_date = NULL, end_reason = ?, updated_at = ? WHERE id = ?", (body.reason.strip(), now_iso(), rid))
+    byod.add_event(conn, rid, user["name"], "revoked", body.reason.strip())
+    r = _byod_row(conn, rid)
+    teacher = conn.execute("SELECT email FROM users WHERE id = ?", (r["teacher_id"],)).fetchone()
+    if teacher:
+        _byod_notify(conn, [teacher["email"]], "Akses BYOD dicabut", "Akses BYOD Dicabut", r, f'Alasan: {body.reason.strip()}', "byod_revoked")
+    conn.commit()
+    view = _byod_view(conn, user, r)
+    conn.close()
+    return view
+
+
+class ByodExtendIn(BaseModel):
+    new_end_date: str
+
+
+@api.put("/byod/requests/{rid}/extend")
+async def byod_extend(rid: str, body: ByodExtendIn, user: dict = Depends(get_current_user)):
+    """The teacher asks ICT for one extension (no new parent signature: same project, same devices)."""
+    conn = get_conn()
+    r = _byod_row(conn, rid)
+    if r["teacher_id"] != user["id"]:
+        conn.close()
+        raise HTTPException(403, "Hanya guru pendamping yang dapat meminta perpanjangan.")
+    if r["status"] != "approved" or r["pending_end_date"] or r["extended_count"] >= 1:
+        conn.close()
+        raise HTTPException(409, "Perpanjangan hanya dapat diminta satu kali untuk permohonan yang sedang berlaku.")
+    try:
+        new_end, cur_end = byod.parse_date(body.new_end_date), byod.parse_date(r["valid_to"])
+    except byod.ByodError as e:
+        conn.close()
+        raise _byod_err(e)
+    if new_end <= cur_end or (new_end - cur_end).days > byod.MAX_EXTEND_DAYS:
+        conn.close()
+        raise HTTPException(400, f"Tanggal baru harus setelah {r['valid_to']} dan paling lama {byod.MAX_EXTEND_DAYS} hari dari tanggal selesai saat ini.")
+    if byod.effective_status(r, _today_local()) == "expired":
+        conn.close()
+        raise HTTPException(409, "Permohonan sudah berakhir. Buat permohonan baru.")
+    conn.execute("UPDATE byod_requests SET pending_end_date = ?, updated_at = ? WHERE id = ?", (new_end.isoformat(), now_iso(), rid))
+    byod.add_event(conn, rid, user["name"], "extension_requested", new_end.isoformat())
+    _byod_notify(conn, loan_manager_emails(conn, r["campus"], "IT Equipment"), "Perpanjangan BYOD", "Permintaan Perpanjangan BYOD", r,
+                 f'Guru pendamping meminta perpanjangan sampai {new_end.isoformat()}.', "byod_ict")
+    conn.commit()
+    view = _byod_view(conn, user, _byod_row(conn, rid))
+    conn.close()
+    return view
+
+
+@api.get("/reports/byod-devices")
+async def report_byod_devices(user: dict = Depends(get_current_user)):
+    """Devices to allow on the school WiFi: approved requests that have not ended yet (for the ICT Admin's campus)."""
+    if user["role"] not in ("super_admin", "admin", "ict_admin", "leader"):
+        raise HTTPException(403, "Tidak diizinkan")
+    import openpyxl
+    conn = get_conn()
+    conds, params = ["r.status = 'approved'", "r.valid_to >= ?"], [_today_local().isoformat()]
+    if user["role"] == "ict_admin":
+        conds.append("r.campus = ?"); params.append(user.get("campus") or "")
+    rows = conn.execute(f"""SELECT r.number, r.campus, r.student_name, r.student_class, r.teacher_name, r.valid_from, r.valid_to, p.hour_from, p.hour_to,
+                                   p.name AS project, d.kind, d.brand, d.model, d.os, d.os_version, d.mac
+                            FROM byod_requests r JOIN byod_projects p ON p.id = r.project_id JOIN byod_devices d ON d.request_id = r.id
+                            WHERE {' AND '.join(conds)} ORDER BY r.campus, r.valid_to, r.student_name""", params).fetchall()
+    conn.close()
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "BYOD aktif"
+    ws.append(["No. Permohonan", "Kampus", "Siswa", "Kelas", "Guru pendamping", "Project", "Mulai", "Selesai", "Jam dari", "Jam sampai",
+               "Jenis", "Merek", "Model", "OS", "Versi OS", "MAC address"])
+    _style_header(ws)
+    for r in rows:
+        ws.append([r["number"], r["campus"], r["student_name"], r["student_class"], r["teacher_name"], r["project"], r["valid_from"], r["valid_to"],
+                   r["hour_from"], r["hour_to"], r["kind"], r["brand"], r["model"], r["os"], r["os_version"], r["mac"]])
+    return _xlsx_response(wb, f"byod-devices-{datetime.now().strftime('%Y%m%d')}.xlsx")
+
+
+def send_byod_reminders():
+    """Daily: warn teacher + ICT 3 days before a BYOD approval ends, and ICT the day after it ended (remove WiFi access)."""
+    conn = get_conn()
+    try:
+        today = _local_now().date()
+        for days, kind, heading, text in (
+                (3, "byod_expiring", "BYOD Akan Berakhir", "Izin BYOD akan berakhir dalam 3 hari. Ajukan perpanjangan bila masih diperlukan."),
+                (-1, "byod_expired", "BYOD Berakhir", "Izin BYOD telah berakhir. ICT: mohon cabut akses WiFi perangkat siswa.")):
+            target = (today + timedelta(days=days)).isoformat()
+            for row in conn.execute("SELECT * FROM byod_requests WHERE status = 'approved' AND valid_to = ?", (target,)).fetchall():
+                r = dict(row)
+                if _already_notified(conn, kind, r["id"], hours=48):
+                    continue
+                t = conn.execute("SELECT email FROM users WHERE id = ?", (r["teacher_id"],)).fetchone()
+                to = ([t["email"]] if t and days > 0 else []) + loan_manager_emails(conn, r["campus"], "IT Equipment")
+                _byod_notify(conn, to, heading, heading, r, text, kind)
+    finally:
+        conn.close()
+
+
 app.include_router(api)
 app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 
@@ -5996,6 +6552,7 @@ async def on_startup():
     scheduler.add_job(send_asset_due_reminders, "cron", hour=8, minute=5)
     scheduler.add_job(send_assignment_reminders, "cron", hour=8, minute=10)
     scheduler.add_job(send_loan_reminders, "cron", hour=8, minute=15)
+    scheduler.add_job(send_byod_reminders, "cron", hour=8, minute=20)
     scheduler.add_job(mark_overdue_loans, "interval", minutes=15)
     scheduler.start()
     mode = "production" if BUILD_DIR.exists() else "development"

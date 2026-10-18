@@ -21,6 +21,7 @@ import {
   UserCheck,
   ListChecks,
   School,
+  Laptop,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import api from "../../lib/api";
@@ -38,6 +39,7 @@ const NAV_LINKS = [
   { to: "/transfer-requests", labelKey: "nav_transfer_requests", icon: ArrowRightLeft, testid: "nav-transfers", badge: "pendingTransfers" },
   { to: "/loans", labelKey: "nav_loan_requests", icon: BookOpen, testid: "nav-loans", badge: "pendingLoans" },
   { to: "/schedule", labelKey: "nav_schedule", icon: CalendarDays, testid: "nav-schedule" },
+  { to: "/byod", labelKey: "nav_byod", icon: Laptop, testid: "nav-byod" },
   { to: "/scan", labelKey: "nav_scan", icon: ScanLine, testid: "nav-scan", roles: ["super_admin", "admin", "ict_admin"] },
   { to: "/users", labelKey: "nav_users", icon: Users, testid: "nav-users", adminOnly: true },
   { to: "/reports", labelKey: "nav_reports", icon: BarChart3, testid: "nav-reports", roles: ["super_admin", "admin", "leader", "ict_admin"] },
