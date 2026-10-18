@@ -1293,6 +1293,22 @@ def policy_status(conn, user: dict) -> dict:
             "policy_accepted_at": row["accepted_at"] if row else None}
 
 
+def ensure_policy_compliant(conn, person_id: str, who: str = "self"):
+    """Borrowing and being assigned assets both require the current policies to be confirmed.
+    `who`: "self" for the signed-in requester, "other" for a recipient/teacher named by someone else.
+    Closes `conn` before raising, like require_user."""
+    row = conn.execute("SELECT id, name, role FROM users WHERE id = ?", (person_id,)).fetchone() if person_id else None
+    if not row:
+        return
+    if policy_status(conn, dict(row))["policy_accepted"]:
+        return
+    conn.close()
+    if who == "self":
+        raise HTTPException(403, "Anda belum menyetujui kebijakan penggunaan aset. Setujui kebijakan terlebih dahulu sebelum meminjam atau menerima aset.")
+    raise HTTPException(403, f"{row['name']} belum menyetujui kebijakan penggunaan aset, sehingga aset belum dapat diserahkan atau dijadwalkan atas nama yang bersangkutan. "
+                             "Minta yang bersangkutan login dan menyetujui kebijakan terlebih dahulu.")
+
+
 @api.get("/auth/me")
 async def me(user: dict = Depends(get_current_user)):
     conn = get_conn()
@@ -2949,6 +2965,7 @@ def create_assignment(conn, asset: dict, to_user: dict, kind: str, source: str, 
                       note: str = "", batch_id: str = None, to_label: str = None,
                       transfer_request_id: str = None) -> dict:
     """Insert a pending assignment (caller commits). Raises ValueError('pending'|'same_holder')."""
+    ensure_policy_compliant(conn, to_user["id"], "other")   # nobody receives assets before confirming the policies
     if kind not in ASSIGN_KINDS:
         kind = "personal"
     if pending_assignment(conn, asset["id"]):
@@ -3607,6 +3624,7 @@ async def create_loan_request(aid: str, body: LoanRequestIn, user: dict = Depend
     if not asset:
         conn.close()
         raise HTTPException(404, "Asset not found")
+    ensure_policy_compliant(conn, user["id"])
     why = loan_block_reason(user, dict(asset))
     if why:
         conn.close()
@@ -4064,6 +4082,7 @@ async def create_loan(body: LoanIn, user: dict = Depends(get_current_user)):
     if user["role"] not in ADMIN_ROLES + ("ict_admin", "staff"):
         raise HTTPException(403, "Akun ini tidak dapat mengajukan peminjaman")
     conn = get_conn()
+    ensure_policy_compliant(conn, user["id"])
     if body.asset_id:
         a = conn.execute("SELECT * FROM assets WHERE id = ?", (body.asset_id,)).fetchone()
         if not a:
@@ -4584,6 +4603,7 @@ async def create_schedule(body: ScheduleIn, user: dict = Depends(get_current_use
     if not can_manage_loan(user, res["campus"], res["category"]):
         conn.close()
         raise HTTPException(403, "Hanya Admin ICT untuk kampus ini yang dapat mengisi jadwal tetap")
+    ensure_policy_compliant(conn, body.teacher_user_id, "other")
     problems = booking_engine.validate_schedule(conn, data, now=_local_now())
     if problems:
         conn.close()
@@ -4613,6 +4633,8 @@ async def update_schedule(sid: str, body: ScheduleIn, user: dict = Depends(get_c
     if not can_manage_loan(user, res["campus"], res["category"]) or res["campus"] != old["campus"]:
         conn.close()
         raise HTTPException(403, "Tidak diizinkan")
+    if body.teacher_user_id and body.teacher_user_id != old["teacher_user_id"]:
+        ensure_policy_compliant(conn, body.teacher_user_id, "other")
     if data["status"] == "active":
         problems = booking_engine.validate_schedule(conn, data, exclude_id=sid, now=_local_now())
         if problems:
