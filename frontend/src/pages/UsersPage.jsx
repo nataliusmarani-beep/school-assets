@@ -11,6 +11,7 @@ import { useAuth } from "../context/AuthContext";
 import { Plus, Trash2, Pencil, Upload, Mail, KeyRound } from "lucide-react";
 import BulkUsersDialog from "../components/BulkUsersDialog";
 import { isAdminRole, isSuperAdmin } from "../lib/roles";
+import { campusLabel } from "../lib/campus";
 
 const EMPTY_FORM = { name: "", email: "", password: "", role: "staff", department: "", campus: "", supervisor_name: "", supervisor: "", employee_id: "" };
 const EMPTY_EDIT = { name: "", email: "", role: "staff", department: "", campus: "", supervisor_name: "", supervisor: "", employee_id: "", password: "" };
@@ -125,7 +126,7 @@ function FormFields({ values, set, isEdit, t, allNames, allDepts, users, canSupe
           <SelectTrigger className="mt-2 rounded-none"><SelectValue placeholder={t("select_campus")} /></SelectTrigger>
           <SelectContent>
             <SelectItem value="YPJ Kuala Kencana">YPJ Kuala Kencana</SelectItem>
-            <SelectItem value="YPJ TPRA">YPJ TPRA</SelectItem>
+            <SelectItem value="YPJ TPRA">{campusLabel("YPJ TPRA")}</SelectItem>
           </SelectContent>
         </Select></div>
 
@@ -297,7 +298,7 @@ export default function UsersPage() {
                     {u.campus ? (
                       <span className="inline-flex items-center gap-1.5">
                         <span className={`w-2 h-2 rounded-full flex-shrink-0 ${u.campus === "YPJ Kuala Kencana" ? "bg-amber-400" : "bg-blue-500"}`} />
-                        <span className="text-xs">{u.campus}</span>
+                        <span className="text-xs">{campusLabel(u.campus)}</span>
                       </span>
                     ) : "—"}
                   </td>

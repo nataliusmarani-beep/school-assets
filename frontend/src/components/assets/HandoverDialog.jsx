@@ -5,6 +5,7 @@ import { Textarea } from "../ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../ui/dialog";
 import { toast } from "sonner";
 import { ownerName } from "../../lib/format";
+import { campusLabel } from "../../lib/campus";
 
 const SEL = "mt-2 w-full h-10 px-3 text-sm border border-slate-300 bg-white rounded-none";
 
@@ -67,7 +68,7 @@ export default function HandoverDialog({ open, onOpenChange, t, onDone, classroo
               <label className="label-mono">{t("ho_room")}</label>
               <select value={roomId} onChange={(e) => setRoomId(e.target.value)} className={SEL} data-testid="ho-room">
                 <option value="">{t("ho_room_ph")}</option>
-                {rooms.map((r) => <option key={r.id} value={r.id}>{r.name}{r.campus ? ` — ${r.campus}` : ""}</option>)}
+                {rooms.map((r) => <option key={r.id} value={r.id}>{r.name}{r.campus ? ` — ${campusLabel(r.campus)}` : ""}</option>)}
               </select>
             </div>
           )}

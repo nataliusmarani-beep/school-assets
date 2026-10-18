@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { toast } from "sonner";
 import { Plus, Search, Pencil } from "lucide-react";
 import ClassroomEditDialog from "../components/assets/ClassroomEditDialog";
+import { campusLabel } from "../lib/campus";
 
 const CAMPUSES = ["YPJ Kuala Kencana", "YPJ TPRA"];
 const TYPES = ["kelas", "lab", "kantor", "lainnya"];
@@ -69,7 +70,7 @@ export default function ClassroomsPage() {
         </div>
         <select value={campus} onChange={(e) => setCampus(e.target.value)} className="h-10 px-3 text-sm border border-slate-300 bg-white rounded-none">
           <option value="all">{t("all_campuses")}</option>
-          {CAMPUSES.map((c) => <option key={c} value={c}>{c}</option>)}
+          {CAMPUSES.map((c) => <option key={c} value={c}>{campusLabel(c)}</option>)}
         </select>
       </div>
 
@@ -99,7 +100,7 @@ export default function ClassroomsPage() {
                     )}
                   </div>
                 </td>
-                <td className="py-3 px-4 text-slate-700">{r.campus || "—"}</td>
+                <td className="py-3 px-4 text-slate-700">{campusLabel(r.campus) || "—"}</td>
                 <td className="py-3 px-4 text-slate-700">{t(`cr_type_${r.room_type}`)}</td>
                 <td className="py-3 px-4 text-slate-700">{r.responsible_name ? ownerName(r.responsible_name) : <span className="text-slate-400">{t("cr_none_resp")}</span>}</td>
                 <td className="py-3 px-4 text-slate-700">{r.class_count}</td>
@@ -138,7 +139,7 @@ export default function ClassroomsPage() {
               <div>
                 <label className="label-mono">{t("cr_campus")}</label>
                 <select value={form.campus} onChange={(e) => setForm({ ...form, campus: e.target.value })} className={SEL}>
-                  {CAMPUSES.map((c) => <option key={c} value={c}>{c}</option>)}
+                  {CAMPUSES.map((c) => <option key={c} value={c}>{campusLabel(c)}</option>)}
                 </select>
               </div>
               <div>

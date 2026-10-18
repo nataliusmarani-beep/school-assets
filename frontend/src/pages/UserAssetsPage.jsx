@@ -8,6 +8,7 @@ import HandoverDialog from "../components/assets/HandoverDialog";
 import { toast } from "sonner";
 import { Users, Boxes, PackageX, Clock, ArrowRightLeft } from "lucide-react";
 import { ownerName } from "../lib/format";
+import { campusLabel } from "../lib/campus";
 
 function Kpi({ label, value, icon: Icon, testid }) {
   return (
@@ -119,7 +120,7 @@ export default function UserAssetsPage() {
                 className={`border-t border-slate-100 cursor-pointer hover:bg-slate-50 ${selected === u.id ? "bg-blue-50/60" : ""}`}>
                 <td className="px-4 py-3">
                   <div className="font-medium text-slate-900">{u.name}</div>
-                  <div className="text-xs text-slate-500">{[u.department, u.campus].filter(Boolean).join(" · ") || u.email}</div>
+                  <div className="text-xs text-slate-500">{[u.department, campusLabel(u.campus)].filter(Boolean).join(" · ") || u.email}</div>
                 </td>
                 <td className="px-4 py-3 text-right font-mono">{u.personal_count}</td>
                 <td className="px-4 py-3 text-right font-mono">{u.class_count}</td>

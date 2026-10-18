@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { ArrowLeft } from "lucide-react";
 import { StatusBadge } from "./LoansPage";
 import { UnitCheck, emptyUnit, fileSrc, fmtDateTime } from "../components/loans/LoanForms";
+import { campusLabel } from "../lib/campus";
 
 function Row({ k, children }) {
   return <div className="grid grid-cols-3 gap-3 py-2 border-b border-slate-100 text-sm"><div className="text-slate-500">{k}</div><div className="col-span-2 text-slate-900">{children || "—"}</div></div>;
@@ -83,7 +84,7 @@ export default function LoanDetailPage() {
         <div>
           <div className="label-mono mb-1">{loan.number}</div>
           <h1 className="font-display text-3xl font-semibold tracking-tight text-slate-900">{a.name || "—"}</h1>
-          <div className="text-xs font-mono text-slate-500 mt-1">{a.asset_tag} · {loan.campus}</div>
+          <div className="text-xs font-mono text-slate-500 mt-1">{a.asset_tag} · {campusLabel(loan.campus)}</div>
         </div>
         <StatusBadge status={loan.status} t={t} />
       </div>

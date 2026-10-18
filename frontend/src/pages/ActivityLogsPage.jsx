@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "../components/ui/select";
+import { campusLabel } from "../lib/campus";
 
 // Maps event type → display label key + entity label
 const EVENT_META = {
@@ -192,7 +193,7 @@ export default function ActivityLogsPage() {
                         {event.campus && (
                           <span className="ml-2 inline-flex items-center gap-1 text-xs text-slate-400 font-normal">
                             <span className={`w-1.5 h-1.5 rounded-full ${event.campus === "YPJ Kuala Kencana" ? "bg-amber-400" : "bg-blue-500"}`} />
-                            {event.campus}
+                            {campusLabel(event.campus)}
                           </span>
                         )}
                       </td>

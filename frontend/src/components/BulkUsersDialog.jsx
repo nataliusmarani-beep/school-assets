@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import api, { formatErr } from "../lib/api";
 import { useLang } from "../context/LangContext";
 import { CheckCircle2, XCircle, Download, FileText } from "lucide-react";
+import { campusLabel } from "../lib/campus";
 
 const dl = (blob, name) => {
   const url = URL.createObjectURL(blob);
@@ -117,7 +118,7 @@ export default function BulkUsersDialog({ onClose, onImported }) {
                         <td className="py-2 px-3 text-slate-700">{p.email || "—"}</td>
                         <td className="py-2 px-3">{p.role}</td>
                         <td className="py-2 px-3">{p.department || "—"}</td>
-                        <td className="py-2 px-3">{p.campus || "—"}</td>
+                        <td className="py-2 px-3">{campusLabel(p.campus) || "—"}</td>
                         <td className="py-2 px-3">{p.supervisor || "—"}</td>
                         <td className="py-2 px-3">
                           {p.errors.length ? <ul className="list-disc list-inside">{p.errors.map((e, i) => <li key={i} className="text-red-600">{e}</li>)}</ul>

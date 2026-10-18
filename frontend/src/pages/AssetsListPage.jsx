@@ -16,6 +16,7 @@ import { Search, Plus, Filter, Upload, Download, CheckCircle2, XCircle, FileText
 import { isAdminRole } from "../lib/roles";
 import { ownerName } from "../lib/format";
 import BulkTransferDialog from "../components/assets/BulkTransferDialog";
+import { campusLabel } from "../lib/campus";
 
 const CAMPUSES = ["YPJ Kuala Kencana", "YPJ TPRA"];
 
@@ -243,7 +244,7 @@ function ImportModal({ onClose, onImported }) {
                         <td className="py-2 px-3 text-slate-800">{row.name || "—"}</td>
                         <td className="py-2 px-3 font-mono text-slate-600">{row.asset_tag || "—"}</td>
                         <td className="py-2 px-3 text-slate-700">{row.category || "—"}</td>
-                        <td className="py-2 px-3 text-slate-700">{row.campus || "—"}</td>
+                        <td className="py-2 px-3 text-slate-700">{campusLabel(row.campus) || "—"}</td>
                         <td className="py-2 px-3 text-slate-700">{row.status || "—"}</td>
                         <td className="py-2 px-3">
                           {row.errors.length > 0 ? (
@@ -440,7 +441,7 @@ export default function AssetsListPage() {
                 <SelectItem key={c} value={c}>
                   <span className="flex items-center gap-2">
                     <span className={`w-2 h-2 rounded-full ${CAMPUS_DOT[c] || "bg-slate-400"}`} />
-                    {c}
+                    {campusLabel(c)}
                   </span>
                 </SelectItem>
               ))}
@@ -541,7 +542,7 @@ export default function AssetsListPage() {
                       {a.campus ? (
                         <span className="flex items-center gap-1.5">
                           <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dot || "bg-slate-400"}`} />
-                          {a.campus}
+                          {campusLabel(a.campus)}
                         </span>
                       ) : "—"}
                     </td>

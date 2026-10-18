@@ -50,3 +50,16 @@ def test_ict_admin_requires_campus(client, make_user):
     assert client.post("/api/auth/register", headers=auth(admin), json=body).status_code == 400
     body["campus"] = "YPJ TPRA"
     assert client.post("/api/auth/register", headers=auth(admin), json=body).status_code == 200
+
+
+def test_campus_alias_accepts_tembagapura_label():
+    assert server.normalize_campus("YPJ Tembagapura") == "YPJ TPRA"
+    assert server.normalize_campus(" ypj tembagapura ") == "YPJ TPRA"
+    assert server.normalize_campus("YPJ TPRA") == "YPJ TPRA"
+    assert server.normalize_campus("YPJ Kuala Kencana") == "YPJ Kuala Kencana"
+
+
+def test_user_import_accepts_tembagapura_label(db):
+    rows = [{"name": "Sari", "email": "sari@example.com", "role": "staff", "campus": "YPJ Tembagapura"}]
+    checked = server._validate_user_rows(db, rows)
+    assert checked[0]["errors"] == [] and checked[0]["data"]["campus"] == "YPJ TPRA"

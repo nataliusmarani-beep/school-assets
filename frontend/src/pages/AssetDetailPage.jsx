@@ -19,6 +19,7 @@ import {
   ArrowLeft, ArrowRightLeft, Wrench, Edit, Trash2, Download,
   FileText, Calendar, ShieldCheck, Building2, User as UserIcon, Tag,
 } from "lucide-react";
+import { campusLabel } from "../lib/campus";
 
 export default function AssetDetailPage() {
   const { id } = useParams();
@@ -292,7 +293,7 @@ export default function AssetDetailPage() {
                           onMouseDown={(e) => { e.preventDefault(); selectUser(u); }}
                         >
                           <div className="font-medium text-slate-900">{u.name}</div>
-                          <div className="text-xs text-slate-500">{[u.department, u.campus].filter(Boolean).join(" · ")}</div>
+                          <div className="text-xs text-slate-500">{[u.department, campusLabel(u.campus)].filter(Boolean).join(" · ")}</div>
                         </button>
                       ))}
                     </div>
@@ -304,7 +305,7 @@ export default function AssetDetailPage() {
                   <Label className="label-mono">{t("campus")}</Label>
                   {!isAdmin && user?.campus ? (
                     <div className="mt-2 px-3 py-2 border border-slate-200 bg-slate-50 text-sm text-slate-700 rounded-none">
-                      {user.campus}
+                      {campusLabel(user.campus)}
                     </div>
                   ) : (
                     <Select value={transferCampus} onValueChange={setTransferCampus}>
@@ -313,7 +314,7 @@ export default function AssetDetailPage() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="YPJ Kuala Kencana">YPJ Kuala Kencana</SelectItem>
-                        <SelectItem value="YPJ TPRA">YPJ TPRA</SelectItem>
+                        <SelectItem value="YPJ TPRA">{campusLabel("YPJ TPRA")}</SelectItem>
                       </SelectContent>
                     </Select>
                   )}
@@ -392,7 +393,7 @@ export default function AssetDetailPage() {
 
           <div className="bg-white border border-slate-200 p-6 space-y-4">
             <div className="label-mono">{t("quick_facts")}</div>
-            <Detail icon={Building2} label={t("campus")} value={asset.campus || "—"}/>
+            <Detail icon={Building2} label={t("campus")} value={campusLabel(asset.campus) || "—"}/>
             <Detail icon={Building2} label={t("col_room")} value={asset.location}/>
             <Detail icon={UserIcon} label={t("assigned_to")} value={ownerName(asset.assigned_to_name) || "—"}/>
             <Detail icon={Calendar} label={t("purchased")} value={fmtDate(asset.purchase_date)}/>
@@ -430,7 +431,7 @@ export default function AssetDetailPage() {
               </DetailGroup>
 
               <DetailGroup title={sec(t("section_location"))}>
-                <Field label={t("campus")} value={asset.campus || "—"}/>
+                <Field label={t("campus")} value={campusLabel(asset.campus) || "—"}/>
                 <Field label={t("unit")} value={opt("unit", asset.unit)}/>
                 <Field label={t("building")} value={asset.building || "—"}/>
                 <Field label={t("room_location")} value={asset.location || "—"}/>

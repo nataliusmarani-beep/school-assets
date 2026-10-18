@@ -1293,6 +1293,7 @@ def _validate_user_rows(conn, rows: list) -> list:
         if _EMAIL_RE.match(d["email"]):
             by_name.setdefault(_name_key(d["name"]), set()).add(d["email"].lower())
     campuses = {c.casefold(): c for c in VALID_CAMPUSES if c}
+    campuses.update({k: v for k, v in CAMPUS_ALIASES.items()})
     out = []
     for i, d in parsed:
         errs = []
@@ -1317,7 +1318,7 @@ def _validate_user_rows(conn, rows: list) -> list:
             if c:
                 d["campus"] = c
             else:
-                errs.append('campus must be "YPJ Kuala Kencana" or "YPJ TPRA"')
+                errs.append('campus must be "YPJ Kuala Kencana" or "YPJ Tembagapura"')
         if d["password"] and len(d["password"]) < 6:
             errs.append("password must be at least 6 characters")
         if d["supervisor"] and not _EMAIL_RE.match(d["supervisor"]):
@@ -1843,6 +1844,13 @@ DEFAULT_USEFUL_LIFE = {
 }
 VALID_STATUSES = ["active", "in_repair", "retired", "lost"]
 VALID_CAMPUSES = ["YPJ Kuala Kencana", "YPJ TPRA", ""]
+# The stored value is "YPJ TPRA"; the campus is also known (and shown in the app, and typed in import files) as "YPJ Tembagapura".
+CAMPUS_ALIASES = {"ypj tembagapura": "YPJ TPRA", "tembagapura": "YPJ TPRA", "tpra": "YPJ TPRA"}
+
+
+def normalize_campus(value) -> str:
+    v = (value or "").strip()
+    return CAMPUS_ALIASES.get(v.casefold(), v)
 
 
 def _validate_import_row(row: dict, row_num: int, seen_tags: set) -> list:
@@ -1870,7 +1878,7 @@ def _validate_import_row(row: dict, row_num: int, seen_tags: set) -> list:
     if status not in VALID_STATUSES:
         errors.append(f'invalid status "{status}" — must be: active, in_repair, retired, lost')
     if campus and campus not in VALID_CAMPUSES:
-        errors.append(f'unknown campus "{campus}"')
+        errors.append(f'unknown campus "{campus}" (use "YPJ Kuala Kencana" or "YPJ Tembagapura")')
 
     price_str = (row.get("purchase_price") or "").strip()
     if price_str:
@@ -2057,6 +2065,8 @@ async def bulk_import_assets(
     seen_tags: set = set()
     preview = []
     for i, row in enumerate(rows, start=2):  # row 1 = header
+        if row.get("campus"):
+            row["campus"] = normalize_campus(row["campus"])
         errs = _validate_import_row(row, i, seen_tags)
         tag = (row.get("asset_tag") or "").strip()
         if tag and tag in existing_tags:

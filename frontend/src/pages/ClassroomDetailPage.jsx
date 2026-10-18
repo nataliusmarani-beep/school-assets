@@ -10,6 +10,7 @@ import HandoverDialog from "../components/assets/HandoverDialog";
 import ClassroomEditDialog from "../components/assets/ClassroomEditDialog";
 import { toast } from "sonner";
 import { ArrowLeft, ArrowRightLeft, Pencil } from "lucide-react";
+import { campusLabel } from "../lib/campus";
 
 export default function ClassroomDetailPage() {
   const { id } = useParams();
@@ -55,7 +56,7 @@ export default function ClassroomDetailPage() {
       </Link>
       <div className="flex items-end justify-between gap-4 flex-wrap mb-6">
         <div>
-          <div className="label-mono mb-2">{t(`cr_type_${room.room_type}`)} · {room.campus || "—"}</div>
+          <div className="label-mono mb-2">{t(`cr_type_${room.room_type}`)} · {campusLabel(room.campus) || "—"}</div>
           <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight text-slate-900 mb-1">{room.name}</h1>
           <p className="text-sm text-slate-500">
             {t("cr_responsible")}: <span className="text-slate-800 font-medium" data-testid="classroom-responsible">

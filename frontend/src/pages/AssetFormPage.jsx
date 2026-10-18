@@ -17,6 +17,7 @@ import { Upload, X, FileText, ImageIcon, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { useLang } from "../context/LangContext";
 import { CATEGORY_VALUES, CATEGORY_KEYS } from "../i18n";
+import { campusLabel } from "../lib/campus";
 
 const CAMPUSES = ["YPJ Kuala Kencana", "YPJ TPRA"];
 
@@ -357,7 +358,7 @@ export default function AssetFormPage() {
                 <SelectValue placeholder={t("select_campus")}/>
               </SelectTrigger>
               <SelectContent>
-                {CAMPUSES.map((c)=>(<SelectItem key={c} value={c}>{c}</SelectItem>))}
+                {CAMPUSES.map((c)=>(<SelectItem key={c} value={c}>{campusLabel(c)}</SelectItem>))}
               </SelectContent>
             </Select>
           </div>
