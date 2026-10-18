@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useLang } from "../context/LangContext";
+import { useAuth } from "../context/AuthContext";
+import LoanReports from "../components/loans/LoanReports";
 import api, { formatErr } from "../lib/api";
 import { toast } from "sonner";
 import { Package, TrendingDown, Wrench, ShieldCheck, ArrowLeftRight, FileSpreadsheet, Hourglass } from "lucide-react";
@@ -51,6 +53,8 @@ const REPORTS = [
 
 export default function ReportsPage() {
   const { t } = useLang();
+  const { user } = useAuth();
+  const showStandard = user?.role !== "ict_admin";   // ICT Admins only see the loan reports of their campus
   const [downloading, setDownloading] = useState({});
 
   const download = async (report) => {
@@ -81,7 +85,7 @@ export default function ReportsPage() {
         {t("reports")}
       </h1>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {showStandard && <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {REPORTS.map((report) => {
           const Icon = report.icon;
           const isLoading = downloading[report.key];
@@ -107,7 +111,9 @@ export default function ReportsPage() {
             </div>
           );
         })}
-      </div>
+      </div>}
+
+      <LoanReports />
     </div>
   );
 }

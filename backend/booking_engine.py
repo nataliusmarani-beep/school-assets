@@ -544,10 +544,7 @@ def decide(conn, *, booking_id: str, decision: str, by_id: str, by_name: str, no
 
 def mark_overdue(conn, now: datetime) -> int:
     """Move loans that passed their end time without being returned to 'overdue'. Returns how many changed."""
-    n = conn.execute("UPDATE bookings SET status = 'overdue', updated_at = ? WHERE status = 'in_use' AND end_at < ?",
-                     (now.strftime(FMT), now.strftime(FMT))).rowcount
-    conn.commit()
-    return n
+    return len(newly_overdue(conn, now))
 
 
 # ---- Migration of the old single-asset loan_requests ----
@@ -974,3 +971,54 @@ def week_cells(conn, res: dict, monday: date, periods: list, holidays: dict) -> 
                           "free": max(capacity - used, 0), "capacity": capacity, "items": items, "pending": waiting})
         days.append({"date": d.isoformat(), "weekday": i, "holiday": holidays.get(d.isoformat()), "cells": cells})
     return days
+
+
+# ---- Overdue + reminders ----
+def newly_overdue(conn, now: datetime) -> list:
+    """Move loans past their end time (still out) to 'overdue' and return the rows that changed."""
+    rows = [dict(r) for r in conn.execute("SELECT * FROM bookings WHERE status = 'in_use' AND end_at < ?", (now.strftime(FMT),))]
+    if rows:
+        conn.execute("UPDATE bookings SET status = 'overdue', updated_at = ? WHERE status = 'in_use' AND end_at < ?",
+                     (now.strftime(FMT), now.strftime(FMT)))
+        conn.commit()
+    return rows
+
+
+def reminder_targets(conn, now: datetime) -> dict:
+    """What to remind about today: pick-ups tomorrow (H-1), returns due today, and loans already overdue."""
+    tomorrow = (now.date() + timedelta(days=1)).isoformat()
+    today = now.date().isoformat()
+    return {
+        "pickup_tomorrow": [dict(r) for r in conn.execute(
+            "SELECT * FROM bookings WHERE status IN ('approved','partially_approved') AND kind != 'fixed' AND substr(start_at,1,10) = ?", (tomorrow,))],
+        "due_today": [dict(r) for r in conn.execute(
+            "SELECT * FROM bookings WHERE status = 'in_use' AND substr(end_at,1,10) = ?", (today,))],
+        "overdue": [dict(r) for r in conn.execute("SELECT * FROM bookings WHERE status = 'overdue'")],
+    }
+
+
+# ---- Scan resolution ----
+def resolve_scan(conn, code: str, now: datetime) -> Optional[dict]:
+    """Find the asset behind a scanned QR / typed code and what can be done with it right now."""
+    c = (code or "").strip()
+    if "=" in c:                       # QR holds a link like https://host/scan?code=YPJ-KAM-005
+        c = c.rsplit("=", 1)[1]
+    c = c.split("/")[-1].strip()
+    a = conn.execute("SELECT * FROM assets WHERE LOWER(asset_tag) = LOWER(?) OR (asset_code != '' AND LOWER(asset_code) = LOWER(?)) "
+                     "ORDER BY LOWER(asset_tag) = LOWER(?) DESC LIMIT 1", (c, c, c)).fetchone()
+    if not a:
+        return None
+    a = dict(a)
+    out = conn.execute("""SELECT u.id AS unit_id, u.out_at, u.user_label, b.id AS booking_id, b.number, b.status, b.end_at, b.requester_name
+                          FROM booking_units u JOIN bookings b ON b.id = u.booking_id
+                          WHERE u.asset_id = ? AND u.status = 'out' LIMIT 1""", (a["id"],)).fetchone()
+    s = conn.execute("SELECT borrowable, resource_id FROM asset_loan_settings WHERE asset_id = ?", (a["id"],)).fetchone()
+    today = now.date().isoformat()
+    pickup = conn.execute("""SELECT id, number, requester_name, start_at, end_at FROM bookings
+                             WHERE status IN ('approved','partially_approved') AND substr(start_at,1,10) <= ? AND substr(end_at,1,10) >= ?
+                             AND (asset_id = ? OR (resource_id IS NOT NULL AND resource_id = ?)) ORDER BY start_at LIMIT 1""",
+                          (today, today, a["id"], s["resource_id"] if s else None)).fetchone()
+    return {"asset": {k: a[k] for k in ("id", "name", "asset_tag", "category", "campus", "location", "brand", "model", "serial_number", "status")},
+            "borrowable": bool(s and s["borrowable"]), "resource_id": s["resource_id"] if s else None,
+            "out": dict(out) if out else None, "pickup": dict(pickup) if pickup else None,
+            "state": ("repair" if a["status"] == "in_repair" else "lost" if a["status"] == "lost" else "on_loan" if out else "available")}

@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { Package, Search } from "lucide-react";
 import { canWrite } from "../lib/roles";
 import { fmtDateTime } from "../components/loans/LoanForms";
+import LoanDashboard from "../components/loans/LoanDashboard";
 
 export const STATUS_STYLE = {
   pending_supervisor: "bg-amber-50 text-amber-700 border-amber-200",
@@ -162,12 +163,14 @@ export default function LoansPage() {
   const writer = canWrite(role);
   const manager = ["super_admin", "admin", "ict_admin"].includes(role);
   const viewAll = ["super_admin", "leader"].includes(role);
+  const dashboard = ["super_admin", "admin", "ict_admin", "leader"].includes(role);
   const tabs = useMemo(() => [
+    ...(dashboard ? [{ id: "dashboard", label: "ln_tab_dashboard" }] : []),
     ...(writer ? [{ id: "borrow", label: "ln_tab_borrow" }, { id: "mine", label: "ln_tab_mine" }] : []),
     ...(manager ? [{ id: "manage", label: "ln_tab_manage" }] : []),
     ...(viewAll ? [{ id: "all", label: "ln_tab_all" }] : []),
-  ], [writer, manager, viewAll]);
-  const [tab, setTab] = useState(params.get("tab") || tabs[0]?.id || "mine");
+  ], [dashboard, writer, manager, viewAll]);
+  const [tab, setTab] = useState(params.get("tab") || (params.get("asset") ? "borrow" : tabs[0]?.id) || "mine");
   const [catalog, setCatalog] = useState([]);
   const [rows, setRows] = useState([]);
   const [search, setSearch] = useState("");
@@ -178,6 +181,7 @@ export default function LoansPage() {
 
   const load = useCallback(() => {
     setLoading(true);
+    if (tab === "dashboard") { setLoading(false); return; }
     if (tab === "borrow") {
       api.get("/loans/assets", { params: { search: search || undefined, category: category === "all" ? undefined : category } })
         .then((r) => setCatalog(r.data)).catch((e) => toast.error(formatErr(e))).finally(() => setLoading(false));
@@ -214,7 +218,7 @@ export default function LoansPage() {
           </button>))}
       </div>
 
-      {tab === "borrow" ? (
+      {tab === "dashboard" ? <LoanDashboard /> : tab === "borrow" ? (
         <>
           <div className="flex gap-3 flex-wrap mb-5">
             <div className="relative flex-1 min-w-[220px] max-w-md">

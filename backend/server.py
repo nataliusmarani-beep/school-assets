@@ -18,6 +18,7 @@ import csv
 import time
 import threading
 import urllib.request
+import urllib.parse
 import smtplib
 import socket
 from email.utils import formataddr
@@ -392,6 +393,8 @@ def init_db():
         conn.commit()
     if "employee_id" not in user_cols:
         conn.execute("ALTER TABLE users ADD COLUMN employee_id TEXT DEFAULT ''")
+    if "phone" not in user_cols:
+        conn.execute("ALTER TABLE users ADD COLUMN phone TEXT DEFAULT ''")   # WhatsApp number, 62xxxxxxxxxx
         conn.commit()
     if "supervisor_name" not in user_cols:
         conn.execute("ALTER TABLE users ADD COLUMN supervisor_name TEXT DEFAULT ''")
@@ -597,6 +600,13 @@ async def ict_pic_required(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 
+async def report_reader_required(user: dict = Depends(get_current_user)) -> dict:
+    """Reports are read-only: admins and leaders (management / foundation) may download them."""
+    if user.get("role") not in ADMIN_ROLES + ("leader",):
+        raise HTTPException(403, "Akses laporan tidak diizinkan")
+    return user
+
+
 async def super_admin_required(user: dict = Depends(get_current_user)) -> dict:
     if user.get("role") != "super_admin":
         raise HTTPException(403, "Super Admin access required")
@@ -614,6 +624,7 @@ class UserCreate(BaseModel):
     supervisor: Optional[str] = ""
     supervisor_name: Optional[str] = ""
     employee_id: Optional[str] = ""
+    phone: Optional[str] = ""
 
 
 class LoginIn(BaseModel):
@@ -945,17 +956,6 @@ def _loan_html(req: dict, heading: str, detail_lines: list, footer: str = "") ->
         {footer}""")
 
 
-def mark_overdue_loans():
-    """Every 15 minutes: loans past their end time that are still out become "Terlambat"."""
-    conn = get_conn()
-    try:
-        n = booking_engine.mark_overdue(conn, _local_now())
-        if n:
-            logger.warning("Marked %d loan(s) overdue", n)
-    finally:
-        conn.close()
-
-
 # ---- Scheduler: return-date reminders ----
 def send_return_reminders():
     """Runs daily at 08:00; emails borrowers whose return date is tomorrow, with CC chain."""
@@ -1192,6 +1192,20 @@ def _guard_privileged_role(actor: dict, *roles):
         raise HTTPException(403, "Only a Super Admin can manage Super Admin accounts")
 
 
+def normalize_phone(value) -> str:
+    """WhatsApp number as digits with the 62 country code ("0812-3456" -> "628123456"); "" when empty."""
+    digits = re.sub(r"\D", "", value or "")
+    if not digits:
+        return ""
+    if digits.startswith("0"):
+        digits = "62" + digits[1:]
+    elif digits.startswith("8"):
+        digits = "62" + digits
+    if not digits.startswith("62") or not 10 <= len(digits) <= 15:
+        raise HTTPException(400, "Nomor WhatsApp tidak valid (contoh: 0812xxxxxxxx).")
+    return digits
+
+
 def _require_campus_for_ict_admin(role: Optional[str], campus: Optional[str]):
     """An ICT Admin is the PIC of one campus, so the account must have one."""
     if role == "ict_admin" and not (campus or "").strip():
@@ -1211,8 +1225,8 @@ async def register(body: UserCreate, actor: dict = Depends(admin_required)):
         raise HTTPException(400, "Email already registered")
     uid = str(uuid.uuid4())
     conn.execute(
-        "INSERT INTO users (id,email,name,role,department,campus,supervisor,supervisor_name,employee_id,password_hash,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        (uid, email, body.name, body.role, body.department, body.campus or "", body.supervisor or "", body.supervisor_name or "", body.employee_id or "", hash_password(body.password), now_iso()),
+        "INSERT INTO users (id,email,name,role,department,campus,supervisor,supervisor_name,employee_id,phone,password_hash,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (uid, email, body.name, body.role, body.department, body.campus or "", body.supervisor or "", body.supervisor_name or "", body.employee_id or "", normalize_phone(body.phone), hash_password(body.password), now_iso()),
     )
     conn.commit()
     conn.close()
@@ -1253,7 +1267,7 @@ async def me(user: dict = Depends(get_current_user)):
 @api.get("/users")
 async def list_users(user: dict = Depends(get_current_user)):
     conn = get_conn()
-    rows = conn.execute("SELECT id,email,name,role,department,campus,supervisor,supervisor_name,employee_id,created_at FROM users ORDER BY created_at DESC").fetchall()
+    rows = conn.execute("SELECT id,email,name,role,department,campus,supervisor,supervisor_name,employee_id,phone,created_at FROM users ORDER BY created_at DESC").fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -1593,6 +1607,7 @@ class UserPatch(BaseModel):
     supervisor: Optional[str] = None
     supervisor_name: Optional[str] = None
     employee_id: Optional[str] = None
+    phone: Optional[str] = None
     password: Optional[str] = None
 
 
@@ -1603,6 +1618,8 @@ async def update_user(uid: str, body: UserPatch, actor: dict = Depends(admin_req
         raise HTTPException(400, "No fields to update")
     if "role" in updates and updates["role"] not in ALL_ROLES:
         raise HTTPException(400, "Invalid role")
+    if "phone" in updates:
+        updates["phone"] = normalize_phone(updates["phone"])
     chk = get_conn()
     target = chk.execute("SELECT role, campus FROM users WHERE id = ?", (uid,)).fetchone()
     if target:
@@ -1623,7 +1640,7 @@ async def update_user(uid: str, body: UserPatch, actor: dict = Depends(admin_req
         conn.close()
         raise HTTPException(404, "User not found")
     conn.commit()
-    row = conn.execute("SELECT id,email,name,role,department,campus,supervisor,supervisor_name,employee_id,created_at FROM users WHERE id = ?", (uid,)).fetchone()
+    row = conn.execute("SELECT id,email,name,role,department,campus,supervisor,supervisor_name,employee_id,phone,created_at FROM users WHERE id = ?", (uid,)).fetchone()
     conn.close()
     return dict(row)
 
@@ -3242,7 +3259,7 @@ def _style_header(ws):
 
 
 @api.get("/reports/asset-inventory")
-async def report_asset_inventory(_: dict = Depends(admin_required)):
+async def report_asset_inventory(_: dict = Depends(report_reader_required)):
     import openpyxl
     conn = get_conn()
     rows = conn.execute("""
@@ -3275,7 +3292,7 @@ async def report_asset_inventory(_: dict = Depends(admin_required)):
 
 
 @api.get("/reports/depreciation")
-async def report_depreciation(_: dict = Depends(admin_required)):
+async def report_depreciation(_: dict = Depends(report_reader_required)):
     import openpyxl
     conn = get_conn()
     rows = conn.execute("""
@@ -3313,7 +3330,7 @@ def _add_years(d, n: int):
 
 
 @api.get("/reports/fully-depreciated")
-async def report_fully_depreciated(_: dict = Depends(admin_required)):
+async def report_fully_depreciated(_: dict = Depends(report_reader_required)):
     """Assets still on the books (not retired / lost) that have reached the end of their useful life."""
     import openpyxl
     conn = get_conn()
@@ -3355,7 +3372,7 @@ async def report_fully_depreciated(_: dict = Depends(admin_required)):
 
 
 @api.get("/reports/faults")
-async def report_faults(_: dict = Depends(admin_required)):
+async def report_faults(_: dict = Depends(report_reader_required)):
     import openpyxl
     conn = get_conn()
     rows = conn.execute("""
@@ -3388,7 +3405,7 @@ async def report_faults(_: dict = Depends(admin_required)):
 
 
 @api.get("/reports/compliance")
-async def report_compliance(_: dict = Depends(admin_required)):
+async def report_compliance(_: dict = Depends(report_reader_required)):
     import openpyxl
     conn = get_conn()
     rows = conn.execute("""
@@ -3421,7 +3438,7 @@ async def report_compliance(_: dict = Depends(admin_required)):
 
 
 @api.get("/reports/ownership")
-async def report_ownership(_: dict = Depends(admin_required)):
+async def report_ownership(_: dict = Depends(report_reader_required)):
     import openpyxl
     conn = get_conn()
     rows = conn.execute("""
@@ -3773,6 +3790,13 @@ def queue_email(conn, to_addr: str, subject: str, body_html: str, kind: str, ref
         logger.warning("Loan e-mail failed: %s", exc)
         conn.execute("UPDATE notification_queue SET status = 'failed', error = ? WHERE id = ?", (str(exc)[:300], qid))
     conn.commit()
+    # same message by WhatsApp when the person has a number on file
+    phone = conn.execute("SELECT phone FROM users WHERE LOWER(email) = LOWER(?)", (to_addr,)).fetchone()
+    if phone and phone["phone"]:
+        try:
+            queue_whatsapp(conn, phone["phone"], subject, body_html, kind, ref_id)
+        except Exception as exc:
+            logger.warning("Loan WhatsApp failed: %s", exc)
 
 
 LOAN_STATUS_ID = {
@@ -4601,6 +4625,319 @@ async def loan_calendar(resource_id: str, week_start: str, user: dict = Depends(
     resource = _resource_view(conn, conn.execute("SELECT * FROM resources WHERE id = ?", (resource_id,)).fetchone())
     conn.close()
     return {"resource": resource, "week_start": monday.isoformat(), "periods": periods, "days": days}
+
+
+# ---- Phase 3: scan, reminders, dashboard, reports ----
+async def loan_viewer_required(user: dict = Depends(get_current_user)) -> dict:
+    """Who may see the ICT dashboard and loan reports (read only): admins, ICT admins and leaders."""
+    if user.get("role") not in ("super_admin", "admin", "ict_admin", "leader"):
+        raise HTTPException(403, "Tidak diizinkan")
+    return user
+
+
+def _loan_scope(user: dict, campus: Optional[str], alias: str = "b") -> tuple:
+    """SQL conditions limiting bookings to what this viewer may see: ICT Admin = own campus + ICT categories,
+    admin = non-ICT categories, leader / super admin = everything (optionally one campus)."""
+    marks = ",".join("?" * len(ICT_CATEGORIES))
+    conds, params = [], []
+    if user["role"] == "ict_admin":
+        conds += [f"{alias}.campus = ?", f"{alias}.category IN ({marks})"]; params += [user.get("campus") or "", *ICT_CATEGORIES]
+    elif user["role"] == "admin":
+        conds.append(f"{alias}.category NOT IN ({marks})"); params += list(ICT_CATEGORIES)
+    if campus and user["role"] != "ict_admin":
+        conds.append(f"{alias}.campus = ?"); params.append(campus)
+    return conds, params
+
+
+@api.get("/loans/scan")
+async def loan_scan(code: str, user: dict = Depends(get_current_user)):
+    """Resolve a scanned QR code (or typed asset code). Managers also get the booking to hand over / take back."""
+    conn = get_conn()
+    info = booking_engine.resolve_scan(conn, code, _local_now())
+    conn.close()
+    if not info:
+        raise HTTPException(404, "Kode aset tidak ditemukan")
+    a = info["asset"]
+    manage = can_manage_loan(user, a["campus"], a["category"])
+    if not (manage or user["role"] in ("leader", *ADMIN_ROLES) or (user.get("campus") or "") == a["campus"]):
+        raise HTTPException(403, "Aset ini bukan di kampus Anda")
+    if not manage:
+        info["out"] = {"requester_name": info["out"]["requester_name"], "end_at": info["out"]["end_at"]} if info["out"] else None
+        info["pickup"] = None
+    info["suggest"] = ({"action": "check_in", "booking_id": info["out"]["booking_id"]} if manage and info["out"]
+                       else {"action": "check_out", "booking_id": info["pickup"]["id"]} if manage and info["pickup"] else None)
+    return info
+
+
+# -- notifications: e-mail + WhatsApp --
+WHATSAPP_TOKEN = os.environ.get("WHATSAPP_TOKEN", "")
+WHATSAPP_API_URL = os.environ.get("WHATSAPP_API_URL", "https://api.fonnte.com/send")
+
+
+def html_to_text(html: str, limit: int = 900) -> str:
+    t = re.sub(r"(?i)</(tr|p|h\d|div|li)>|<br\s*/?>", "\n", html)
+    t = re.sub(r"(?i)</td>\s*<td[^>]*>", ": ", t)
+    t = re.sub(r"<style.*?</style>|<[^>]+>", "", t, flags=re.S)
+    t = html_mod.unescape(t)
+    t = "\n".join(" ".join(line.split()) for line in t.split("\n") if line.strip())
+    return t[:limit]
+
+
+def send_whatsapp(phone: str, message: str) -> tuple:
+    """Send through a Fonnte-style gateway (POST target/message with the token in Authorization).
+    Returns (ok, error). Does nothing unless WHATSAPP_TOKEN is set."""
+    if not WHATSAPP_TOKEN:
+        return False, "not configured"
+    try:
+        data = urllib.parse.urlencode({"target": phone, "message": message}).encode()
+        req = urllib.request.Request(WHATSAPP_API_URL, data=data, headers={"Authorization": WHATSAPP_TOKEN})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            body = json.loads(r.read().decode() or "{}")
+        ok = body.get("status", True) in (True, "true", 1)
+        return ok, "" if ok else str(body.get("reason") or body)[:200]
+    except Exception as exc:
+        return False, str(exc)[:200]
+
+
+def queue_whatsapp(conn, phone: str, subject: str, body_html: str, kind: str, ref_id: str):
+    qid = str(uuid.uuid4())
+    text = f"*YPJ Assets*\n{subject.replace('[YPJ Assets] ', '')}\n\n{html_to_text(body_html)}"
+    conn.execute("INSERT INTO notification_queue (id, channel, to_addr, subject, body, kind, ref_id, status, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                 (qid, "whatsapp", phone, subject, text, kind, ref_id, "pending" if WHATSAPP_TOKEN else "skipped", now_iso()))
+    conn.commit()
+    if not WHATSAPP_TOKEN:
+        return
+    ok, err = send_whatsapp(phone, text)
+    conn.execute("UPDATE notification_queue SET status = ?, error = ?, sent_at = ? WHERE id = ?", ("sent" if ok else "failed", err, now_iso(), qid))
+    conn.commit()
+
+
+def _already_notified(conn, kind: str, ref_id: str, hours: int = 20) -> bool:
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    return bool(conn.execute("SELECT 1 FROM notification_queue WHERE kind = ? AND ref_id = ? AND channel = 'email' AND created_at > ? LIMIT 1",
+                             (kind, ref_id, since)).fetchone())
+
+
+def _remind(conn, b: dict, kind: str, heading: str, footer: str, with_managers: bool):
+    _, a = _loan_context(conn, b["id"])
+    u = conn.execute("SELECT email, supervisor FROM users WHERE id = ?", (b["requester_id"],)).fetchone()
+    if not u:
+        return
+    cc = [u["supervisor"]] if u["supervisor"] else []
+    if with_managers:
+        cc += loan_manager_emails(conn, b["campus"], b["category"]) + [x for x in CAMPUS_HEAD_EMAILS.get(b["campus"], []) if x]
+    queue_email(conn, u["email"], f'[YPJ Assets] {heading}: {b["number"]}', _loan_mail(b, a, heading, [], footer), kind, b["id"], cc=list(dict.fromkeys(cc)))
+
+
+def send_loan_reminders():
+    """Daily 08:00 WIT: H-1 pick-up reminders, returns due today, and every loan still overdue."""
+    conn = get_conn()
+    try:
+        t = booking_engine.reminder_targets(conn, _local_now())
+        for b in t["pickup_tomorrow"]:
+            if not _already_notified(conn, "loan_remind_pickup", b["id"]):
+                _remind(conn, b, "loan_remind_pickup", "Pengingat: pengambilan besok", "<p>Silakan ambil aset di ruang ICT sesuai jadwal pada pengajuan ini.</p>", False)
+        for b in t["due_today"]:
+            if not _already_notified(conn, "loan_remind_due", b["id"]):
+                _remind(conn, b, "loan_remind_due", "Jatuh tempo hari ini", f'<p>Mohon kembalikan aset paling lambat {b["end_at"].replace("T", " ")}.</p>', False)
+        for b in t["overdue"]:
+            if not _already_notified(conn, "loan_overdue", b["id"]):
+                _remind(conn, b, "loan_overdue", "Peminjaman terlambat", "<p>Aset belum dikembalikan setelah batas waktu. Mohon segera dikembalikan; pengajuan baru tidak dapat dibuat sebelum itu.</p>", True)
+    finally:
+        conn.close()
+
+
+def mark_overdue_loans():
+    """Every 15 minutes: loans past their end time that are still out become "Terlambat" and the borrower is told at once."""
+    conn = get_conn()
+    try:
+        rows = booking_engine.newly_overdue(conn, _local_now())
+        for b in rows:
+            _remind(conn, b, "loan_overdue", "Peminjaman terlambat", "<p>Aset belum dikembalikan setelah batas waktu. Mohon segera dikembalikan; pengajuan baru tidak dapat dibuat sebelum itu.</p>", True)
+        if rows:
+            logger.warning("Marked %d loan(s) overdue", len(rows))
+    finally:
+        conn.close()
+
+
+# -- ICT dashboard --
+@api.get("/loans/dashboard")
+async def loan_dashboard(user: dict = Depends(loan_viewer_required), campus: Optional[str] = None):
+    conn = get_conn()
+    now = _local_now()
+    booking_engine.mark_overdue(conn, now)
+    conds, params = _loan_scope(user, campus)
+    where = (" AND " + " AND ".join(conds)) if conds else ""
+
+    def rows(sql_extra, extra_params=(), limit=50):
+        return [dict(r) for r in conn.execute(
+            f"""SELECT b.*, COALESCE(a.name, r.name) AS asset_name, COALESCE(a.asset_tag, r.kind) AS asset_tag
+                FROM bookings b LEFT JOIN assets a ON a.id = b.asset_id LEFT JOIN resources r ON r.id = b.resource_id
+                WHERE {sql_extra}{where} ORDER BY b.start_at LIMIT {limit}""", [*extra_params, *params]).fetchall()]
+
+    pending = rows("b.status = 'pending_ict'")
+    # units that are out and past due: last user + contact
+    unret = []
+    for r in conn.execute(f"""SELECT u.asset_id, u.user_label, u.out_at, b.id AS booking_id, b.number, b.end_at, b.requester_id, b.requester_name,
+                                    b.supervisor_id, a.name AS asset_name, a.asset_tag, us.email, us.phone, us.supervisor
+                             FROM booking_units u JOIN bookings b ON b.id = u.booking_id JOIN assets a ON a.id = u.asset_id
+                             LEFT JOIN users us ON us.id = b.requester_id
+                             WHERE u.status = 'out' AND b.status = 'overdue'{where} ORDER BY b.end_at""", params).fetchall():
+        unret.append(dict(r))
+    out_now = rows("b.status = 'in_use'")
+    for b in out_now + pending:
+        b["status_label"] = LOAN_STATUS_ID.get(b["status"], b["status"])
+    today = now.date().isoformat()
+    today_list = rows("b.status IN ('approved','partially_approved','in_use') AND substr(b.start_at,1,10) <= ? AND substr(b.end_at,1,10) >= ?", (today, today))
+    marks = ",".join("?" * len(ICT_CATEGORIES))
+    asset_conds, asset_params = ["s.borrowable = 1", "a.status IN ('in_repair','lost')"], []
+    if user["role"] == "ict_admin":
+        asset_conds += ["a.campus = ?", f"a.category IN ({marks})"]; asset_params += [user.get("campus") or "", *ICT_CATEGORIES]
+    elif user["role"] == "admin":
+        asset_conds.append(f"a.category NOT IN ({marks})"); asset_params += list(ICT_CATEGORIES)
+    if campus and user["role"] != "ict_admin":
+        asset_conds.append("a.campus = ?"); asset_params.append(campus)
+    broken = [dict(r) for r in conn.execute(f"""SELECT a.id, a.name, a.asset_tag, a.status, a.campus, a.category FROM assets a JOIN asset_loan_settings s ON s.asset_id = a.id
+                                                WHERE {' AND '.join(asset_conds)} ORDER BY a.status, a.name""", asset_params)]
+    out = {
+        "counts": {"pending": len(pending), "out": len(out_now), "not_returned": len(unret), "broken": len(broken), "today": len(today_list)},
+        "pending": pending[:10], "not_returned": unret, "out": out_now[:20], "today": today_list[:30], "broken": broken,
+    }
+    conn.close()
+    return out
+
+
+# -- loan reports --
+def _month_range(month: str) -> tuple:
+    try:
+        first = datetime.strptime(month + "-01", "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(400, "Bulan tidak valid (gunakan YYYY-MM)")
+    nxt = (first.replace(day=28) + timedelta(days=4)).replace(day=1)
+    return first.strftime("%Y-%m-%dT00:00"), nxt.strftime("%Y-%m-%dT00:00")
+
+
+def _usage_report(conn, user: dict, month: str, campus: Optional[str]) -> dict:
+    start, end = _month_range(month)
+    conds, params = _loan_scope(user, campus)
+    where = (" AND " + " AND ".join(conds)) if conds else ""
+    base = f"""SELECT b.*, COALESCE(r.name, a.name) AS target_name FROM bookings b LEFT JOIN resources r ON r.id = b.resource_id
+               LEFT JOIN assets a ON a.id = b.asset_id WHERE b.start_at >= ? AND b.start_at < ?{where}"""
+    rows = [dict(r) for r in conn.execute(base, [start, end, *params])]
+    used_status = ("in_use", "completed", "problem", "overdue")
+    by_class: dict = {}
+    for b in rows:
+        if b["status"] not in used_status or b["kind"] == "item":
+            continue
+        key = (b["campus"], b["class_name"] or "—", b["target_name"])
+        row = by_class.setdefault(key, {"campus": key[0], "class_name": key[1], "resource": key[2], "fixed_sessions": 0, "extra_sessions": 0, "hours": 0.0})
+        hours = (booking_engine.parse_dt(b["end_at"]) - booking_engine.parse_dt(b["start_at"])).total_seconds() / 3600
+        row["fixed_sessions" if b["kind"] == "fixed" else "extra_sessions"] += 1
+        row["hours"] = round(row["hours"] + hours, 1)
+    off: dict = {}
+    for b in rows:
+        if b["kind"] != "off_schedule":
+            continue
+        o = off.setdefault((b["campus"], b["target_name"]), {"campus": b["campus"], "resource": b["target_name"], "requests": 0, "approved": 0, "partial": 0,
+                                                           "rejected": 0, "cancelled": 0, "pending": 0, "units_requested": 0, "units_approved": 0})
+        o["requests"] += 1
+        o["units_requested"] += b["units_requested"]
+        o["units_approved"] += b["units_approved"] or 0
+        if b["status"] == "rejected":
+            o["rejected"] += 1
+        elif b["status"] == "cancelled":
+            o["cancelled"] += 1
+        elif b["status"] in booking_engine.PENDING_STATUSES:
+            o["pending"] += 1
+        elif b["status"] == "partially_approved":
+            o["partial"] += 1
+        else:
+            o["approved"] += 1
+    items: dict = {}
+    for b in rows:
+        if b["kind"] != "item" or b["status"] in ("cancelled", "rejected"):
+            continue
+        i = items.setdefault((b["campus"], b["category"], b["target_name"]), {"campus": b["campus"], "category": b["category"], "asset": b["target_name"], "loans": 0, "problems": 0})
+        i["loans"] += 1
+        i["problems"] += int(b["status"] == "problem")
+    return {"month": month, "by_class": sorted(by_class.values(), key=lambda x: (x["campus"], x["class_name"])),
+            "off_schedule": sorted(off.values(), key=lambda x: (x["campus"], x["resource"])), "items": sorted(items.values(), key=lambda x: -x["loans"])}
+
+
+def _incident_report(conn, user: dict, date_from: str, date_to: str, campus: Optional[str]) -> list:
+    conds, params = _loan_scope(user, campus)
+    where = (" AND " + " AND ".join(conds)) if conds else ""
+    out = []
+    for r in conn.execute(f"""SELECT u.*, b.number, b.campus, b.category, b.requester_name, b.start_at, b.end_at, b.purpose,
+                                    a.name AS asset_name, a.asset_tag, a.status AS asset_status, f.status AS fault_status, f.resolution_note
+                             FROM booking_units u JOIN bookings b ON b.id = u.booking_id JOIN assets a ON a.id = u.asset_id
+                             LEFT JOIN faults f ON f.id = u.fault_id
+                             WHERE u.condition_changed = 1 AND substr(u.in_at,1,10) >= ? AND substr(u.in_at,1,10) <= ?{where}
+                             ORDER BY u.in_at DESC""", [date_from, date_to, *params]).fetchall():
+        d = dict(r)
+        try:
+            chk = json.loads(d["in_check"] or "{}")
+        except ValueError:
+            chk = {}
+        follow = {"in_repair": "Dalam perbaikan", "lost": "Hilang", "retired": "Dihapuskan"}.get(d["asset_status"])
+        if not follow:
+            follow = "Diperbaiki / selesai" if d["fault_status"] == "resolved" else "Perlu ditindaklanjuti"
+        out.append({"asset_tag": d["asset_tag"], "asset_name": d["asset_name"], "campus": d["campus"], "category": d["category"],
+                    "number": d["number"], "last_user": d["user_label"] or d["requester_name"], "out_at": d["out_at"], "in_at": d["in_at"],
+                    "result": chk.get("result", ""), "chronology": chk.get("note", ""), "last_photo": d["post_photo"] or d["pre_photo"],
+                    "before_photo": d["pre_photo"], "follow_up": follow, "fault_status": d["fault_status"] or "", "resolution_note": d["resolution_note"] or ""})
+    return out
+
+
+@api.get("/loans/reports/usage")
+async def loan_report_usage(month: str, campus: Optional[str] = None, format: str = "json", user: dict = Depends(loan_viewer_required)):
+    conn = get_conn()
+    data = _usage_report(conn, user, month, campus)
+    conn.close()
+    if format != "xlsx":
+        return data
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Pemakaian per kelas"
+    ws.append(["Kampus", "Kelas", "Cart / Lab", "Sesi jadwal tetap", "Sesi tambahan", "Jam pemakaian"])
+    _style_header(ws)
+    for r in data["by_class"]:
+        ws.append([campus_display(r["campus"]), r["class_name"], r["resource"], r["fixed_sessions"], r["extra_sessions"], r["hours"]])
+    ws2 = wb.create_sheet("Di luar jadwal")
+    ws2.append(["Kampus", "Cart / Lab", "Pengajuan", "Disetujui", "Disetujui sebagian", "Ditolak", "Dibatalkan", "Menunggu", "Unit diminta", "Unit disetujui"])
+    _style_header(ws2)
+    for r in data["off_schedule"]:
+        ws2.append([campus_display(r["campus"]), r["resource"], r["requests"], r["approved"], r["partial"], r["rejected"], r["cancelled"], r["pending"], r["units_requested"], r["units_approved"]])
+    ws3 = wb.create_sheet("Pinjam barang")
+    ws3.append(["Kampus", "Kategori", "Aset", "Jumlah pinjaman", "Bermasalah"])
+    _style_header(ws3)
+    for r in data["items"]:
+        ws3.append([campus_display(r["campus"]), r["category"], r["asset"], r["loans"], r["problems"]])
+    return _xlsx_response(wb, f"laporan-peminjaman-{month}.xlsx")
+
+
+@api.get("/loans/reports/incidents")
+async def loan_report_incidents(date_from: str, date_to: str, campus: Optional[str] = None, format: str = "json", user: dict = Depends(loan_viewer_required)):
+    conn = get_conn()
+    data = _incident_report(conn, user, date_from, date_to, campus)
+    conn.close()
+    if format != "xlsx":
+        return data
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Kerusakan & kehilangan"
+    ws.append(["Kode aset", "Nama", "Kampus", "Kategori", "No. pinjaman", "Pemakai terakhir", "Keluar", "Kembali", "Hasil", "Kronologi", "Tindak lanjut", "Status laporan", "Foto terakhir"])
+    _style_header(ws)
+    for r in data:
+        ws.append([r["asset_tag"], r["asset_name"], campus_display(r["campus"]), r["category"], r["number"], r["last_user"], r["out_at"], r["in_at"],
+                   {"changed": "Berubah", "damaged": "Rusak", "lost": "Hilang"}.get(r["result"], r["result"]), r["chronology"], r["follow_up"], r["fault_status"], r["last_photo"]])
+    return _xlsx_response(wb, f"kerusakan-kehilangan-{date_from}-{date_to}.xlsx")
+
+
+def campus_display(c: str) -> str:
+    return {"YPJ TPRA": "YPJ Tembagapura"}.get(c, c)
 
 
 @api.get("/loans/{bid}")
@@ -5436,6 +5773,7 @@ async def on_startup():
     scheduler.add_job(send_return_reminders, "cron", hour=8, minute=0)
     scheduler.add_job(send_asset_due_reminders, "cron", hour=8, minute=5)
     scheduler.add_job(send_assignment_reminders, "cron", hour=8, minute=10)
+    scheduler.add_job(send_loan_reminders, "cron", hour=8, minute=15)
     scheduler.add_job(mark_overdue_loans, "interval", minutes=15)
     scheduler.start()
     mode = "production" if BUILD_DIR.exists() else "development"

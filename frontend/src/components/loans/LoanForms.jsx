@@ -1,4 +1,5 @@
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import QrScanner from "./QrScanner";
 import api, { API, formatErr } from "../../lib/api";
 import { compressImage } from "../../lib/image";
 import { Label } from "../ui/label";
@@ -133,14 +134,40 @@ export function CartCheck({ t, mode, units, value, onChange }) {
   const toggleOut = (id, on) => { const ex = new Set(v.excluded); on ? ex.delete(id) : ex.add(id); onChange({ ...v, excluded: ex }); };
   const setProblem = (id, unit) => { const pr = { ...v.problems }; unit ? (pr[id] = unit) : delete pr[id]; onChange({ ...v, problems: pr }); };
   const present = units.filter((u) => !v.excluded.has(u.asset_id)).length;
+  const [scanning, setScanning] = useState(false);
+  const [scanned, setScanned] = useState(new Set());
+  const [unknown, setUnknown] = useState("");
+  // scanning ticks units off one by one; "Done" then marks every unit that was not scanned
+  const onScan = useCallback((text) => {
+    const tag = text.includes("=") ? decodeURIComponent(text.split("=").pop()) : text.split("/").pop();
+    const u = units.find((x) => (x.tag || "").toLowerCase() === tag.trim().toLowerCase());
+    if (!u) { setUnknown(tag); return; }
+    setUnknown("");
+    setScanned((prev) => new Set(prev).add(u.asset_id));
+  }, [units]);
+  const finishScan = () => {
+    onChange({ ...v, excluded: new Set(units.filter((u) => !scanned.has(u.asset_id)).map((u) => u.asset_id)) });
+    setScanning(false);
+  };
   return (
     <div className="space-y-4" data-testid="cart-check">
       <PhotoField required label={t("ln_photo_cart")} value={v.groupPhoto} onChange={(p) => onChange({ ...v, groupPhoto: p })} hint={t("ln_photo_cart_hint")} />
       <div>
         <div className="flex items-center justify-between">
           <Label className="label-mono">{t(mode === "in" ? "ln_cart_units_back" : "ln_cart_units_out")}</Label>
-          <span className="text-xs text-slate-500">{present}/{units.length}</span>
+          <span className="flex items-center gap-3">
+            <button type="button" className="text-xs text-blue-700 underline" onClick={() => { setScanned(new Set()); setUnknown(""); setScanning(!scanning); }} data-testid="cart-scan-toggle">{t("qr_scan_units")}</button>
+            <span className="text-xs text-slate-500">{present}/{units.length}</span>
+          </span>
         </div>
+        {scanning && (
+          <div className="mt-3 border border-slate-200 p-3 space-y-2" data-testid="cart-scan-panel">
+            <QrScanner onScan={onScan} t={t} repeatMs={1500} />
+            <div className="flex items-center justify-between text-sm">
+              <span>{scanned.size}/{units.length} {t("qr_scanned")}{unknown ? <span className="text-rose-600"> · {t("qr_not_in_cart")}: {unknown}</span> : null}</span>
+              <button type="button" className="px-3 py-1 border border-slate-300 text-sm" onClick={finishScan} data-testid="cart-scan-done">{t("qr_done")}</button>
+            </div>
+          </div>)}
         <div className="mt-2 border border-slate-200 max-h-72 overflow-y-auto divide-y divide-slate-100">
           {units.map((u) => {
             const off = v.excluded.has(u.asset_id);

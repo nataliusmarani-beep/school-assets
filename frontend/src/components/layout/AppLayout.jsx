@@ -4,6 +4,7 @@ import { useLang } from "../../context/LangContext";
 import {
   LayoutDashboard,
   CalendarDays,
+  ScanLine,
   Boxes,
   Wrench,
   ShieldCheck,
@@ -37,8 +38,9 @@ const NAV_LINKS = [
   { to: "/transfer-requests", labelKey: "nav_transfer_requests", icon: ArrowRightLeft, testid: "nav-transfers", badge: "pendingTransfers" },
   { to: "/loans", labelKey: "nav_loan_requests", icon: BookOpen, testid: "nav-loans", badge: "pendingLoans" },
   { to: "/schedule", labelKey: "nav_schedule", icon: CalendarDays, testid: "nav-schedule" },
+  { to: "/scan", labelKey: "nav_scan", icon: ScanLine, testid: "nav-scan", roles: ["super_admin", "admin", "ict_admin"] },
   { to: "/users", labelKey: "nav_users", icon: Users, testid: "nav-users", adminOnly: true },
-  { to: "/reports", labelKey: "nav_reports", icon: BarChart3, testid: "nav-reports", adminOnly: true },
+  { to: "/reports", labelKey: "nav_reports", icon: BarChart3, testid: "nav-reports", roles: ["super_admin", "admin", "leader", "ict_admin"] },
   { to: "/activity-logs", labelKey: "nav_activity", icon: History, testid: "nav-activity", adminOnly: true },
   { to: "/policies", labelKey: "nav_policies", icon: ScrollText, testid: "nav-policies" },
   { to: "/help", labelKey: "nav_help", icon: HelpCircle, testid: "nav-help" },
@@ -76,7 +78,7 @@ export default function AppLayout({ children }) {
     return () => clearInterval(interval);
   }, [user]);
 
-  const visibleLinks = NAV_LINKS.filter((l) => !l.adminOnly || isAdminRole(user?.role));
+  const visibleLinks = NAV_LINKS.filter((l) => (l.roles ? l.roles.includes(user?.role) : !l.adminOnly || isAdminRole(user?.role)));
 
   const handleBackup = async () => {
     setBacking(true);

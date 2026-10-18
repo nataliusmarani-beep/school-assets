@@ -13,8 +13,8 @@ import BulkUsersDialog from "../components/BulkUsersDialog";
 import { isAdminRole, isSuperAdmin } from "../lib/roles";
 import { campusLabel } from "../lib/campus";
 
-const EMPTY_FORM = { name: "", email: "", password: "", role: "staff", department: "", campus: "", supervisor_name: "", supervisor: "", employee_id: "" };
-const EMPTY_EDIT = { name: "", email: "", role: "staff", department: "", campus: "", supervisor_name: "", supervisor: "", employee_id: "", password: "" };
+const EMPTY_FORM = { name: "", email: "", password: "", role: "staff", department: "", campus: "", supervisor_name: "", supervisor: "", employee_id: "", phone: "" };
+const EMPTY_EDIT = { name: "", email: "", role: "staff", department: "", campus: "", supervisor_name: "", supervisor: "", employee_id: "", phone: "", password: "" };
 
 /* Free-text field with dropdown suggestions from a string list */
 function SuggestField({ value, onChange, suggestions, placeholder, className = "", required = false, testid }) {
@@ -86,6 +86,10 @@ function FormFields({ values, set, isEdit, t, allNames, allDepts, users, canSupe
       <div><Label className="label-mono">{t("full_name")}</Label>
         <SuggestField required value={values.name} onChange={(v) => set({ ...values, name: v })}
           suggestions={allNames} testid="user-name-input" /></div>
+
+      <div><Label className="label-mono">{t("us_phone")}</Label>
+        <Input value={values.phone || ""} onChange={(e) => set({ ...values, phone: e.target.value })} placeholder="0812xxxxxxxx" className="mt-2 rounded-none" data-testid="user-phone-input" />
+        <p className="text-xs text-slate-400 mt-1">{t("us_phone_hint")}</p></div>
 
       <div><Label className="label-mono">{t("col_employee_id")}</Label>
         <Input value={values.employee_id} onChange={(e) => set({ ...values, employee_id: e.target.value })}
@@ -190,6 +194,7 @@ export default function UsersPage() {
       supervisor_name: u.supervisor_name || "",
       supervisor: u.supervisor || "",
       employee_id: u.employee_id || "",
+      phone: u.phone || "",
       password: "",
     });
     setEditOpen(true);
