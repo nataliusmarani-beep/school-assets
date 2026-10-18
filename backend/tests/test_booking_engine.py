@@ -213,3 +213,110 @@ def test_legacy_loans_are_migrated_once(db):
     pending = dict(db.execute("SELECT * FROM bookings WHERE legacy_loan_id = 'L2'").fetchone())
     assert pending["status"] == "pending_ict" and pending["units_approved"] is None
     assert db.execute("SELECT COUNT(*) FROM loan_requests").fetchone()[0] == 2      # old table untouched
+
+
+# ---- hand-over / return ----
+NOW_USE = datetime(2026, 8, 5, 8, 30)
+
+
+def add_file(db, path="loans/x.jpg"):
+    db.execute("INSERT OR IGNORE INTO files (id,storage_path,original_filename,content_type,size,uploaded_by,is_deleted,created_at) VALUES (?,?,?,?,1,'u',0,'t')",
+               (path, path, "x.jpg", "image/jpeg"))
+    db.commit()
+    return path
+
+
+def approved_loan(db, aid="cam1", accessories=None):
+    add_asset(db, aid)
+    if accessories:
+        import json
+        db.execute("UPDATE asset_loan_settings SET accessories = ? WHERE asset_id = ?", (json.dumps(accessories), aid))
+        db.commit()
+    b = be.reserve(db, data=req(asset_id=aid), now=NOW)
+    return be.decide(db, booking_id=b["id"], decision="approved", by_id="ict", by_name="ICT", now=NOW)
+
+
+def unit(**kw):
+    base = dict(asset_id="cam1", physical="baik", function="normal", accessories=[], note="", photo="loans/x.jpg")
+    base.update(kw)
+    return base
+
+
+def test_checkout_requires_photo_and_complete_checklist(db):
+    b = approved_loan(db, accessories=["Charger", "Tas"])
+    add_file(db)
+    with pytest.raises(be.BookingError) as e:
+        be.check_out(db, booking_id=b["id"], units=[unit(photo="", accessories=[{"name": "Charger", "ok": True}, {"name": "Tas", "ok": True}])],
+                     now=NOW_USE, by_id="ict", by_name="ICT")
+    assert e.value.code == "photo"
+    with pytest.raises(be.BookingError) as e:                                   # checklist not fully answered
+        be.check_out(db, booking_id=b["id"], units=[unit(accessories=[{"name": "Charger", "ok": True}])], now=NOW_USE, by_id="ict", by_name="ICT")
+    assert e.value.code == "accessories"
+    with pytest.raises(be.BookingError) as e:                                   # missing item needs a note
+        be.check_out(db, booking_id=b["id"], units=[unit(accessories=[{"name": "Charger", "ok": True}, {"name": "Tas", "ok": False}])],
+                     now=NOW_USE, by_id="ict", by_name="ICT")
+    assert e.value.code == "note"
+    out = be.check_out(db, booking_id=b["id"], units=[unit(accessories=[{"name": "Charger", "ok": True}, {"name": "Tas", "ok": True}])],
+                       now=NOW_USE, by_id="ict", by_name="ICT")
+    assert out["status"] == "in_use"
+
+
+def test_cannot_checkout_before_start_day_or_twice(db):
+    b = approved_loan(db)
+    add_file(db)
+    with pytest.raises(be.BookingError) as e:
+        be.check_out(db, booking_id=b["id"], units=[unit()], now=datetime(2026, 8, 4, 9, 0), by_id="i", by_name="I")
+    assert e.value.code == "too_early"
+    be.check_out(db, booking_id=b["id"], units=[unit()], now=NOW_USE, by_id="i", by_name="I")
+    with pytest.raises(be.BookingError) as e:
+        be.check_out(db, booking_id=b["id"], units=[unit()], now=NOW_USE, by_id="i", by_name="I")
+    assert e.value.code == "state"
+
+
+def test_clean_return_completes_loan(db):
+    b = approved_loan(db)
+    add_file(db)
+    be.check_out(db, booking_id=b["id"], units=[unit()], now=NOW_USE, by_id="i", by_name="I")
+    res = be.check_in(db, booking_id=b["id"], units=[unit(result="ok")], now=datetime(2026, 8, 6, 14, 0), by_id="i", by_name="I")
+    assert res["booking"]["status"] == "completed" and res["faults"] == []
+    assert db.execute("SELECT status FROM assets WHERE id = 'cam1'").fetchone()[0] == "active"
+
+
+def test_damaged_return_opens_fault_and_blocks_asset(db):
+    b = approved_loan(db)
+    add_file(db)
+    be.check_out(db, booking_id=b["id"], units=[unit()], now=NOW_USE, by_id="i", by_name="I")
+    with pytest.raises(be.BookingError) as e:                                  # must describe the damage
+        be.check_in(db, booking_id=b["id"], units=[unit(result="damaged", physical="retak")], now=NOW_USE, by_id="i", by_name="I")
+    assert e.value.code == "note"
+    res = be.check_in(db, booking_id=b["id"], units=[unit(result="damaged", physical="retak", note="Layar retak")],
+                      now=NOW_USE, by_id="i", by_name="I")
+    assert res["booking"]["status"] == "problem" and len(res["faults"]) == 1
+    assert db.execute("SELECT status FROM assets WHERE id = 'cam1'").fetchone()[0] == "in_repair"
+    assert db.execute("SELECT status FROM faults WHERE id = ?", (res["faults"][0],)).fetchone()[0] == "open"
+    with pytest.raises(be.BookingError) as e:                                  # cannot be borrowed until ICT fixes the status
+        be.reserve(db, data=req(asset_id="cam1", requester_id="u9", start_at="2026-08-12T08:00", end_at="2026-08-12T10:00"), now=NOW)
+    assert e.value.code == "asset"
+
+
+def test_lost_item_needs_no_photo_and_marks_asset_lost(db):
+    b = approved_loan(db)
+    add_file(db)
+    be.check_out(db, booking_id=b["id"], units=[unit()], now=NOW_USE, by_id="i", by_name="I")
+    res = be.check_in(db, booking_id=b["id"], units=[unit(result="lost", photo="", note="Hilang saat acara")], now=NOW_USE, by_id="i", by_name="I")
+    assert res["booking"]["status"] == "problem"
+    assert db.execute("SELECT status FROM assets WHERE id = 'cam1'").fetchone()[0] == "lost"
+
+
+def test_supervisor_and_cancel_flow(db):
+    add_asset(db, "lap1", category="IT Equipment")
+    b = be.reserve(db, data=req(asset_id="lap1", category="IT Equipment", take_home=True, supervisor_id="sup1",
+                                start_at="2026-08-05T15:00", end_at="2026-08-07T08:00"), now=NOW)
+    with pytest.raises(be.BookingError) as e:
+        be.supervisor_decide(db, booking_id=b["id"], approve=True, by_id="someone", now=NOW)
+    assert e.value.code == "forbidden"
+    ok = be.supervisor_decide(db, booking_id=b["id"], approve=True, by_id="sup1", now=NOW)
+    assert ok["status"] == "pending_ict"
+    with pytest.raises(be.BookingError):
+        be.cancel(db, booking_id=b["id"], by_id="stranger", can_manage=False, now=NOW)
+    assert be.cancel(db, booking_id=b["id"], by_id="u1", can_manage=False, now=NOW)["status"] == "cancelled"

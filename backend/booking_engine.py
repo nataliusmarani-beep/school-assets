@@ -579,3 +579,204 @@ def migrate_legacy_loans(conn) -> int:
         conn.rollback()
         raise
     return len(rows)
+
+
+# ---- Supervisor step, cancel ----
+def supervisor_decide(conn, *, booking_id: str, approve: bool, by_id: str, now: datetime, note: str = "") -> dict:
+    """The requester's supervisor settles a special request (e.g. take-home). Approved goes on to ICT."""
+    b = conn.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()
+    if not b:
+        raise BookingError("Pengajuan tidak ditemukan.", "missing")
+    if b["status"] != "pending_supervisor":
+        raise BookingError("Pengajuan ini tidak menunggu persetujuan supervisor.", "state")
+    if b["supervisor_id"] != by_id:
+        raise BookingError("Hanya supervisor yang ditunjuk yang dapat memutuskan.", "forbidden")
+    if not approve and not note.strip():
+        raise BookingError("Alasan wajib diisi bila menolak.", "note")
+    status = "pending_ict" if approve else "rejected"
+    conn.execute("""UPDATE bookings SET supervisor_decision = ?, supervisor_note = ?, status = ?, updated_at = ?,
+                    decision_note = CASE WHEN ? THEN decision_note ELSE ? END WHERE id = ?""",
+                 ("approved" if approve else "rejected", note.strip(), status, now.strftime(FMT), int(approve),
+                  "Ditolak supervisor: " + note.strip(), booking_id))
+    conn.commit()
+    return dict(conn.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone())
+
+
+def cancel(conn, *, booking_id: str, by_id: str, can_manage: bool, now: datetime, reason: str = "") -> dict:
+    """Requester (or ICT) cancels a booking that has not been handed over yet."""
+    b = conn.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()
+    if not b:
+        raise BookingError("Pengajuan tidak ditemukan.", "missing")
+    if b["requester_id"] != by_id and not can_manage:
+        raise BookingError("Anda tidak dapat membatalkan pengajuan ini.", "forbidden")
+    if b["status"] not in PENDING_STATUSES + ("approved", "partially_approved"):
+        raise BookingError("Pengajuan yang sudah diserahkan atau selesai tidak dapat dibatalkan.", "state")
+    conn.execute("UPDATE bookings SET status = 'cancelled', decision_note = ?, updated_at = ? WHERE id = ?",
+                 (reason.strip() or b["decision_note"], now.strftime(FMT), booking_id))
+    conn.commit()
+    return dict(conn.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone())
+
+
+# ---- Check-out / check-in ----
+PHYSICAL = ("baik", "lecet", "retak", "lainnya")
+FUNCTION = ("normal", "masalah")
+RETURN_RESULTS = ("ok", "changed", "damaged", "lost")
+
+
+def accessory_names(conn, asset_id: str) -> list:
+    import json
+    s = conn.execute("SELECT accessories FROM asset_loan_settings WHERE asset_id = ?", (asset_id,)).fetchone()
+    try:
+        return list(json.loads(s["accessories"])) if s else []
+    except (ValueError, TypeError):
+        return []
+
+
+def _photo_ok(conn, path: str) -> bool:
+    return bool(path) and bool(conn.execute("SELECT 1 FROM files WHERE storage_path = ? AND is_deleted = 0", (path,)).fetchone())
+
+
+def _check_accessories(conn, asset_id: str, given: list) -> list:
+    """Every standard accessory must be ticked present or absent. Returns the list of missing ones."""
+    expected = accessory_names(conn, asset_id)
+    answers = {str(a.get("name")): bool(a.get("ok")) for a in (given or [])}
+    unanswered = [n for n in expected if n not in answers]
+    if unanswered:
+        raise BookingError("Kelengkapan belum diperiksa: " + ", ".join(unanswered), "accessories")
+    return [n for n in expected if not answers[n]]
+
+
+def check_out(conn, *, booking_id: str, units: list, now: datetime, by_id: str, by_name: str, group_photo: str = "") -> dict:
+    """Hand the asset(s) over. Each unit: {asset_id, physical, function, accessories:[{name, ok}], note, photo,
+    user_label, student_name, student_no, class_name}. A before-photo is mandatory for every unit of an item loan
+    (for a cart / lab one `group_photo` covering all slots is enough)."""
+    import json
+    if conn.in_transaction:
+        conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        b = conn.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()
+        if not b:
+            raise BookingError("Pengajuan tidak ditemukan.", "missing")
+        if b["status"] not in ("approved", "partially_approved"):
+            raise BookingError("Hanya pengajuan yang sudah disetujui yang dapat diserahkan.", "state")
+        if parse_dt(b["start_at"]).date() > now.date():
+            raise BookingError("Belum waktunya: penyerahan baru dapat dilakukan pada tanggal mulai.", "too_early")
+        if not units:
+            raise BookingError("Pilih unit yang diserahkan.", "units")
+        allowed = b["units_approved"] or b["units_requested"]
+        if len(units) > allowed:
+            raise BookingError(f"Jumlah unit melebihi yang disetujui ({allowed}).", "units")
+        seen = set()
+        for u in units:
+            aid = u.get("asset_id")
+            if not aid or aid in seen:
+                raise BookingError("Unit tidak valid atau terduplikasi.", "units")
+            seen.add(aid)
+            if b["asset_id"] and aid != b["asset_id"]:
+                raise BookingError("Unit tidak sesuai dengan aset yang disetujui.", "units")
+            if b["resource_id"]:
+                st = conn.execute("SELECT resource_id FROM asset_loan_settings WHERE asset_id = ?", (aid,)).fetchone()
+                if not st or st["resource_id"] != b["resource_id"]:
+                    raise BookingError("Unit bukan bagian dari cart/lab yang dipinjam.", "units")
+            reason = asset_block_reason(conn, aid)
+            if reason:
+                raise BookingError(reason, "asset")
+            if conn.execute("SELECT 1 FROM booking_units WHERE asset_id = ? AND status = 'out'", (aid,)).fetchone():
+                raise BookingError("Unit ini masih tercatat dipinjam oleh pengajuan lain.", "already_out")
+            if u.get("physical") not in PHYSICAL or u.get("function") not in FUNCTION:
+                raise BookingError("Kondisi fisik dan fungsi wajib diisi.", "condition")
+            missing = _check_accessories(conn, aid, u.get("accessories"))
+            if (missing or u["physical"] != "baik" or u["function"] != "normal") and not (u.get("note") or "").strip():
+                raise BookingError("Catatan wajib diisi bila kondisi tidak sempurna atau kelengkapan kurang.", "note")
+            photo = u.get("photo") or group_photo
+            if not _photo_ok(conn, photo):
+                raise BookingError("Foto sebelum wajib diunggah.", "photo")
+            u["_photo"], u["_missing"] = photo, missing
+        ts = now.strftime(FMT)
+        for u in units:
+            check = {"physical": u["physical"], "function": u["function"], "accessories": u.get("accessories") or [],
+                     "missing": u["_missing"], "note": (u.get("note") or "").strip(), "handed_by": by_name,
+                     "received_by": b["requester_name"]}
+            conn.execute("""INSERT INTO booking_units (id, booking_id, asset_id, user_label, student_name, student_no, class_name,
+                status, out_at, out_check, pre_photo) VALUES (?,?,?,?,?,?,?,'out',?,?,?)""",
+                         (new_id(), booking_id, u["asset_id"], u.get("user_label") or b["requester_name"], u.get("student_name", ""),
+                          u.get("student_no", ""), u.get("class_name", ""), ts, json.dumps(check), u["_photo"]))
+        conn.execute("UPDATE bookings SET status = 'in_use', updated_at = ? WHERE id = ?", (ts, booking_id))
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    return dict(conn.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone())
+
+
+def check_in(conn, *, booking_id: str, units: list, now: datetime, by_id: str, by_name: str, group_photo: str = "") -> dict:
+    """Take the asset(s) back. Each unit: {asset_id, physical, function, accessories, photo, result, note}.
+    result: ok | changed (small change, asset stays usable) | damaged (-> In Repair) | lost (-> Lost).
+    Anything but ok needs a description, opens a Fault and marks the booking 'problem'. Units not listed stay out
+    (the booking stays in use). Returns {"booking": row, "faults": [fault ids], "still_out": n}."""
+    import json
+    if conn.in_transaction:
+        conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    faults = []
+    try:
+        b = conn.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()
+        if not b:
+            raise BookingError("Pengajuan tidak ditemukan.", "missing")
+        if b["status"] not in ("in_use", "overdue"):
+            raise BookingError("Pengajuan ini tidak sedang dipinjam.", "state")
+        if not units:
+            raise BookingError("Pilih unit yang dikembalikan.", "units")
+        rows = {r["asset_id"]: dict(r) for r in conn.execute(
+            "SELECT * FROM booking_units WHERE booking_id = ? AND status = 'out'", (booking_id,))}
+        for u in units:
+            if u.get("asset_id") not in rows:
+                raise BookingError("Unit tidak tercatat keluar pada pengajuan ini.", "units")
+            result = u.get("result") or "ok"
+            if result not in RETURN_RESULTS:
+                raise BookingError("Hasil pemeriksaan tidak valid.", "result")
+            if u.get("physical") not in PHYSICAL or u.get("function") not in FUNCTION:
+                raise BookingError("Kondisi fisik dan fungsi wajib diisi.", "condition")
+            missing = _check_accessories(conn, u["asset_id"], u.get("accessories")) if result != "lost" else []
+            if result == "ok" and (missing or u["physical"] != "baik" or u["function"] != "normal"):
+                raise BookingError("Ada perubahan kondisi atau kelengkapan kurang: ubah hasil pemeriksaan dan jelaskan.", "result")
+            if result != "ok" and not (u.get("note") or "").strip():
+                raise BookingError("Keterangan kerusakan/kehilangan wajib diisi bila ada perubahan kondisi.", "note")
+            photo = u.get("photo") or group_photo
+            if result != "lost" and not _photo_ok(conn, photo):
+                raise BookingError("Foto sesudah wajib diunggah.", "photo")
+            u["_photo"], u["_missing"] = photo or "", missing
+        ts = now.strftime(FMT)
+        for u in units:
+            result, aid = u.get("result") or "ok", u["asset_id"]
+            check = {"physical": u["physical"], "function": u["function"], "accessories": u.get("accessories") or [],
+                     "missing": u["_missing"], "note": (u.get("note") or "").strip(), "received_by": by_name, "result": result}
+            status = {"ok": "returned", "changed": "returned", "damaged": "damaged", "lost": "lost"}[result]
+            fault_id = None
+            if result != "ok":
+                a = conn.execute("SELECT name, asset_tag FROM assets WHERE id = ?", (aid,)).fetchone()
+                label = {"changed": "Perubahan kondisi", "damaged": "Rusak", "lost": "Hilang"}[result]
+                fault_id = new_id()
+                conn.execute("""INSERT INTO faults (id, asset_id, title, description, severity, status, reported_by, reported_by_name, created_at)
+                                VALUES (?,?,?,?,?,'open',?,?,?)""",
+                             (fault_id, aid, f"{label} setelah dipinjam ({b['number']})",
+                              f"Peminjam: {rows[aid]['user_label']}. {check['note']}".strip(),
+                              "low" if result == "changed" else "high", by_id, by_name, ts))
+                faults.append(fault_id)
+                if result == "damaged":
+                    conn.execute("UPDATE assets SET status = 'in_repair', updated_at = ? WHERE id = ?", (ts, aid))
+                elif result == "lost":
+                    conn.execute("UPDATE assets SET status = 'lost', updated_at = ? WHERE id = ?", (ts, aid))
+            conn.execute("""UPDATE booking_units SET status = ?, in_at = ?, in_check = ?, post_photo = ?, condition_changed = ?, fault_id = ?
+                            WHERE id = ?""", (status, ts, json.dumps(check), u["_photo"], int(result != "ok"), fault_id, rows[aid]["id"]))
+        still_out = conn.execute("SELECT COUNT(*) FROM booking_units WHERE booking_id = ? AND status = 'out'", (booking_id,)).fetchone()[0]
+        if not still_out:
+            problem = conn.execute("SELECT 1 FROM booking_units WHERE booking_id = ? AND condition_changed = 1", (booking_id,)).fetchone()
+            conn.execute("UPDATE bookings SET status = ?, updated_at = ? WHERE id = ?", ("problem" if problem else "completed", ts, booking_id))
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    return {"booking": dict(conn.execute("SELECT * FROM bookings WHERE id = ?", (booking_id,)).fetchone()),
+            "faults": faults, "still_out": still_out}

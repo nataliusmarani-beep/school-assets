@@ -34,7 +34,7 @@ const NAV_LINKS = [
   { to: "/faults", labelKey: "nav_faults", icon: Wrench, testid: "nav-faults" },
   { to: "/compliance", labelKey: "nav_compliance", icon: ShieldCheck, testid: "nav-compliance" },
   { to: "/transfer-requests", labelKey: "nav_transfer_requests", icon: ArrowRightLeft, testid: "nav-transfers", badge: "pendingTransfers" },
-  { to: "/loan-requests", labelKey: "nav_loan_requests", icon: BookOpen, testid: "nav-loans", badge: "pendingLoans" },
+  { to: "/loans", labelKey: "nav_loan_requests", icon: BookOpen, testid: "nav-loans", badge: "pendingLoans" },
   { to: "/users", labelKey: "nav_users", icon: Users, testid: "nav-users", adminOnly: true },
   { to: "/reports", labelKey: "nav_reports", icon: BarChart3, testid: "nav-reports", adminOnly: true },
   { to: "/activity-logs", labelKey: "nav_activity", icon: History, testid: "nav-activity", adminOnly: true },
@@ -63,10 +63,11 @@ export default function AppLayout({ children }) {
   }, [user]);
 
   useEffect(() => {
-    if (!isAdminRole(user?.role)) return;
+    if (!user) return;
     const fetchCounts = () => {
-      api.get("/transfer-requests/pending-count").then((r) => setPendingTransfers(r.data.count)).catch(() => {});
-      api.get("/loan-requests/pending-count").then((r) => setPendingLoans(r.data.count)).catch(() => {});
+      if (isAdminRole(user.role)) api.get("/transfer-requests/pending-count").then((r) => setPendingTransfers(r.data.count)).catch(() => {});
+      // loan badge: requests waiting for me as ICT / supervisor
+      api.get("/loans/pending-count").then((r) => setPendingLoans(r.data.count)).catch(() => {});
     };
     fetchCounts();
     const interval = setInterval(fetchCounts, 60000);

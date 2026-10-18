@@ -1,5 +1,5 @@
 import "./App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
 import { LangProvider } from "./context/LangContext";
 import ProtectedRoute from "./components/layout/ProtectedRoute";
@@ -17,7 +17,8 @@ import ActivityLogsPage from "./pages/ActivityLogsPage";
 import HelpPage from "./pages/HelpPage";
 import PoliciesPage from "./pages/PoliciesPage";
 import TransferRequestsPage from "./pages/TransferRequestsPage";
-import LoanRequestsPage from "./pages/LoanRequestsPage";
+import LoansPage from "./pages/LoansPage";
+import LoanDetailPage from "./pages/LoanDetailPage";
 import MyAssetsPage from "./pages/MyAssetsPage";
 import UserAssetsPage from "./pages/UserAssetsPage";
 import ClassroomsPage from "./pages/ClassroomsPage";
@@ -85,9 +86,13 @@ function App() {
             <Route path="/transfer-requests" element={
               <ProtectedRoute><Layout><TransferRequestsPage /></Layout></ProtectedRoute>
             }/>
-            <Route path="/loan-requests" element={
-              <ProtectedRoute><Layout><LoanRequestsPage /></Layout></ProtectedRoute>
+            <Route path="/loans" element={
+              <ProtectedRoute><Layout><LoansPage /></Layout></ProtectedRoute>
             }/>
+            <Route path="/loans/:id" element={
+              <ProtectedRoute><Layout><LoanDetailPage /></Layout></ProtectedRoute>
+            }/>
+            <Route path="/loan-requests" element={<Navigate to="/loans" replace />} />
             <Route path="/help" element={
               <ProtectedRoute><Layout><HelpPage /></Layout></ProtectedRoute>
             }/>

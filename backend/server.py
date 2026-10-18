@@ -3712,6 +3712,568 @@ async def return_loan(
 
 
 # ===================================================================
+# Loans module (ICT media): request -> ICT decision -> hand-over -> return
+# ===================================================================
+# Rules and state changes live in booking_engine.py; this section is the HTTP layer, permissions and e-mails.
+def can_manage_loan(user: dict, campus: str, category: str) -> bool:
+    """Who confirms requests and runs hand-over / return: super_admin; the campus ICT Admin for ICT categories;
+    regular admins for every other category."""
+    role = user.get("role")
+    if role == "super_admin":
+        return True
+    if category in ICT_CATEGORIES:
+        return is_ict_pic(user, campus, category)
+    return role == "admin"
+
+
+def loan_manager_emails(conn, campus: str, category: str) -> list:
+    if category in ICT_CATEGORIES:
+        rows = conn.execute("SELECT email FROM users WHERE role = 'ict_admin' AND campus = ?", (campus,)).fetchall()
+    else:
+        rows = conn.execute("SELECT email FROM users WHERE role = 'admin' AND campus IN (?, '')", (campus,)).fetchall()
+    emails = [r["email"] for r in rows]
+    if LOAN_NOTIFY_EMAIL:
+        emails.append(LOAN_NOTIFY_EMAIL)
+    return list(dict.fromkeys(emails))
+
+
+def queue_email(conn, to_addr: str, subject: str, body_html: str, kind: str, ref_id: str, cc: list = None):
+    """Record the notification, try to send it now and keep the outcome (so a WhatsApp channel can be added later)."""
+    if not to_addr:
+        return
+    qid = str(uuid.uuid4())
+    conn.execute("INSERT INTO notification_queue (id, channel, to_addr, subject, body, kind, ref_id, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                 (qid, "email", to_addr, subject, body_html, kind, ref_id, now_iso()))
+    conn.commit()
+    try:
+        ok = send_email(to_addr, subject, body_html, cc=cc)
+        conn.execute("UPDATE notification_queue SET status = ?, sent_at = ? WHERE id = ?", ("sent" if ok else "failed", now_iso(), qid))
+    except Exception as exc:  # never let a mail problem break a loan action
+        logger.warning("Loan e-mail failed: %s", exc)
+        conn.execute("UPDATE notification_queue SET status = 'failed', error = ? WHERE id = ?", (str(exc)[:300], qid))
+    conn.commit()
+
+
+LOAN_STATUS_ID = {
+    "submitted": "Diajukan", "pending_supervisor": "Menunggu Supervisor", "pending_ict": "Menunggu Konfirmasi ICT",
+    "approved": "Disetujui", "partially_approved": "Disetujui Sebagian", "rejected": "Ditolak", "in_use": "Sedang Digunakan",
+    "completed": "Selesai", "cancelled": "Dibatalkan", "overdue": "Terlambat", "problem": "Bermasalah",
+}
+
+
+def _loan_mail(b: dict, asset: dict, heading: str, extra: list, footer: str) -> str:
+    lines = [("No. Pengajuan", b["number"]), ("Aset", f'{asset.get("name", "")} ({asset.get("asset_tag", "")})'),
+             ("Pemohon", b["requester_name"]), ("Mulai", b["start_at"].replace("T", " ")),
+             ("Selesai", b["end_at"].replace("T", " ")), ("Status", LOAN_STATUS_ID.get(b["status"], b["status"]))] + extra
+    return _loan_html(b, heading, lines, footer)
+
+
+def _loan_context(conn, bid: str):
+    b = conn.execute("SELECT * FROM bookings WHERE id = ?", (bid,)).fetchone()
+    if not b:
+        raise HTTPException(404, "Pengajuan tidak ditemukan")
+    b = dict(b)
+    a = conn.execute("SELECT id, name, asset_tag, category, campus, location, brand, model, serial_number, status FROM assets WHERE id = ?",
+                     (b["asset_id"],)).fetchone() if b["asset_id"] else None
+    return b, (dict(a) if a else {})
+
+
+def _loan_visible(user: dict, b: dict) -> bool:
+    return (user.get("role") == "leader" or b["requester_id"] == user["id"] or b.get("supervisor_id") == user["id"]
+            or can_manage_loan(user, b["campus"], b["category"]))
+
+
+def _loan_view(conn, user: dict, b: dict, asset: dict) -> dict:
+    import json as _json
+    out = dict(b)
+    out["status_label"] = LOAN_STATUS_ID.get(b["status"], b["status"])
+    out["asset"] = asset
+    units = []
+    for r in conn.execute("SELECT * FROM booking_units WHERE booking_id = ? ORDER BY out_at", (b["id"],)).fetchall():
+        u = dict(r)
+        for k in ("out_check", "in_check"):
+            try:
+                u[k] = _json.loads(u[k] or "{}")
+            except ValueError:
+                u[k] = {}
+        a = conn.execute("SELECT name, asset_tag, serial_number FROM assets WHERE id = ?", (u["asset_id"],)).fetchone()
+        u["asset_name"], u["asset_tag"], u["serial_number"] = (a["name"], a["asset_tag"], a["serial_number"]) if a else ("", "", "")
+        units.append(u)
+    out["units"] = units
+    out["accessories"] = booking_engine.accessory_names(conn, b["asset_id"]) if b["asset_id"] else []
+    manage = can_manage_loan(user, b["campus"], b["category"])
+    out["permissions"] = {
+        "can_decide": manage and b["status"] == "pending_ict",
+        "can_check_out": manage and b["status"] in ("approved", "partially_approved"),
+        "can_check_in": manage and b["status"] in ("in_use", "overdue"),
+        "can_cancel": (b["requester_id"] == user["id"] or manage) and b["status"] in (*booking_engine.PENDING_STATUSES, "approved", "partially_approved"),
+        "can_supervise": b["supervisor_id"] == user["id"] and b["status"] == "pending_supervisor",
+        "can_manage": manage,
+    }
+    return out
+
+
+class LoanIn(BaseModel):
+    asset_id: str
+    start_at: str
+    end_at: str
+    purpose: str = ""
+    class_name: str = ""
+    subject: str = ""
+    use_location: str = ""
+    note: str = ""
+    take_home: bool = False
+    terms_accepted: bool = False
+    override_reason: str = ""
+
+
+def _engine_call(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except booking_engine.BookingError as e:
+        raise HTTPException(409 if e.code in ("conflict", "state", "already_out", "overdue") else 400, e.message)
+
+
+def _local_now() -> datetime:
+    """Campus-local wall clock (WIT, UTC+9). Bookings are stored in campus-local time."""
+    return (datetime.now(timezone.utc) + timedelta(hours=9)).replace(tzinfo=None, second=0, microsecond=0)
+
+
+@api.get("/loans/assets")
+async def loan_catalog(user: dict = Depends(get_current_user), search: Optional[str] = None, category: Optional[str] = None,
+                       campus: Optional[str] = None):
+    """Borrowable assets with their live state (available / on loan / repair / lost)."""
+    conn = get_conn()
+    conds, params = ["s.borrowable = 1", "a.status != 'retired'"], []
+    own_campus = (user.get("campus") or "").strip()
+    if user["role"] in ("staff", "ict_admin") and own_campus:
+        conds.append("a.campus = ?"); params.append(own_campus)
+    elif campus:
+        conds.append("a.campus = ?"); params.append(campus)
+    if category:
+        conds.append("a.category = ?"); params.append(category)
+    if search:
+        conds.append("(a.name LIKE ? OR a.asset_tag LIKE ? OR a.brand LIKE ? OR a.model LIKE ?)"); params += [f"%{search}%"] * 4
+    rows = conn.execute(f"""SELECT a.id, a.name, a.asset_tag, a.category, a.campus, a.location, a.brand, a.model, a.status, a.photo_path,
+                                   s.loan_type, s.storage_slot FROM assets a JOIN asset_loan_settings s ON s.asset_id = a.id
+                            WHERE {' AND '.join(conds)} ORDER BY a.category, a.name""", params).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        loan = conn.execute("""SELECT b.number, b.requester_name, b.end_at FROM booking_units u JOIN bookings b ON b.id = u.booking_id
+                               WHERE u.asset_id = ? AND u.status = 'out' LIMIT 1""", (d["id"],)).fetchone()
+        d["on_loan"] = dict(loan) if loan else None
+        d["state"] = ("repair" if d["status"] == "in_repair" else "lost" if d["status"] == "lost" else
+                      "on_loan" if loan else "available" if d["status"] == "active" else "inactive")
+        d["policy"] = booking_engine.get_policy(conn, d["campus"], d["category"], d["id"])
+        out.append(d)
+    conn.close()
+    return out
+
+
+@api.get("/loans/availability")
+async def loan_availability(asset_id: str, start_at: str, end_at: str, _: dict = Depends(get_current_user)):
+    conn = get_conn()
+    try:
+        reason = booking_engine.asset_block_reason(conn, asset_id)
+        start, end = booking_engine.parse_dt(start_at), booking_engine.parse_dt(end_at)
+        info = booking_engine.check_availability(conn, asset_id=asset_id, units=1, start=start, end=end)
+    except booking_engine.BookingError as e:
+        conn.close()
+        raise HTTPException(400, e.message)
+    conn.close()
+    return {**info, "blocked": reason}
+
+
+@api.post("/loans")
+async def create_loan(body: LoanIn, user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    a = conn.execute("SELECT * FROM assets WHERE id = ?", (body.asset_id,)).fetchone()
+    if not a:
+        conn.close()
+        raise HTTPException(404, "Aset tidak ditemukan")
+    a = dict(a)
+    manage = can_manage_loan(user, a["campus"], a["category"])
+    if user["role"] not in ADMIN_ROLES + ("ict_admin", "staff"):
+        conn.close()
+        raise HTTPException(403, "Akun ini tidak dapat mengajukan peminjaman")
+    if not manage and (user.get("campus") or "") != a["campus"]:
+        conn.close()
+        raise HTTPException(403, "Aset ini bukan di kampus Anda.")
+    supervisor_id = None
+    if body.take_home:
+        sup = user.get("supervisor") or ""
+        row = conn.execute("SELECT id FROM users WHERE LOWER(email) = ?", (sup.lower(),)).fetchone() if sup else None
+        if not row:
+            conn.close()
+            raise HTTPException(400, "Supervisor Anda belum terdaftar di aplikasi. Hubungi admin untuk melengkapi data supervisor.")
+        supervisor_id = row["id"]
+    override = bool(body.override_reason.strip())
+    if override and not manage:
+        conn.close()
+        raise HTTPException(403, "Hanya Admin ICT yang dapat mengecualikan aturan.")
+    data = {"campus": a["campus"], "kind": "item", "asset_id": a["id"], "category": a["category"], "requester_id": user["id"],
+            "requester_name": user["name"], "start_at": body.start_at, "end_at": body.end_at, "units": 1,
+            "class_name": body.class_name, "subject": body.subject, "purpose": body.purpose, "use_location": body.use_location,
+            "note": body.note, "take_home": body.take_home, "supervisor_id": supervisor_id, "terms_accepted": body.terms_accepted}
+    try:
+        b = booking_engine.reserve(conn, data=data, now=_local_now(), override=override, override_reason=body.override_reason)
+    except booking_engine.BookingError as e:
+        conn.close()
+        raise HTTPException(409 if e.code in ("conflict", "overdue") else 400, e.message)
+    warnings = b.pop("warnings", [])
+    detail = [("Keperluan", b["purpose"] or "—")]
+    queue_email(conn, user["email"], f'[YPJ Assets] Pengajuan {b["number"]}: {a["name"]}',
+                _loan_mail(b, a, "Pengajuan Peminjaman Diterima", detail,
+                           "<p>Pengajuan Anda telah diterima" + (" dan menunggu persetujuan supervisor." if b["status"] == "pending_supervisor"
+                           else " dan menunggu konfirmasi Admin ICT." if b["status"] == "pending_ict" else " dan sudah disetujui.") + "</p>"),
+                "loan_submitted", b["id"])
+    if b["status"] == "pending_supervisor":
+        sup = conn.execute("SELECT email FROM users WHERE id = ?", (b["supervisor_id"],)).fetchone()
+        if sup:
+            queue_email(conn, sup["email"], f'[YPJ Assets] Persetujuan diperlukan: {b["number"]}',
+                        _loan_mail(b, a, "Permintaan Bawa Pulang", detail,
+                                   f'<p>{b["requester_name"]} meminta membawa aset ini keluar sekolah. Mohon beri keputusan di aplikasi YPJ Assets.</p>'),
+                        "loan_supervisor", b["id"])
+    elif b["status"] == "pending_ict":
+        for addr in loan_manager_emails(conn, a["campus"], a["category"]):
+            queue_email(conn, addr, f'[YPJ Assets] Pengajuan baru {b["number"]}: {a["name"]}',
+                        _loan_mail(b, a, "Pengajuan Menunggu Konfirmasi", detail, "<p>Mohon konfirmasi di aplikasi YPJ Assets.</p>"),
+                        "loan_new", b["id"])
+    view = _loan_view(conn, user, b, a)
+    view["warnings"] = warnings
+    conn.close()
+    return view
+
+
+@api.get("/loans")
+async def list_loans(user: dict = Depends(get_current_user), scope: str = "mine", status: Optional[str] = None, campus: Optional[str] = None):
+    """scope=mine: my requests; scope=manage: what I may decide on (ICT / admin); scope=all: everything (leader, super admin)."""
+    conn = get_conn()
+    conds, params = [], []
+    if scope == "all":
+        if user["role"] not in ("leader", "super_admin"):
+            conn.close()
+            raise HTTPException(403, "Tidak diizinkan")
+    elif scope == "manage":
+        if user["role"] == "super_admin":
+            pass
+        elif user["role"] == "ict_admin":
+            conds += ["b.campus = ?", f"b.category IN ({','.join('?' * len(ICT_CATEGORIES))})"]; params += [user.get("campus") or "", *ICT_CATEGORIES]
+        elif user["role"] == "admin":
+            conds.append(f"b.category NOT IN ({','.join('?' * len(ICT_CATEGORIES))})"); params += list(ICT_CATEGORIES)
+        else:
+            conn.close()
+            raise HTTPException(403, "Tidak diizinkan")
+    else:
+        conds.append("(b.requester_id = ? OR b.supervisor_id = ?)"); params += [user["id"], user["id"]]
+    if status:
+        conds.append("b.status = ?"); params.append(status)
+    if campus:
+        conds.append("b.campus = ?"); params.append(campus)
+    rows = conn.execute(f"""SELECT b.*, a.name AS asset_name, a.asset_tag FROM bookings b LEFT JOIN assets a ON a.id = b.asset_id
+                            {'WHERE ' + ' AND '.join(conds) if conds else ''} ORDER BY b.created_at DESC LIMIT 500""", params).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["status_label"] = LOAN_STATUS_ID.get(d["status"], d["status"])
+        out.append(d)
+    conn.close()
+    return out
+
+
+@api.get("/loans/pending-count")
+async def loans_pending_count(user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    mine = conn.execute("SELECT COUNT(*) FROM bookings WHERE supervisor_id = ? AND status = 'pending_supervisor'", (user["id"],)).fetchone()[0]
+    manage = 0
+    if user["role"] in ("super_admin", "ict_admin", "admin"):
+        rows = conn.execute("SELECT campus, category FROM bookings WHERE status IN ('pending_ict', 'overdue')").fetchall()
+        manage = sum(1 for r in rows if can_manage_loan(user, r["campus"], r["category"]))
+    conn.close()
+    return {"count": mine + manage, "supervisor": mine, "manage": manage}
+
+
+class PolicyIn(BaseModel):
+    campus: str = ""
+    category: str
+    max_loan_days: int = Field(3, ge=1)
+    requires_approval: bool = True
+    can_leave_campus: bool = False
+    min_notice_days: int = Field(1, ge=0)
+    max_advance_days: int = Field(14, ge=1)
+
+
+@api.get("/loans/policies")
+async def list_loan_policies(_: dict = Depends(get_current_user)):
+    conn = get_conn()
+    rows = [dict(r) for r in conn.execute("SELECT * FROM loan_policies ORDER BY category, campus").fetchall()]
+    conn.close()
+    return rows
+
+
+@api.put("/loans/policies")
+async def put_loan_policy(body: PolicyIn, user: dict = Depends(get_current_user)):
+    """Rules per category (campus '' = every campus). ICT Admin may set them for their own campus."""
+    if body.campus and body.campus not in [c for c in VALID_CAMPUSES if c]:
+        raise HTTPException(400, "Kampus tidak valid")
+    if not (user["role"] in ADMIN_ROLES or (user["role"] == "ict_admin" and body.category in ICT_CATEGORIES
+                                            and body.campus and body.campus == user.get("campus"))):
+        raise HTTPException(403, "Tidak diizinkan mengubah aturan ini")
+    conn = get_conn()
+    conn.execute("""INSERT INTO loan_policies (id, campus, category, max_loan_days, requires_approval, can_leave_campus, min_notice_days,
+                    max_advance_days) VALUES (?,?,?,?,?,?,?,?)
+                    ON CONFLICT(campus, category) DO UPDATE SET max_loan_days = excluded.max_loan_days,
+                    requires_approval = excluded.requires_approval, can_leave_campus = excluded.can_leave_campus,
+                    min_notice_days = excluded.min_notice_days, max_advance_days = excluded.max_advance_days""",
+                 (str(uuid.uuid4()), body.campus, body.category, body.max_loan_days, int(body.requires_approval),
+                  int(body.can_leave_campus), body.min_notice_days, body.max_advance_days))
+    conn.commit()
+    row = dict(conn.execute("SELECT * FROM loan_policies WHERE campus = ? AND category = ?", (body.campus, body.category)).fetchone())
+    conn.close()
+    return row
+
+
+@api.get("/loans/{bid}")
+async def get_loan(bid: str, user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    b, a = _loan_context(conn, bid)
+    if not _loan_visible(user, b):
+        conn.close()
+        raise HTTPException(403, "Anda tidak dapat melihat pengajuan ini")
+    view = _loan_view(conn, user, b, a)
+    conn.close()
+    return view
+
+
+class SupervisorIn(BaseModel):
+    approve: bool
+    note: str = ""
+
+
+@api.put("/loans/{bid}/supervisor")
+async def loan_supervisor(bid: str, body: SupervisorIn, user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    _loan_context(conn, bid)
+    b = _engine_call(booking_engine.supervisor_decide, conn, booking_id=bid, approve=body.approve, by_id=user["id"],
+                     now=_local_now(), note=body.note)
+    _, a = _loan_context(conn, bid)
+    if body.approve:
+        for addr in loan_manager_emails(conn, b["campus"], b["category"]):
+            queue_email(conn, addr, f'[YPJ Assets] Pengajuan {b["number"]} disetujui supervisor',
+                        _loan_mail(b, a, "Menunggu Konfirmasi ICT", [("Catatan supervisor", body.note or "—")],
+                                   "<p>Supervisor menyetujui permintaan khusus ini. Mohon konfirmasi di aplikasi.</p>"), "loan_new", bid)
+    else:
+        req_user = conn.execute("SELECT email FROM users WHERE id = ?", (b["requester_id"],)).fetchone()
+        if req_user:
+            queue_email(conn, req_user["email"], f'[YPJ Assets] Pengajuan {b["number"]} ditolak supervisor',
+                        _loan_mail(b, a, "Pengajuan Ditolak Supervisor", [("Alasan", body.note)], ""), "loan_decided", bid)
+    view = _loan_view(conn, user, b, a)
+    conn.close()
+    return view
+
+
+class DecideIn(BaseModel):
+    decision: Literal["approved", "partially_approved", "rejected"]
+    units: Optional[int] = None
+    start_at: Optional[str] = None
+    end_at: Optional[str] = None
+    note: str = ""
+
+
+@api.put("/loans/{bid}/decide")
+async def decide_loan(bid: str, body: DecideIn, user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    b0, _ = _loan_context(conn, bid)
+    if not can_manage_loan(user, b0["campus"], b0["category"]):
+        conn.close()
+        raise HTTPException(403, "Hanya Admin ICT untuk kampus dan kategori ini yang dapat memutuskan")
+    b = _engine_call(booking_engine.decide, conn, booking_id=bid, decision=body.decision, by_id=user["id"], by_name=user["name"],
+                     now=_local_now(), units=body.units, start_at=body.start_at, end_at=body.end_at, note=body.note)
+    _, a = _loan_context(conn, bid)
+    req_user = conn.execute("SELECT email FROM users WHERE id = ?", (b["requester_id"],)).fetchone()
+    if req_user:
+        heading = {"approved": "Pengajuan Disetujui", "partially_approved": "Pengajuan Disetujui Sebagian", "rejected": "Pengajuan Ditolak"}[body.decision]
+        queue_email(conn, req_user["email"], f'[YPJ Assets] {heading}: {b["number"]}',
+                    _loan_mail(b, a, heading, [("Diputuskan oleh", user["name"]), ("Catatan", body.note or "—")],
+                               "<p>Silakan ambil aset di ruang ICT pada waktu yang disetujui.</p>" if body.decision != "rejected" else ""),
+                    "loan_decided", bid)
+    view = _loan_view(conn, user, b, a)
+    conn.close()
+    return view
+
+
+class CancelIn(BaseModel):
+    reason: str = ""
+
+
+@api.put("/loans/{bid}/cancel")
+async def cancel_loan(bid: str, body: CancelIn, user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    b0, _ = _loan_context(conn, bid)
+    b = _engine_call(booking_engine.cancel, conn, booking_id=bid, by_id=user["id"], can_manage=can_manage_loan(user, b0["campus"], b0["category"]),
+                     now=_local_now(), reason=body.reason)
+    _, a = _loan_context(conn, bid)
+    view = _loan_view(conn, user, b, a)
+    conn.close()
+    return view
+
+
+class UnitCheckIn(BaseModel):
+    asset_id: str
+    physical: str
+    function: str
+    accessories: List[dict] = []
+    note: str = ""
+    photo: str = ""
+    result: str = "ok"
+    user_label: str = ""
+    student_name: str = ""
+    student_no: str = ""
+    class_name: str = ""
+
+
+class CheckIn(BaseModel):
+    units: List[UnitCheckIn]
+    group_photo: str = ""
+
+
+@api.post("/loans/{bid}/check-out")
+async def loan_check_out(bid: str, body: CheckIn, user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    b0, _ = _loan_context(conn, bid)
+    if not can_manage_loan(user, b0["campus"], b0["category"]):
+        conn.close()
+        raise HTTPException(403, "Hanya Admin ICT untuk kampus dan kategori ini yang dapat melakukan serah terima")
+    b = _engine_call(booking_engine.check_out, conn, booking_id=bid, units=[u.model_dump() for u in body.units], now=_local_now(),
+                     by_id=user["id"], by_name=user["name"], group_photo=body.group_photo)
+    _, a = _loan_context(conn, bid)
+    req_user = conn.execute("SELECT email FROM users WHERE id = ?", (b["requester_id"],)).fetchone()
+    if req_user:
+        queue_email(conn, req_user["email"], f'[YPJ Assets] Aset diserahkan: {b["number"]}',
+                    _loan_mail(b, a, "Aset Diserahkan", [("Diserahkan oleh", user["name"]), ("Kembali paling lambat", b["end_at"].replace("T", " "))],
+                               "<p>Aset kini menjadi tanggung jawab Anda. Mohon kembalikan tepat waktu dan dalam kondisi yang sama.</p>"),
+                    "loan_out", bid)
+    view = _loan_view(conn, user, b, a)
+    conn.close()
+    return view
+
+
+@api.post("/loans/{bid}/check-in")
+async def loan_check_in(bid: str, body: CheckIn, user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    b0, _ = _loan_context(conn, bid)
+    if not can_manage_loan(user, b0["campus"], b0["category"]):
+        conn.close()
+        raise HTTPException(403, "Hanya Admin ICT untuk kampus dan kategori ini yang dapat menerima pengembalian")
+    res = _engine_call(booking_engine.check_in, conn, booking_id=bid, units=[u.model_dump() for u in body.units], now=_local_now(),
+                       by_id=user["id"], by_name=user["name"], group_photo=body.group_photo)
+    b = res["booking"]
+    _, a = _loan_context(conn, bid)
+    req_user = conn.execute("SELECT email FROM users WHERE id = ?", (b["requester_id"],)).fetchone()
+    cc = [x for x in loan_manager_emails(conn, b["campus"], b["category"])] if res["faults"] else []
+    if res["faults"]:
+        cc += [x for x in CAMPUS_HEAD_EMAILS.get(b["campus"], []) if x]
+    if req_user:
+        heading = "Pengembalian Bermasalah" if res["faults"] else "Pengembalian Dicatat"
+        queue_email(conn, req_user["email"], f'[YPJ Assets] {heading}: {b["number"]}',
+                    _loan_mail(b, a, heading, [("Diterima oleh", user["name"])],
+                               "<p>Terdapat perubahan kondisi pada aset. Laporan telah dibuat di modul Faults.</p>" if res["faults"]
+                               else "<p>Terima kasih, peminjaman ditutup.</p>"), "loan_in", bid, cc=cc)
+    view = _loan_view(conn, user, b, a)
+    view["faults"], view["still_out"] = res["faults"], res["still_out"]
+    conn.close()
+    return view
+
+
+class LoanSettingsIn(BaseModel):
+    borrowable: bool = False
+    loan_type: str = "item"
+    accessories: List[str] = []
+    storage_slot: str = ""
+    max_loan_days: Optional[int] = None
+    requires_approval: Optional[bool] = None
+    can_leave_campus: Optional[bool] = None
+
+
+@api.get("/loans/assets/{aid}/settings")
+async def get_loan_settings(aid: str, user: dict = Depends(get_current_user)):
+    import json as _json
+    conn = get_conn()
+    a = conn.execute("SELECT campus, category FROM assets WHERE id = ?", (aid,)).fetchone()
+    if not a:
+        conn.close()
+        raise HTTPException(404, "Aset tidak ditemukan")
+    s = conn.execute("SELECT * FROM asset_loan_settings WHERE asset_id = ?", (aid,)).fetchone()
+    policy = booking_engine.get_policy(conn, a["campus"], a["category"])
+    conn.close()
+    d = dict(s) if s else {"asset_id": aid, "borrowable": 0, "loan_type": "item", "accessories": "[]", "storage_slot": "",
+                           "max_loan_days": None, "requires_approval": None, "can_leave_campus": None}
+    d["accessories"] = _json.loads(d["accessories"] or "[]")
+    d["policy"] = policy
+    d["can_edit"] = can_manage_loan(user, a["campus"], a["category"]) or user["role"] in ADMIN_ROLES
+    return d
+
+
+@api.put("/loans/assets/{aid}/settings")
+async def put_loan_settings(aid: str, body: LoanSettingsIn, user: dict = Depends(get_current_user)):
+    import json as _json
+    conn = get_conn()
+    a = conn.execute("SELECT campus, category FROM assets WHERE id = ?", (aid,)).fetchone()
+    if not a:
+        conn.close()
+        raise HTTPException(404, "Aset tidak ditemukan")
+    if not (can_manage_loan(user, a["campus"], a["category"]) or user["role"] in ADMIN_ROLES):
+        conn.close()
+        raise HTTPException(403, "Tidak diizinkan mengubah pengaturan peminjaman aset ini")
+    if body.loan_type not in ("item", "scheduled"):
+        conn.close()
+        raise HTTPException(400, "Jenis peminjaman tidak valid")
+    if body.max_loan_days is not None and body.max_loan_days < 1:
+        conn.close()
+        raise HTTPException(400, "Maks. lama pinjam minimal 1 hari")
+    acc = [x.strip() for x in body.accessories if x.strip()]
+    flag = lambda v: None if v is None else int(v)
+    conn.execute("""INSERT INTO asset_loan_settings (asset_id, borrowable, loan_type, accessories, storage_slot, max_loan_days,
+                    requires_approval, can_leave_campus) VALUES (?,?,?,?,?,?,?,?)
+                    ON CONFLICT(asset_id) DO UPDATE SET borrowable = excluded.borrowable, loan_type = excluded.loan_type,
+                    accessories = excluded.accessories, storage_slot = excluded.storage_slot, max_loan_days = excluded.max_loan_days,
+                    requires_approval = excluded.requires_approval, can_leave_campus = excluded.can_leave_campus""",
+                 (aid, int(body.borrowable), body.loan_type, _json.dumps(acc), body.storage_slot.strip(), body.max_loan_days,
+                  flag(body.requires_approval), flag(body.can_leave_campus)))
+    conn.commit()
+    conn.close()
+    return await get_loan_settings(aid, user)
+
+
+@api.get("/loans/assets/{aid}/history")
+async def asset_loan_history(aid: str, user: dict = Depends(get_current_user)):
+    """Every loan of one asset with borrower, condition notes and before/after photos."""
+    import json as _json
+    conn = get_conn()
+    a = conn.execute("SELECT campus, category FROM assets WHERE id = ?", (aid,)).fetchone()
+    if not a:
+        conn.close()
+        raise HTTPException(404, "Aset tidak ditemukan")
+    if not (user["role"] in ("leader", *ADMIN_ROLES) or can_manage_loan(user, a["campus"], a["category"])):
+        conn.close()
+        raise HTTPException(403, "Tidak diizinkan")
+    rows = conn.execute("""SELECT u.*, b.number, b.requester_name, b.status AS booking_status, b.start_at, b.end_at, b.purpose
+                           FROM booking_units u JOIN bookings b ON b.id = u.booking_id WHERE u.asset_id = ? ORDER BY u.out_at DESC""", (aid,)).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        for k in ("out_check", "in_check"):
+            try:
+                d[k] = _json.loads(d[k] or "{}")
+            except ValueError:
+                d[k] = {}
+        out.append(d)
+    conn.close()
+    return out
+
+
+# ===================================================================
 # Classrooms: class assets belong to the room, not to the teacher
 # ===================================================================
 # A classroom is matched to assets by (campus, location). The responsible teacher changes through a
