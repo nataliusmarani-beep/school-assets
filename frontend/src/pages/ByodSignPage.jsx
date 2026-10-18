@@ -65,15 +65,20 @@ export default function ByodSignPage() {
 
   const shell = (children) => (
     <div className="min-h-screen bg-slate-50 py-6 px-4" data-testid="byod-sign-page">
-      <div className="max-w-2xl mx-auto bg-white border border-slate-200 shadow-sm">
-        <div className="p-5 border-b border-slate-200 flex items-start gap-3">
+      <div className="relative max-w-2xl mx-auto bg-white border border-slate-200 shadow-sm">
+        {/* YPJ logo watermark: stays centred in the viewport while the form scrolls */}
+        <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
+          <img src={require("../ypj-logo.png")} alt="" draggable={false}
+               className="sticky top-[calc(50vh-9rem)] mx-auto w-64 h-64 sm:w-72 sm:h-72 object-contain opacity-[0.07] select-none" />
+        </div>
+        <div className="relative p-5 border-b border-slate-200 flex items-start gap-3">
           <div className="w-10 h-10 bg-slate-900 text-amber-300 flex items-center justify-center flex-shrink-0"><ShieldCheck className="w-5 h-5" strokeWidth={1.5} /></div>
           <div className="flex-1 min-w-0"><div className="text-xs font-mono uppercase tracking-wide text-slate-500">YPJ</div>
             <h1 className="font-display text-lg font-semibold text-slate-900 leading-snug">{t("byod_pub_title")}</h1></div>
           <div className="flex gap-1">{["EN", "ID"].map((l) => (
             <button key={l} onClick={() => setLang(l)} className={`px-2 py-1 text-xs font-mono border ${lang === l ? "bg-slate-900 text-white border-slate-900" : "border-slate-300 text-slate-600"}`}>{l}</button>))}</div>
         </div>
-        <div className="p-5 space-y-6">{children}</div>
+        <div className="relative p-5 space-y-6">{children}</div>
       </div>
     </div>
   );
