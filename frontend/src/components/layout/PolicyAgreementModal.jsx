@@ -32,6 +32,11 @@ export default function PolicyAgreementModal() {
     if (el && el.scrollTop + el.clientHeight >= el.scrollHeight - 24) setAtEnd(true);
   };
   useEffect(() => { checkEnd(); }, [lang]);
+  // First-time users who never picked a language start in Indonesian (EN/ID toggle stays available).
+  useEffect(() => {
+    try { if (!localStorage.getItem("lang")) setLang("ID"); } catch { /* storage unavailable */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const nameOk = norm(name) === norm(user?.name) && norm(name) !== "";
   const allChecked = checks.read_all && checks.will_comply && checks.accept_sanctions;
