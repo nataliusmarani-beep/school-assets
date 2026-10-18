@@ -988,7 +988,7 @@ def send_return_reminders():
 
 
 # ---- Due-date reminders: inspection / maintenance / warranty ----
-LOCAL_TZ = timezone(timedelta(hours=7))   # same wall clock as the scheduler (Asia/Jakarta)
+LOCAL_TZ = timezone(timedelta(hours=9))   # WIT (Papua): both campuses; same wall clock as the scheduler (Asia/Jayapura)
 # Recipients: campus heads (CAMPUS_HEAD_EMAILS) + this general inbox (falls back to LOAN_NOTIFY_EMAIL)
 ASSET_REMINDER_EMAIL = os.environ.get("ASSET_REMINDER_EMAIL", "") or LOAN_NOTIFY_EMAIL
 REMINDER_MILESTONES = (30, 14, 7, 1, 0)   # days before the due date on which an email goes out
@@ -3869,8 +3869,8 @@ def _engine_call(fn, *args, **kwargs):
 
 
 def _local_now() -> datetime:
-    """Campus-local wall clock (WIT, UTC+9). Bookings are stored in campus-local time."""
-    return (datetime.now(timezone.utc) + timedelta(hours=9)).replace(tzinfo=None, second=0, microsecond=0)
+    """Campus-local wall clock (WIT, UTC+9), same as the scheduler. Bookings are stored in campus-local time."""
+    return datetime.now(LOCAL_TZ).replace(tzinfo=None, second=0, microsecond=0)
 
 
 @api.get("/loans/assets")
@@ -5432,7 +5432,7 @@ async def on_startup():
     init_db()
     seed_data()
     # Start background scheduler for daily return reminders
-    scheduler = BackgroundScheduler(timezone="Asia/Jakarta")
+    scheduler = BackgroundScheduler(timezone="Asia/Jayapura")
     scheduler.add_job(send_return_reminders, "cron", hour=8, minute=0)
     scheduler.add_job(send_asset_due_reminders, "cron", hour=8, minute=5)
     scheduler.add_job(send_assignment_reminders, "cron", hour=8, minute=10)

@@ -63,3 +63,10 @@ def test_user_import_accepts_tembagapura_label(db):
     rows = [{"name": "Sari", "email": "sari@example.com", "role": "staff", "campus": "YPJ Tembagapura"}]
     checked = server._validate_user_rows(db, rows)
     assert checked[0]["errors"] == [] and checked[0]["data"]["campus"] == "YPJ TPRA"
+
+
+def test_clock_is_wit():
+    from datetime import datetime, timezone
+    assert server.LOCAL_TZ.utcoffset(None).total_seconds() == 9 * 3600
+    diff = (server._local_now() - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds()
+    assert 9 * 3600 - 120 < diff < 9 * 3600 + 120
