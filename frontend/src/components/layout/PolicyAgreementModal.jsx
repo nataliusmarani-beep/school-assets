@@ -82,8 +82,12 @@ export default function PolicyAgreementModal() {
           </div>
         </div>
 
+        <div className="relative flex-1 min-h-[200px] flex flex-col bg-slate-50 overflow-hidden">
+        {/* YPJ logo watermark, centred behind the scrolling policy text */}
+        <img src={require("../../ypj-logo.png")} alt="" aria-hidden="true" draggable={false}
+             className="absolute inset-0 m-auto w-64 h-64 sm:w-80 sm:h-80 object-contain opacity-[0.09] pointer-events-none select-none" />
         <div ref={boxRef} onScroll={checkEnd} tabIndex={0}
-             className="flex-1 min-h-[200px] overflow-y-auto p-5 sm:p-6 space-y-8 bg-slate-50">
+             className="relative flex-1 min-h-[200px] overflow-y-auto p-5 sm:p-6 space-y-8">
           {POLICIES.map((p) => {
             const Icon = p.icon;
             return (
@@ -113,6 +117,7 @@ export default function PolicyAgreementModal() {
               </section>
             );
           })}
+        </div>
         </div>
 
         <div className="p-5 sm:p-6 border-t border-slate-200 space-y-4 overflow-y-auto max-h-[55vh] sm:max-h-none">
