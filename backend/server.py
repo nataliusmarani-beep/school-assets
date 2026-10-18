@@ -247,6 +247,22 @@ def init_db():
         created_at TEXT NOT NULL
     );
 
+    -- Append-only e-signed acknowledgements of the school policies (never updated or deleted)
+    CREATE TABLE IF NOT EXISTS policy_acceptances (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        user_email TEXT NOT NULL,
+        user_name TEXT NOT NULL,
+        signed_name TEXT NOT NULL,
+        policy_version TEXT NOT NULL,
+        text_hash TEXT NOT NULL DEFAULT '',
+        lang TEXT NOT NULL DEFAULT '',
+        ip TEXT NOT NULL DEFAULT '',
+        user_agent TEXT NOT NULL DEFAULT '',
+        accepted_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_policy_acc_user ON policy_acceptances (user_id, policy_version);
+
     CREATE TABLE IF NOT EXISTS compliance (
         id TEXT PRIMARY KEY,
         asset_id TEXT,
@@ -576,7 +592,7 @@ ADMIN_ROLES = ("admin", "super_admin")  # super_admin can do everything an admin
 ALL_ROLES = ("super_admin", "admin", "ict_admin", "leader", "staff")
 # ict_admin: PIC of the ICT-media categories for ONE campus (loans, schedules, hand-over). leader: read-only, sees everything.
 ICT_CATEGORIES = ("IT Equipment", "AV Equipment", "Music Equipment")
-LEADER_WRITE_ALLOWED = ("/api/auth/logout",)
+LEADER_WRITE_ALLOWED = ("/api/auth/logout",)  # leaders are view-only, so they do not sign the policy acknowledgement (see policy_status)
 
 
 async def admin_required(user: dict = Depends(get_current_user)) -> dict:
@@ -1258,9 +1274,107 @@ async def logout(response: Response):
     return {"ok": True}
 
 
+# ---- Policy acknowledgement (e-signature) ----
+# Bump POLICY_VERSION whenever the policy texts change: every user then has to confirm again.
+POLICY_VERSION = "2026.1"
+
+
+def _norm_name(x: str) -> str:
+    return re.sub(r"\s+", " ", (x or "").strip()).casefold()
+
+
+def policy_status(conn, user: dict) -> dict:
+    # Leaders are view-only accounts and cannot write, so they are not asked to sign.
+    if user.get("role") == "leader":
+        return {"policy_required": False, "policy_accepted": True, "policy_version": POLICY_VERSION, "policy_accepted_at": None}
+    row = conn.execute("SELECT accepted_at FROM policy_acceptances WHERE user_id = ? AND policy_version = ? ORDER BY accepted_at DESC LIMIT 1",
+                       (user["id"], POLICY_VERSION)).fetchone()
+    return {"policy_required": True, "policy_accepted": bool(row), "policy_version": POLICY_VERSION,
+            "policy_accepted_at": row["accepted_at"] if row else None}
+
+
 @api.get("/auth/me")
 async def me(user: dict = Depends(get_current_user)):
-    return user
+    conn = get_conn()
+    try:
+        return {**user, **policy_status(conn, user)}
+    finally:
+        conn.close()
+
+
+class PolicyAcceptIn(BaseModel):
+    version: str
+    signed_name: str
+    text_hash: str = ""
+    lang: str = ""
+    read_all: bool = False
+    will_comply: bool = False
+    accept_sanctions: bool = False
+
+
+@api.post("/policy/accept")
+async def accept_policy(body: PolicyAcceptIn, request: Request, user: dict = Depends(get_current_user)):
+    if body.version != POLICY_VERSION:
+        raise HTTPException(409, "The policies were updated. Please reload the page and read the new version.")
+    if not (body.read_all and body.will_comply and body.accept_sanctions):
+        raise HTTPException(400, "All three statements must be confirmed")
+    if _norm_name(body.signed_name) != _norm_name(user.get("name", "")):
+        raise HTTPException(400, "The typed name must match your account name")
+    fwd = request.headers.get("x-forwarded-for", "")
+    ip = (fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else ""))[:64]
+    ts = now_iso()
+    conn = get_conn()
+    conn.execute("""INSERT INTO policy_acceptances
+                    (id,user_id,user_email,user_name,signed_name,policy_version,text_hash,lang,ip,user_agent,accepted_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                 (str(uuid.uuid4()), user["id"], user["email"], user.get("name", ""), body.signed_name.strip()[:200],
+                  POLICY_VERSION, body.text_hash[:128], body.lang[:8], ip, request.headers.get("user-agent", "")[:300], ts))
+    conn.commit()
+    status = policy_status(conn, user)
+    conn.close()
+    return status
+
+
+@api.get("/policy/acceptances")
+async def list_policy_acceptances(_: dict = Depends(admin_required)):
+    """Everyone with their latest acknowledgement, plus whether it covers the current version."""
+    conn = get_conn()
+    users = conn.execute("SELECT id,name,email,role,campus,department FROM users ORDER BY name").fetchall()
+    out = []
+    for u in users:
+        last = conn.execute("SELECT policy_version, accepted_at, signed_name, ip FROM policy_acceptances WHERE user_id = ? ORDER BY accepted_at DESC LIMIT 1",
+                            (u["id"],)).fetchone()
+        d = dict(u)
+        d["required"] = u["role"] != "leader"
+        d["accepted_version"] = last["policy_version"] if last else None
+        d["accepted_at"] = last["accepted_at"] if last else None
+        d["signed_name"] = last["signed_name"] if last else None
+        d["current"] = bool(last) and last["policy_version"] == POLICY_VERSION
+        out.append(d)
+    conn.close()
+    return {"version": POLICY_VERSION, "items": out}
+
+
+@api.get("/reports/policy-acceptances")
+async def report_policy_acceptances(_: dict = Depends(admin_required)):
+    import openpyxl
+    conn = get_conn()
+    rows = conn.execute("SELECT * FROM policy_acceptances ORDER BY accepted_at DESC").fetchall()
+    pending = [dict(u) for u in conn.execute("SELECT id,name,email,role,campus FROM users WHERE role != 'leader' AND id NOT IN (SELECT user_id FROM policy_acceptances WHERE policy_version = ?) ORDER BY name", (POLICY_VERSION,)).fetchall()]
+    conn.close()
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Acknowledgements"
+    ws.append(["Accepted at (UTC)", "Name", "Email", "Signed name", "Version", "Language", "Text hash", "IP", "User agent"])
+    _style_header(ws)
+    for r in rows:
+        ws.append([r["accepted_at"], r["user_name"], r["user_email"], r["signed_name"], r["policy_version"], r["lang"], r["text_hash"], r["ip"], r["user_agent"]])
+    ws2 = wb.create_sheet(f"Pending v{POLICY_VERSION}")
+    ws2.append(["Name", "Email", "Role", "Campus"])
+    _style_header(ws2)
+    for u in pending:
+        ws2.append([u["name"], u["email"], u["role"], u["campus"]])
+    return _xlsx_response(wb, f"policy-acknowledgements-{datetime.now().strftime('%Y%m%d')}.xlsx")
 
 
 # ---- Users ----

@@ -1,11 +1,15 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { useLang } from "../context/LangContext";
+import { useAuth } from "../context/AuthContext";
+import api from "../lib/api";
+import { isAdminRole } from "../lib/roles";
 import {
   ScrollText, Monitor, Package, ArrowRightLeft, BookOpen,
-  ShieldCheck, ChevronDown, ChevronUp,
+  ShieldCheck, ChevronDown, ChevronUp, Gavel, Download, CheckCircle2,
 } from "lucide-react";
 
-const POLICIES = [
+export const POLICIES = [
   {
     id: "rup",
     icon: Monitor,
@@ -77,6 +81,21 @@ const POLICIES = [
       { headingKey: "pol_inv_disposal_h",   bodyKey: "pol_inv_disposal" },
     ],
   },
+  {
+    id: "sanctions",
+    icon: Gavel,
+    color: "bg-red-50 border-red-200 text-red-700",
+    dot: "bg-red-500",
+    titleKey: "pol_sanction_title",
+    tagKey: "pol_tag_sanction",
+    sections: [
+      { headingKey: "pol_sanction_purpose_h",   bodyKey: "pol_sanction_purpose" },
+      { headingKey: "pol_sanction_access_h",    bodyKey: "pol_sanction_access", list: true },
+      { headingKey: "pol_sanction_liability_h", bodyKey: "pol_sanction_liability", list: true },
+      { headingKey: "pol_sanction_process_h",   bodyKey: "pol_sanction_process", list: true },
+      { headingKey: "pol_sanction_esign_h",     bodyKey: "pol_sanction_esign" },
+    ],
+  },
 ];
 
 function PolicyCard({ policy, t }) {
@@ -130,6 +149,78 @@ function PolicyCard({ policy, t }) {
   );
 }
 
+function AckStatus() {
+  const { t } = useLang();
+  const { user } = useAuth();
+  const admin = isAdminRole(user?.role);
+  const [data, setData] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!admin) return;
+    api.get("/policy/acceptances").then((r) => setData(r.data)).catch(() => {});
+  }, [admin]);
+
+  const download = async () => {
+    setBusy(true);
+    try {
+      const res = await api.get("/reports/policy-acceptances", { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "policy-acknowledgements.xlsx";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.error(t("polack_download_failed"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const required = (data?.items || []).filter((i) => i.required);
+  const pending = required.filter((i) => !i.current);
+
+  return (
+    <div className="mb-3 space-y-3">
+      {user?.policy_accepted_at && (
+        <div className="flex items-start gap-3 bg-emerald-50 border border-emerald-200 p-4 text-sm text-emerald-800">
+          <CheckCircle2 className="w-5 h-5 flex-shrink-0 mt-0.5" strokeWidth={1.75} />
+          <span>{t("polack_you_signed")} <b>{new Date(user.policy_accepted_at).toLocaleString()}</b> · v{user.policy_version}</span>
+        </div>
+      )}
+      {admin && data && (
+        <div className="bg-white border border-slate-200 p-5" data-testid="policy-ack-admin">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+            <div>
+              <div className="label-mono text-slate-500">{t("polack_admin_title")} · v{data.version}</div>
+              <div className="font-display text-lg font-semibold text-slate-900">
+                {required.length - pending.length} / {required.length} {t("polack_admin_signed")}
+              </div>
+            </div>
+            <button onClick={download} disabled={busy}
+              className="inline-flex items-center gap-2 border border-slate-300 px-3 py-2 text-sm hover:bg-slate-50 disabled:opacity-50">
+              <Download className="w-4 h-4" strokeWidth={1.75} /> {t("polack_export")}
+            </button>
+          </div>
+          {pending.length > 0 && (
+            <details>
+              <summary className="text-sm text-amber-700 cursor-pointer">{pending.length} {t("polack_admin_pending")}</summary>
+              <ul className="mt-2 max-h-56 overflow-auto text-sm text-slate-600 divide-y divide-slate-100">
+                {pending.map((u) => (
+                  <li key={u.id} className="py-1.5 flex justify-between gap-3">
+                    <span>{u.name}</span><span className="text-slate-400 truncate">{u.email}</span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function PoliciesPage() {
   const { t } = useLang();
 
@@ -166,6 +257,7 @@ export default function PoliciesPage() {
 
         {/* Policy cards */}
         <div className="flex-1 space-y-3 min-w-0">
+          <AckStatus />
           {POLICIES.map((p) => (
             <PolicyCard key={p.id} policy={p} t={t} />
           ))}
