@@ -80,6 +80,7 @@ export default function AppLayout({ children }) {
     return () => clearInterval(interval);
   }, [user]);
 
+  const canBackup = user?.role === "super_admin" || user?.role === "campus_admin";   // Campus Admin gets a copy of their own campus only
   const visibleLinks = NAV_LINKS.filter((l) => (l.roles ? l.roles.includes(user?.role) : !l.adminOnly || isManagerRole(user?.role)));
 
   const handleBackup = async () => {
@@ -89,7 +90,8 @@ export default function AppLayout({ children }) {
       const url = URL.createObjectURL(res.data);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `ypj-backup-${new Date().toISOString().split("T")[0]}.db`;
+      const slug = user?.role === "campus_admin" && user?.campus ? "-" + user.campus.toLowerCase().replace(/[^a-z0-9]+/g, "-") : "";
+      a.download = `ypj-backup${slug}-${new Date().toISOString().split("T")[0]}.db`;
       a.click();
       URL.revokeObjectURL(url);
       toast.success(t("backup_ok"));
@@ -175,7 +177,7 @@ export default function AppLayout({ children }) {
       </nav>
 
       <div className="px-3 pb-6 border-t border-slate-800 pt-4 space-y-4">
-        {isManagerRole(user?.role) && (
+        {canBackup && (
           <button
             onClick={handleBackup}
             disabled={backing}
@@ -187,9 +189,9 @@ export default function AppLayout({ children }) {
         )}
 
         {/* Staff have no Backup button, so the language area takes the same amber highlight */}
-        <div className={isManagerRole(user?.role) ? "px-1" : "bg-amber-400 px-3 py-3"} data-testid="sidebar-language">
-          <div className={`label-mono mb-2 ${isManagerRole(user?.role) ? "text-slate-500" : "text-slate-800"}`}>{t("lang_label")}</div>
-          <LangToggle dark amber={!isManagerRole(user?.role)} />
+        <div className={canBackup ? "px-1" : "bg-amber-400 px-3 py-3"} data-testid="sidebar-language">
+          <div className={`label-mono mb-2 ${canBackup ? "text-slate-500" : "text-slate-800"}`}>{t("lang_label")}</div>
+          <LangToggle dark amber={!canBackup} />
         </div>
 
         <div className="border-t border-slate-800 pt-4">

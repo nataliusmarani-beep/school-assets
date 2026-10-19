@@ -3755,15 +3755,74 @@ async def report_ownership(_: dict = Depends(report_reader_required)):
     return _xlsx_response(wb, f"ownership-history-{today}.xlsx")
 
 
+# Tables whose rows belong to a campus through a parent table: (table, column, parent table, parent column)
+_CAMPUS_BACKUP_CHILDREN = [
+    ("ownership_logs", "asset_id", "assets", "id"), ("faults", "asset_id", "assets", "id"),
+    ("compliance", "asset_id", "assets", "id"), ("loan_requests", "asset_id", "assets", "id"),
+    ("transfer_requests", "asset_id", "assets", "id"), ("assignments", "asset_id", "assets", "id"),
+    ("asset_loan_settings", "asset_id", "assets", "id"), ("booking_units", "booking_id", "bookings", "id"),
+    ("byod_devices", "request_id", "byod_requests", "id"), ("byod_events", "request_id", "byod_requests", "id"),
+    ("classroom_handovers", "classroom_id", "classrooms", "id"), ("schedule_exceptions", "schedule_id", "fixed_schedules", "id"),
+    ("policy_acceptances", "user_id", "users", "id"),
+]
+_CAMPUS_BACKUP_DROP = ("password_tokens", "notification_queue", "app_meta", "files")
+
+
+def build_campus_backup(campus: str) -> str:
+    """Copy of the database holding only one campus (no password hashes, tokens or other campuses). Returns the temp file path."""
+    import tempfile
+    fd, tmp = tempfile.mkstemp(prefix="ypj-campus-backup-", suffix=".db")
+    os.close(fd)
+    src = sqlite3.connect(str(DB_PATH))
+    dst = sqlite3.connect(tmp)
+    try:
+        src.backup(dst)
+    finally:
+        src.close()
+    try:
+        tables = [r[0] for r in dst.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
+        for t in _CAMPUS_BACKUP_DROP:
+            if t in tables:
+                dst.execute(f"DELETE FROM {t}")
+        for t in tables:
+            cols = [r[1] for r in dst.execute(f"PRAGMA table_info({t})")]
+            if "campus" in cols:
+                if t == "loan_policies":   # rules marked "all campuses" stay
+                    dst.execute(f"DELETE FROM {t} WHERE campus != ? AND campus != ''", (campus,))
+                else:
+                    dst.execute(f"DELETE FROM {t} WHERE campus != ?", (campus,))
+        for t, col, parent, pcol in _CAMPUS_BACKUP_CHILDREN:
+            if t in tables and parent in tables:
+                dst.execute(f"DELETE FROM {t} WHERE {col} NOT IN (SELECT {pcol} FROM {parent})")
+        dst.execute("UPDATE users SET password_hash = ''")
+        dst.commit()
+        dst.execute("VACUUM")
+    finally:
+        dst.close()
+    return tmp
+
+
 @api.get("/backup")
-async def backup_db(user: dict = Depends(admin_required)):
-    if not DB_PATH.exists():
-        raise HTTPException(404, "Database file not found")
-    return FileResponse(
-        str(DB_PATH),
-        media_type="application/octet-stream",
-        filename=f"ypj-backup-{datetime.now().strftime('%Y%m%d')}.db",
-    )
+async def backup_db(user: dict = Depends(get_current_user)):
+    """Super Admin: the whole database. Campus Admin: a copy holding only their own campus. Everyone else: no backup."""
+    role = user.get("role")
+    stamp = datetime.now().strftime("%Y%m%d")
+    if role == "super_admin":
+        if not DB_PATH.exists():
+            raise HTTPException(404, "Database file not found")
+        return FileResponse(str(DB_PATH), media_type="application/octet-stream", filename=f"ypj-backup-{stamp}.db")
+    if role == "campus_admin":
+        campus = (user.get("campus") or "").strip()
+        if not campus:
+            raise HTTPException(400, "Akun Campus Admin harus memiliki kampus.")
+        if not DB_PATH.exists():
+            raise HTTPException(404, "Database file not found")
+        from starlette.background import BackgroundTask
+        tmp = build_campus_backup(campus)
+        slug = re.sub(r"[^a-z0-9]+", "-", campus.lower()).strip("-")
+        return FileResponse(tmp, media_type="application/octet-stream", filename=f"ypj-backup-{slug}-{stamp}.db",
+                            background=BackgroundTask(lambda: os.path.exists(tmp) and os.remove(tmp)))
+    raise HTTPException(403, "Backup hanya untuk Super Admin dan Campus Admin")
 
 
 # ---- Loan requests ----

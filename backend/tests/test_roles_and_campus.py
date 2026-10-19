@@ -144,5 +144,29 @@ def test_campus_admin_gets_admin_screens_but_own_campus_only(client, make_user, 
     assert client.post("/api/classrooms", headers=h, json={"name": "Kelas B", "campus": "YPJ Kuala Kencana"}).status_code == 200
     assert client.post("/api/classrooms", headers=h, json={"name": "Kelas C", "campus": "YPJ TPRA"}).status_code == 403
     assert client.delete("/api/classrooms/r1", headers=h).status_code == 403
-    assert client.get("/api/backup", headers=h).status_code != 403   # Campus Admin may download backups
     assert client.post("/api/users", headers=h, json={"email": "z@example.com", "password": "secret123", "name": "Z", "role": "super_admin", "campus": "YPJ Kuala Kencana"}).status_code == 403
+
+
+def test_backup_access_and_campus_copy(client, make_user, db, tmp_path):
+    import sqlite3
+    kk, tp = "YPJ Kuala Kencana", "YPJ TPRA"
+    for aid, campus in [("b1", kk), ("b2", tp)]:
+        db.execute("INSERT INTO assets (id,name,asset_tag,category,campus,location,purchase_price,purchase_date,created_at,updated_at) VALUES (?,?,?,?,?,?,0,'2026-01-01','t','t')",
+                   (aid, aid, f"T-{aid}", "Furniture", campus, "Lab"))
+        db.execute("INSERT INTO faults (id,asset_id,title,description,severity,status,reported_by,reported_by_name,created_at) VALUES (?,?,'t','d','low','open','u','U','t')", (f"f{aid}", aid))
+    db.commit()
+    ca, other, sup, admin = make_user("campus_admin", kk), make_user("campus_admin", tp), make_user("super_admin", ""), make_user("admin")
+    assert client.get("/api/backup", headers=auth(admin)).status_code == 403
+    assert client.get("/api/backup", headers=auth(make_user("staff"))).status_code == 403
+    assert client.get("/api/backup", headers=auth(sup)).status_code == 200
+    r = client.get("/api/backup", headers=auth(ca))
+    assert r.status_code == 200
+    f = tmp_path / "copy.db"
+    f.write_bytes(r.content)
+    c = sqlite3.connect(str(f))
+    assert [x[0] for x in c.execute("SELECT id FROM assets")] == ["b1"]
+    assert [x[0] for x in c.execute("SELECT id FROM faults")] == ["fb1"]
+    assert {x[0] for x in c.execute("SELECT campus FROM users")} == {kk}
+    assert all(x[0] == "" for x in c.execute("SELECT password_hash FROM users"))
+    assert c.execute("SELECT COUNT(*) FROM password_tokens").fetchone()[0] == 0
+    c.close()
