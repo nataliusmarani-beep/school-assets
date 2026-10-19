@@ -398,14 +398,16 @@ export default function AssetsListPage() {
             <FileSpreadsheet className="w-4 h-4" strokeWidth={1.75} />
             {exporting ? t("exporting") : t("export_excel")}
           </button>
-          {isAdmin && (
+          {(isAdmin || user?.role === "ict_admin") && (
             <>
+              {isAdmin && (
               <button
                 onClick={() => setShowImport(true)}
                 className="inline-flex items-center gap-2 border border-slate-300 hover:border-slate-500 text-slate-700 hover:text-slate-900 text-sm px-4 py-2.5"
               >
                 <Upload className="w-4 h-4" strokeWidth={1.75} /> {t("import_assets")}
               </button>
+              )}
               <Link
                 to="/assets/new"
                 data-testid="add-asset-button"

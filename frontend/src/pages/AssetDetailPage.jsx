@@ -11,7 +11,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "../components/ui/dialog";
 import { useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
-import { isAdminRole } from "../lib/roles";
+import { canManageAsset } from "../lib/roles";
 import { ownerName } from "../lib/format";
 import PhotoZoomDialog from "../components/assets/PhotoZoomDialog";
 import LoanSettingsCard from "../components/loans/LoanSettingsCard";
@@ -79,7 +79,7 @@ export default function AssetDetailPage() {
     } catch (e) { toast.error(formatErr(e)); }
   };
 
-  const isAdmin = isAdminRole(user?.role);
+  const isAdmin = canManageAsset(user, asset);
   // What this user may do with the asset is decided by the server (asset.permissions): staff may report / transfer
   // only assets assigned to them (or on loan to them) and borrow only free "shared" assets.
   const perms = asset?.permissions || {};
@@ -361,14 +361,14 @@ export default function AssetDetailPage() {
             </DialogContent>
           </Dialog>}
 
-          {isAdminRole(user?.role) && (
+          {isAdmin && (
             <Link to={`/assets/${id}/edit`}>
               <Button variant="outline" className="rounded-none" data-testid="edit-asset-button">
                 <Edit className="w-4 h-4 mr-2" strokeWidth={1.75}/> {t("edit")}
               </Button>
             </Link>
           )}
-          {isAdminRole(user?.role) && (
+          {isAdmin && (
             <Button variant="outline" onClick={handleDelete}
               className="rounded-none text-rose-600 hover:text-rose-700" data-testid="delete-asset-button">
               <Trash2 className="w-4 h-4" strokeWidth={1.75}/>

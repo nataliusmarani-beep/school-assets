@@ -28,7 +28,7 @@ const SEVERITY_BADGE = {
 export default function FaultsPage() {
   const { t } = useLang();
   const { user } = useAuth();
-  const isAdmin = isAdminRole(user?.role);
+  const isAdmin = isAdminRole(user?.role) || user?.role === "ict_admin";
   const [faults, setFaults] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all");

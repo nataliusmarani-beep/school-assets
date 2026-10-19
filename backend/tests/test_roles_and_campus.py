@@ -70,3 +70,20 @@ def test_clock_is_wit():
     assert server.LOCAL_TZ.utcoffset(None).total_seconds() == 9 * 3600
     diff = (server._local_now() - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds()
     assert 9 * 3600 - 120 < diff < 9 * 3600 + 120
+
+
+def test_ict_admin_manages_only_own_campus_ict_assets(client, make_user, db):
+    for aid, cat, campus in [("a1", "IT Equipment", "YPJ Kuala Kencana"), ("a2", "Furniture", "YPJ Kuala Kencana"), ("a3", "IT Equipment", "YPJ TPRA")]:
+        db.execute("INSERT INTO assets (id,name,asset_tag,category,campus,location,purchase_price,purchase_date,created_at,updated_at) VALUES (?,?,?,?,?,?,0,'2026-01-01','t','t')",
+                   (aid, aid, f"T-{aid}", cat, campus, "Lab"))
+    db.commit()
+    ict = make_user("ict_admin", "YPJ Kuala Kencana")
+    h = auth(ict)
+    assert client.put("/api/assets/a1", headers=h, json={"name": "Renamed"}).status_code == 200
+    assert client.put("/api/assets/a2", headers=h, json={"name": "x"}).status_code == 403   # not ICT category
+    assert client.put("/api/assets/a3", headers=h, json={"name": "x"}).status_code == 403   # other campus
+    assert client.put("/api/assets/a1", headers=h, json={"category": "Furniture"}).status_code == 403
+    assert client.delete("/api/assets/a3", headers=h).status_code == 403
+    assert client.delete("/api/assets/a1", headers=h).status_code == 200
+    assert client.get("/api/users", headers=h).status_code in (200, 403)
+    assert client.post("/api/users/x/invite", headers=h).status_code == 403

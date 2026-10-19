@@ -618,6 +618,19 @@ async def ict_pic_required(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 
+async def asset_manager_required(user: dict = Depends(get_current_user)) -> dict:
+    """Admins, plus ICT admins (checked per asset with ensure_asset_manager: own campus, ICT categories only)."""
+    if user.get("role") not in ADMIN_ROLES + ("ict_admin",):
+        raise HTTPException(403, "Admin access required")
+    return user
+
+
+def ensure_asset_manager(user: dict, campus: str, category: str):
+    if user.get("role") in ADMIN_ROLES or is_ict_pic(user, campus, category):
+        return
+    raise HTTPException(403, "ICT Admin hanya dapat mengelola aset ICT/media di kampusnya sendiri.")
+
+
 async def report_reader_required(user: dict = Depends(get_current_user)) -> dict:
     """Reports are read-only: admins and leaders (management / foundation) may download them."""
     if user.get("role") not in ADMIN_ROLES + ("leader",):
@@ -1944,7 +1957,8 @@ async def list_assets(
 
 
 @api.post("/assets")
-async def create_asset(body: AssetIn, user: dict = Depends(admin_required)):
+async def create_asset(body: AssetIn, user: dict = Depends(asset_manager_required)):
+    ensure_asset_manager(user, body.campus or "", body.category)
     aid = str(uuid.uuid4())
     ts = now_iso()
     conn = get_conn()
@@ -2370,10 +2384,18 @@ async def get_asset(aid: str, user: dict = Depends(get_current_user)):
 
 
 @api.put("/assets/{aid}")
-async def update_asset(aid: str, body: AssetUpdate, user: dict = Depends(admin_required)):
+async def update_asset(aid: str, body: AssetUpdate, user: dict = Depends(asset_manager_required)):
     updates = {k: v for k, v in body.model_dump(exclude_none=True).items()}
     if not updates:
         raise HTTPException(400, "No fields to update")
+    if user["role"] == "ict_admin":
+        conn = get_conn()
+        cur = conn.execute("SELECT campus, category FROM assets WHERE id = ?", (aid,)).fetchone()
+        conn.close()
+        if not cur:
+            raise HTTPException(404, "Asset not found")
+        ensure_asset_manager(user, cur["campus"], cur["category"])
+        ensure_asset_manager(user, updates.get("campus", cur["campus"]), updates.get("category", cur["category"]))
     updates["updated_at"] = now_iso()
     if "maintenance_required" in updates:
         updates["maintenance_required"] = 1 if updates["maintenance_required"] else 0
@@ -2393,8 +2415,15 @@ async def update_asset(aid: str, body: AssetUpdate, user: dict = Depends(admin_r
 
 
 @api.delete("/assets/{aid}")
-async def delete_asset(aid: str, _: dict = Depends(admin_required)):
+async def delete_asset(aid: str, user: dict = Depends(asset_manager_required)):
     conn = get_conn()
+    cur = conn.execute("SELECT campus, category FROM assets WHERE id = ?", (aid,)).fetchone()
+    if cur:
+        try:
+            ensure_asset_manager(user, cur["campus"], cur["category"])
+        except HTTPException:
+            conn.close()
+            raise
     conn.execute("DELETE FROM assets WHERE id = ?", (aid,))
     conn.execute("DELETE FROM ownership_logs WHERE asset_id = ?", (aid,))
     conn.execute("DELETE FROM assignments WHERE asset_id = ?", (aid,))
@@ -2405,13 +2434,18 @@ async def delete_asset(aid: str, _: dict = Depends(admin_required)):
 
 
 @api.post("/assets/{aid}/transfer")
-async def transfer_asset(aid: str, body: TransferIn, user: dict = Depends(admin_required)):
+async def transfer_asset(aid: str, body: TransferIn, user: dict = Depends(asset_manager_required)):
     conn = get_conn()
     row = conn.execute("SELECT * FROM assets WHERE id = ?", (aid,)).fetchone()
     if not row:
         conn.close()
         raise HTTPException(404, "Asset not found")
     asset = row_to_dict(row)
+    try:
+        ensure_asset_manager(user, asset["campus"], asset["category"])
+    except HTTPException:
+        conn.close()
+        raise
     to_user = require_user(conn, body.new_owner_user_id, body.new_owner_name)
     if to_user:  # the recipient has to confirm before ownership changes
         try:
@@ -2487,8 +2521,15 @@ async def create_fault(body: FaultIn, user: dict = Depends(get_current_user)):
 
 
 @api.put("/faults/{fid}")
-async def update_fault(fid: str, body: FaultUpdate, user: dict = Depends(admin_required)):
+async def update_fault(fid: str, body: FaultUpdate, user: dict = Depends(asset_manager_required)):
     updates = {k: v for k, v in body.model_dump(exclude_none=True).items()}
+    if user["role"] == "ict_admin":
+        conn = get_conn()
+        fa = conn.execute("SELECT a.campus, a.category FROM faults f JOIN assets a ON a.id = f.asset_id WHERE f.id = ?", (fid,)).fetchone()
+        conn.close()
+        if not fa:
+            raise HTTPException(404, "Fault not found")
+        ensure_asset_manager(user, fa["campus"], fa["category"])
     if updates.get("status") == "resolved":
         updates["resolved_at"] = now_iso()
     set_clause = ", ".join(f"{k} = ?" for k in updates)
