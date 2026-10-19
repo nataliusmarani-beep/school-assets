@@ -606,13 +606,6 @@ async def admin_required(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 
-async def whole_system_admin_required(user: dict = Depends(get_current_user)) -> dict:
-    """Actions that expose every campus at once (the full database backup)."""
-    if user.get("role") not in ADMIN_ROLES:
-        raise HTTPException(403, "Admin access required")
-    return user
-
-
 def ensure_campus_scope(user: dict, campus: str):
     """A Campus Admin may only touch records of their own campus; other admins are unrestricted here."""
     if user.get("role") == "campus_admin" and (not (user.get("campus") or "") or (campus or "") != user.get("campus")):
@@ -3763,7 +3756,7 @@ async def report_ownership(_: dict = Depends(report_reader_required)):
 
 
 @api.get("/backup")
-async def backup_db(user: dict = Depends(whole_system_admin_required)):
+async def backup_db(user: dict = Depends(admin_required)):
     if not DB_PATH.exists():
         raise HTTPException(404, "Database file not found")
     return FileResponse(

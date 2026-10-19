@@ -112,8 +112,7 @@ def test_campus_admin_scope(client, make_user, db):
     assert client.post("/api/users", headers=h, json={**body, "email": "b@example.com", "role": "campus_admin"}).status_code == 403
     # no campus -> refused for campus-bound roles
     assert client.post("/api/users", headers=auth(make_user("admin")), json={**body, "email": "c@example.com", "role": "campus_admin", "campus": ""}).status_code == 400
-    # backup stays admin-only
-    assert client.get("/api/backup", headers=h).status_code in (403, 404, 405)
+    assert client.get("/api/backup", headers=auth(make_user("staff"))).status_code == 403
 
 
 def test_campus_admin_gets_loan_emails(make_user, db):
@@ -145,5 +144,5 @@ def test_campus_admin_gets_admin_screens_but_own_campus_only(client, make_user, 
     assert client.post("/api/classrooms", headers=h, json={"name": "Kelas B", "campus": "YPJ Kuala Kencana"}).status_code == 200
     assert client.post("/api/classrooms", headers=h, json={"name": "Kelas C", "campus": "YPJ TPRA"}).status_code == 403
     assert client.delete("/api/classrooms/r1", headers=h).status_code == 403
-    assert client.get("/api/backup", headers=h).status_code == 403
+    assert client.get("/api/backup", headers=h).status_code != 403   # Campus Admin may download backups
     assert client.post("/api/users", headers=h, json={"email": "z@example.com", "password": "secret123", "name": "Z", "role": "super_admin", "campus": "YPJ Kuala Kencana"}).status_code == 403
