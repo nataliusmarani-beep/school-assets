@@ -6400,6 +6400,9 @@ if BUILD_DIR.exists():
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_spa(full_path: str):
+        # root-level build files (favicon, app icons) are served as files; everything else is the SPA
+        if full_path and "/" not in full_path and not full_path.startswith(".") and (BUILD_DIR / full_path).is_file() and full_path != "index.html":
+            return FileResponse(BUILD_DIR / full_path)
         index = BUILD_DIR / "index.html"
         return HTMLResponse(index.read_text())
 
