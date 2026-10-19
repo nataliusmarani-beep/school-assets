@@ -16,6 +16,8 @@ import { Alert, AlertDescription } from "../components/ui/alert";
 import { Upload, X, FileText, ImageIcon, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { useLang } from "../context/LangContext";
+import { useAuth } from "../context/AuthContext";
+import { ICT_CATEGORIES } from "../lib/roles";
 import { CATEGORY_VALUES, CATEGORY_KEYS } from "../i18n";
 import { campusLabel } from "../lib/campus";
 
@@ -135,6 +137,7 @@ export default function AssetFormPage() {
   const isEdit = !!id;
   const navigate = useNavigate();
   const { t } = useLang();
+  const { user } = useAuth();
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [photoUploading, setPhotoUploading] = useState(false);
@@ -144,10 +147,10 @@ export default function AssetFormPage() {
   const lifeTouched = useRef(false);
 
   const [form, setForm] = useState({
-    name: "", asset_tag: "", category: "IT Equipment", asset_type: "School Asset", description: "",
+    name: "", asset_tag: "", category: user?.role === "admin" ? "Furniture" : "IT Equipment", asset_type: "School Asset", description: "",
     campus: "", location: "", status: "active", purchase_price: "",
     purchase_date: new Date().toISOString().split("T")[0],
-    useful_life_years: DEFAULT_USEFUL_LIFE["IT Equipment"], warranty_end_date: "", serial_number: "",
+    useful_life_years: DEFAULT_USEFUL_LIFE[user?.role === "admin" ? "Furniture" : "IT Equipment"], warranty_end_date: "", serial_number: "",
     supplier: "", assigned_to_name: "", assigned_to_user_id: null, photo_path: null, documents: [],
     ...extrasFromAsset({}),
   });
@@ -318,7 +321,9 @@ export default function AssetFormPage() {
                 <SelectValue/>
               </SelectTrigger>
               <SelectContent>
-                {CATEGORY_VALUES.map((c, i)=>(<SelectItem key={c} value={c}>{t(CATEGORY_KEYS[i])}</SelectItem>))}
+                {CATEGORY_VALUES.map((c, i)=>({ c, i }))
+                  .filter(({ c }) => !(user?.role === "admin" && ICT_CATEGORIES.includes(c)))   // Resources Admin: no ICT / media categories
+                  .map(({ c, i })=>(<SelectItem key={c} value={c}>{t(CATEGORY_KEYS[i])}</SelectItem>))}
               </SelectContent>
             </Select>
           </div>
