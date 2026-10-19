@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "../components/ui/dialog";
 import { toast } from "sonner";
 import { useAuth } from "../context/AuthContext";
-import { Plus, Trash2, Pencil, Upload, Mail, KeyRound } from "lucide-react";
+import { Plus, Trash2, Pencil, Upload, Mail, KeyRound, Search, X } from "lucide-react";
 import BulkUsersDialog from "../components/BulkUsersDialog";
 import { isAdminRole, isSuperAdmin } from "../lib/roles";
 import { campusLabel } from "../lib/campus";
@@ -168,6 +168,7 @@ export default function UsersPage() {
   const [editTarget, setEditTarget] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [editForm, setEditForm] = useState(EMPTY_EDIT);
+  const [query, setQuery] = useState("");
 
   const load = () => {
     setLoading(true);
@@ -230,6 +231,12 @@ export default function UsersPage() {
     catch (e) { toast.error(formatErr(e)); }
   };
 
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? users.filter((u) => [u.name, u.email, u.employee_id, u.department, u.phone, u.campus]
+        .some((v) => (v || "").toLowerCase().includes(q)))
+    : users;
+
   const allNames = users.map((u) => u.name);
   const allDepts = [...new Set(users.map((u) => u.department).filter(Boolean))];
 
@@ -269,6 +276,23 @@ export default function UsersPage() {
 
       {bulkOpen && <BulkUsersDialog onClose={() => setBulkOpen(false)} onImported={load} />}
 
+      <div className="relative mb-4 max-w-md">
+        <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" strokeWidth={1.75} />
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={t("us_search")}
+          className="rounded-none pl-9 pr-9 bg-white"
+          autoComplete="off"
+          data-testid="users-search-input"
+        />
+        {query && (
+          <button type="button" onClick={() => setQuery("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700" aria-label="Clear">
+            <X className="w-4 h-4" />
+          </button>
+        )}
+      </div>
+
       <div className="bg-white border border-slate-200 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -287,7 +311,9 @@ export default function UsersPage() {
             <tbody>
               {loading ? (
                 <tr><td colSpan={8} className="text-center text-slate-500 py-12">{t("loading")}</td></tr>
-              ) : users.map((u) => (
+              ) : filtered.length === 0 ? (
+                <tr><td colSpan={8} className="text-center text-slate-500 py-12">{t("us_no_match")}</td></tr>
+              ) : filtered.map((u) => (
                 <tr key={u.id} className="border-b border-slate-100 hover:bg-slate-50" data-testid={`user-row-${u.id}`}>
                   <td className="py-3 px-4 text-slate-600 font-mono text-xs">{u.employee_id || "—"}</td>
                   <td className="py-3 px-4 font-medium text-slate-900">{u.name}</td>
