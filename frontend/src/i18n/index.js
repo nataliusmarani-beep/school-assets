@@ -92,6 +92,7 @@ export const translations = {
     cat_erg: "ERG / Fire Drill Equipment",
     cat_housekeeping: "Housekeeping Equipment",
     cat_firstaid: "First Aid / AED Equipment",
+    cat_tools: "Work Tools",
     cat_other: "Other",
 
     // Asset form
@@ -1446,6 +1447,7 @@ export const translations = {
     cat_erg: "Peralatan ERG / Fire Drill",
     cat_housekeeping: "Peralatan Housekeeping",
     cat_firstaid: "Peralatan P3K / AED",
+    cat_tools: "Peralatan Kerja / Tools",
     cat_other: "Lainnya",
 
     // Asset form
@@ -2700,13 +2702,13 @@ export const translations = {
 export const CATEGORY_VALUES = [
   "IT Equipment", "AV Equipment", "Furniture", "Lab Equipment",
   "Vehicles", "Books", "Sports", "Music Equipment",
-  "Learning Tools", "ERG / Fire Drill Equipment", "Housekeeping Equipment", "First Aid / AED Equipment", "Other",
+  "Learning Tools", "ERG / Fire Drill Equipment", "Housekeeping Equipment", "First Aid / AED Equipment", "Work Tools", "Other",
 ];
 
 export const CATEGORY_KEYS = [
   "cat_it", "cat_av", "cat_furniture", "cat_lab",
   "cat_vehicles", "cat_books", "cat_sports", "cat_music",
-  "cat_learning", "cat_erg", "cat_housekeeping", "cat_firstaid", "cat_other",
+  "cat_learning", "cat_erg", "cat_housekeeping", "cat_firstaid", "cat_tools", "cat_other",
 ];
 
 export const STATUS_KEYS = {

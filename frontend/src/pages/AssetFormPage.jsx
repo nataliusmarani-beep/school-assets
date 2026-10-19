@@ -49,7 +49,7 @@ const extrasFromAsset = (a) => {
 const DEFAULT_USEFUL_LIFE = {
   "IT Equipment": 4, "AV Equipment": 5, "Furniture": 8, "Lab Equipment": 8, "Vehicles": 8,
   "Books": 5, "Sports": 5, "Music Equipment": 8, "Other": 5,
-  "Learning Tools": 5, "ERG / Fire Drill Equipment": 5, "Housekeeping Equipment": 4, "First Aid / AED Equipment": 5,
+  "Learning Tools": 5, "ERG / Fire Drill Equipment": 5, "Housekeeping Equipment": 4, "First Aid / AED Equipment": 5, "Work Tools": 5,
 };
 
 const FIELD_CLS = "mt-2 rounded-none border-slate-300";

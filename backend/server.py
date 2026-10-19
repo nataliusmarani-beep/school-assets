@@ -2089,14 +2089,14 @@ IMPORT_COLUMNS = [
 VALID_CATEGORIES = [
     "IT Equipment", "AV Equipment", "Furniture", "Lab Equipment",
     "Vehicles", "Books", "Sports", "Music Equipment",
-    "Learning Tools", "ERG / Fire Drill Equipment", "Housekeeping Equipment", "First Aid / AED Equipment", "Other",
+    "Learning Tools", "ERG / Fire Drill Equipment", "Housekeeping Equipment", "First Aid / AED Equipment", "Work Tools", "Other",
 ]
 # Suggested useful life (years) per category. Used when a CSV/Excel import leaves the column empty;
 # the New Asset form mirrors this table (frontend/src/pages/AssetFormPage.jsx) - keep them in sync.
 DEFAULT_USEFUL_LIFE = {
     "IT Equipment": 4, "AV Equipment": 5, "Furniture": 8, "Lab Equipment": 8, "Vehicles": 8,
     "Books": 5, "Sports": 5, "Music Equipment": 8, "Other": 5,
-    "Learning Tools": 5, "ERG / Fire Drill Equipment": 5, "Housekeeping Equipment": 4, "First Aid / AED Equipment": 5,
+    "Learning Tools": 5, "ERG / Fire Drill Equipment": 5, "Housekeeping Equipment": 4, "First Aid / AED Equipment": 5, "Work Tools": 5,
 }
 VALID_STATUSES = ["active", "in_repair", "retired", "lost"]
 VALID_CAMPUSES = ["YPJ Kuala Kencana", "YPJ TPRA", ""]
