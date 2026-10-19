@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { X } from "lucide-react";
 import { useLang } from "../context/LangContext";
 import {
   HelpCircle, LayoutDashboard, Plus, Search, ArrowLeftRight,
@@ -77,6 +78,75 @@ function Bold({ children }) {
   return <span className="font-semibold text-slate-900">{children}</span>;
 }
 
+
+const helpImgs = require.context("../assets/help", false, /\.jpg$/);
+const shot = (lang, name) => helpImgs(`./${lang.toLowerCase()}-${name}.jpg`);
+
+/** Screenshot in a browser, phone or tablet frame; click to enlarge. */
+function Shot({ name, kind = "browser", className = "" }) {
+  const { lang, t } = useLang();
+  const [open, setOpen] = useState(false);
+  const src = shot(lang, name);
+  const img = <img src={src} alt="" loading="lazy" draggable={false} className="block w-full h-auto" />;
+  const frame = kind === "phone" ? (
+    <div className="rounded-[1.6rem] bg-slate-900 p-2 shadow-xl ring-1 ring-slate-700">{<div className="rounded-[1.1rem] overflow-hidden bg-white">{img}</div>}</div>
+  ) : kind === "tablet" ? (
+    <div className="rounded-2xl bg-slate-900 p-2 shadow-xl ring-1 ring-slate-700"><div className="rounded-lg overflow-hidden bg-white">{img}</div></div>
+  ) : (
+    <div className="rounded-md bg-white border border-slate-300 shadow-xl overflow-hidden">
+      <div className="h-6 bg-slate-100 border-b border-slate-200 flex items-center gap-1.5 px-3">
+        <span className="w-2 h-2 rounded-full bg-rose-300" /><span className="w-2 h-2 rounded-full bg-amber-300" /><span className="w-2 h-2 rounded-full bg-emerald-300" />
+      </div>
+      {img}
+    </div>
+  );
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)} title={t("help_fig_zoom")} className={`block text-left cursor-zoom-in ${className}`}>{frame}</button>
+      {open && (
+        <div className="fixed inset-0 z-[120] bg-slate-900/85 flex items-center justify-center p-4 cursor-zoom-out" onClick={() => setOpen(false)} role="dialog" aria-modal="true">
+          <button type="button" className="absolute top-4 right-4 text-white/80 hover:text-white" aria-label="Close"><X className="w-6 h-6" /></button>
+          <img src={src} alt="" className={`max-h-[92vh] ${kind === "phone" ? "max-w-[min(92vw,420px)]" : "max-w-[96vw]"} object-contain shadow-2xl`} />
+        </div>
+      )}
+    </>
+  );
+}
+
+function Figure({ caption, children, className = "" }) {
+  return (
+    <figure className={`my-6 ${className}`}>
+      {children}
+      {caption && <figcaption className="mt-3 text-sm text-slate-500 text-center">{caption}</figcaption>}
+    </figure>
+  );
+}
+
+/** Laptop + phone side by side (stacked on small screens). */
+function Pair({ laptop, phone, caption }) {
+  return (
+    <Figure caption={caption}>
+      <div className="flex flex-col sm:flex-row gap-6 items-center sm:items-end">
+        <div className="flex-1 min-w-0 w-full"><Shot name={laptop} /></div>
+        <div className="w-[190px] flex-shrink-0"><Shot name={phone} kind="phone" /></div>
+      </div>
+    </Figure>
+  );
+}
+
+function Hero({ caption }) {
+  return (
+    <figure className="mb-8 rounded-lg border border-slate-200 bg-gradient-to-br from-slate-50 to-blue-50 p-5 sm:p-8">
+      <div className="flex items-end justify-center gap-3 sm:gap-6">
+        <div className="flex-1 min-w-0 max-w-[560px]"><Shot name="dashboard" /></div>
+        <div className="hidden sm:block w-[150px] flex-shrink-0"><Shot name="dashboard-tablet" kind="tablet" /></div>
+        <div className="w-[84px] sm:w-[110px] flex-shrink-0"><Shot name="dashboard-phone" kind="phone" /></div>
+      </div>
+      <figcaption className="mt-4 text-sm text-slate-500 text-center">{caption}</figcaption>
+    </figure>
+  );
+}
+
 export default function HelpPage() {
   const { t } = useLang();
   const [active, setActive] = useState("getting-started");
@@ -139,6 +209,7 @@ export default function HelpPage() {
             <SectionHeader id="getting-started" icon={HelpCircle} title={t("help_s1_title")} />
             <hr className="border-slate-200 mb-6" />
             <P>{t("help_s1_intro")}</P>
+            <Hero caption={t("help_fig_hero")} />
             <P><Bold>{t("help_s1_roles_heading")}</Bold></P>
             <Ul items={[t("help_s1_role_admin"), t("help_s1_role_staff"), t("help_s1_role_ict"), t("help_s1_role_leader")]} />
           </section>
@@ -147,6 +218,7 @@ export default function HelpPage() {
             <SectionHeader id="policies" icon={FileSignature} title={t("help_s11_title")} />
             <hr className="border-slate-200 mb-6" />
             <P>{t("help_s11_intro")}</P>
+            <Figure caption={t("help_fig_policy")}><Shot name="policy" /></Figure>
             <Ol items={[t("help_s11_step1"), t("help_s11_step2"), t("help_s11_step3")]} />
             <P>{t("help_s11_note")}</P>
           </section>
@@ -155,6 +227,7 @@ export default function HelpPage() {
             <SectionHeader id="dashboard" icon={LayoutDashboard} title={t("help_s2_title")} />
             <hr className="border-slate-200 mb-6" />
             <P>{t("help_s2_intro")}</P>
+            <Figure caption={t("help_fig_dashboard")}><Shot name="dashboard" /></Figure>
             <Ul items={[t("help_s2_kpi1"), t("help_s2_kpi2"), t("help_s2_kpi3"), t("help_s2_kpi4")]} />
             <P>{t("help_s2_outro")}</P>
           </section>
@@ -162,6 +235,7 @@ export default function HelpPage() {
           <section>
             <SectionHeader id="register-asset" icon={Plus} title={t("help_s3_title")} />
             <hr className="border-slate-200 mb-6" />
+            <Figure caption={t("help_fig_asset_new")}><Shot name="asset-new" /></Figure>
             <Ol items={[
               t("help_s3_step1"), t("help_s3_step2"), t("help_s3_step3"),
               t("help_s3_step4"), t("help_s3_step5"),
@@ -172,6 +246,7 @@ export default function HelpPage() {
             <SectionHeader id="find-filter" icon={Search} title={t("help_s4_title")} />
             <hr className="border-slate-200 mb-6" />
             <P>{t("help_s4_intro")}</P>
+            <Figure caption={t("help_fig_assets")}><Shot name="assets" /></Figure>
             <Ul items={[t("help_s4_tip1"), t("help_s4_tip2"), t("help_s4_tip3"), t("help_s4_tip4")]} />
             <P>{t("help_s4_outro")}</P>
           </section>
@@ -180,6 +255,7 @@ export default function HelpPage() {
             <SectionHeader id="transfer" icon={ArrowLeftRight} title={t("help_s5_title")} />
             <hr className="border-slate-200 mb-6" />
             <P>{t("help_s5_intro")}</P>
+            <Pair laptop="asset-detail" phone="my-assets" caption={t("help_fig_asset_detail") + " " + t("help_fig_my_assets")} />
             <Ol items={[t("help_s5_step1"), t("help_s5_step2"), t("help_s5_step3"), t("help_s5_step4")]} />
             <P>{t("help_s5_note")}</P>
           </section>
@@ -188,15 +264,18 @@ export default function HelpPage() {
             <SectionHeader id="loans" icon={BookOpen} title={t("help_s12_title")} />
             <hr className="border-slate-200 mb-6" />
             <P>{t("help_s12_intro")}</P>
+            <Pair laptop="loans-borrow" phone="borrow-dialog" caption={t("help_fig_borrow") + " " + t("help_fig_borrow_dialog")} />
             <Ol items={[t("help_s12_step1"), t("help_s12_step2"), t("help_s12_step3"), t("help_s12_step4"), t("help_s12_step5"), t("help_s12_step6")]} />
             <P>{t("help_s12_note")}</P>
             <P><Bold>{t("help_s12_ict")}</Bold></P>
+            <Figure caption={t("help_fig_loan_detail")}><Shot name="loan-detail" /></Figure>
           </section>
 
           <section>
             <SectionHeader id="schedule" icon={CalendarDays} title={t("help_s13_title")} />
             <hr className="border-slate-200 mb-6" />
             <P>{t("help_s13_intro")}</P>
+            <Figure caption={t("help_fig_schedule")}><Shot name="schedule" /></Figure>
             <Ul items={[t("help_s13_tip1"), t("help_s13_tip2"), t("help_s13_tip3")]} />
           </section>
 
@@ -204,6 +283,7 @@ export default function HelpPage() {
             <SectionHeader id="qr" icon={ScanLine} title={t("help_s14_title")} />
             <hr className="border-slate-200 mb-6" />
             <P>{t("help_s14_intro")}</P>
+            <Figure caption={t("help_fig_scan")}><div className="max-w-[230px] mx-auto"><Shot name="scan" kind="phone" /></div></Figure>
             <Ul items={[t("help_s14_tip1"), t("help_s14_tip2"), t("help_s14_tip3")]} />
           </section>
 
@@ -211,6 +291,7 @@ export default function HelpPage() {
             <SectionHeader id="byod" icon={Laptop} title={t("help_s15_title")} />
             <hr className="border-slate-200 mb-6" />
             <P>{t("help_s15_intro")}</P>
+            <Pair laptop="byod-detail" phone="byod-sign" caption={t("help_fig_byod_detail") + " " + t("help_fig_byod_sign")} />
             <Ol items={[t("help_s15_step1"), t("help_s15_step2"), t("help_s15_step3"), t("help_s15_step4")]} />
             <P>{t("help_s15_note")}</P>
           </section>
@@ -219,6 +300,7 @@ export default function HelpPage() {
             <SectionHeader id="faults" icon={Wrench} title={t("help_s6_title")} />
             <hr className="border-slate-200 mb-6" />
             <P>{t("help_s6_intro")}</P>
+            <Figure caption={t("help_fig_faults")}><Shot name="faults" /></Figure>
             <P>{t("help_s6_workflow_heading")}</P>
             <Ul items={[t("help_s6_status1"), t("help_s6_status2"), t("help_s6_status3")]} />
             <P>{t("help_s6_actions")}</P>
@@ -228,6 +310,7 @@ export default function HelpPage() {
             <SectionHeader id="compliance" icon={ShieldCheck} title={t("help_s7_title")} />
             <hr className="border-slate-200 mb-6" />
             <P>{t("help_s7_intro")}</P>
+            <Figure caption={t("help_fig_compliance")}><Shot name="compliance" /></Figure>
             <Ul items={[t("help_s7_tip1"), t("help_s7_tip2"), t("help_s7_tip3")]} />
           </section>
 
@@ -244,6 +327,7 @@ export default function HelpPage() {
             <SectionHeader id="users" icon={Users} title={t("help_s9_title")} />
             <hr className="border-slate-200 mb-6" />
             <P>{t("help_s9_intro")}</P>
+            <Figure caption={t("help_fig_users")}><Shot name="users" /></Figure>
             <Ol items={[t("help_s9_step1"), t("help_s9_step2"), t("help_s9_step3")]} />
             <P>{t("help_s9_note")}</P>
           </section>
