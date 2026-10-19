@@ -12,5 +12,6 @@ export const canWrite = (role) => role !== "leader";
 // ICT admins manage assets only in the ICT categories of their own campus (the server enforces the same rule).
 export const ICT_CATEGORIES = ["IT Equipment", "AV Equipment", "Music Equipment"];
 export const canManageAsset = (user, asset) =>
-  isAdminRole(user?.role) ||
+  user?.role === "super_admin" ||
+  (user?.role === "admin" && !!asset && !ICT_CATEGORIES.includes(asset.category)) ||   // Admin: every asset except ICT / media
   (isCampusBound(user?.role) && !!asset && (user.role === "campus_admin" || ICT_CATEGORIES.includes(asset.category)) && !!user.campus && user.campus === (asset.campus || ""));

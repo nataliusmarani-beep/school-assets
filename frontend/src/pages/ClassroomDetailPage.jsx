@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import api, { fmtCurrency, fmtDate, formatErr } from "../lib/api";
 import { useLang } from "../context/LangContext";
 import { useAuth } from "../context/AuthContext";
-import { isAdminRole } from "../lib/roles";
+import { isManagerRole } from "../lib/roles";
 import { ownerName } from "../lib/format";
 import { Button } from "../components/ui/button";
 import HandoverDialog from "../components/assets/HandoverDialog";
@@ -16,7 +16,7 @@ export default function ClassroomDetailPage() {
   const { id } = useParams();
   const { t } = useLang();
   const { user } = useAuth();
-  const isAdmin = isAdminRole(user?.role);
+  const isAdmin = isManagerRole(user?.role);
   const [room, setRoom] = useState(null);
   const [loading, setLoading] = useState(true);
   const [hoOpen, setHoOpen] = useState(false);

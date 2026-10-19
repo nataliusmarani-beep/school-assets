@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import api, { fmtCurrency, formatErr } from "../lib/api";
 import { useLang } from "../context/LangContext";
 import { useAuth } from "../context/AuthContext";
-import { isAdminRole } from "../lib/roles";
+import { isManagerRole } from "../lib/roles";
 import { ownerName } from "../lib/format";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -20,7 +20,7 @@ const SEL = "mt-2 w-full h-10 px-3 text-sm border border-slate-300 bg-white roun
 export default function ClassroomsPage() {
   const { t } = useLang();
   const { user } = useAuth();
-  const isAdmin = isAdminRole(user?.role);
+  const isAdmin = isManagerRole(user?.role);
   const [rooms, setRooms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");

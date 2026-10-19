@@ -13,7 +13,7 @@ import {
   SelectValue,
 } from "../components/ui/select";
 import { Search, Plus, Filter, Upload, Download, CheckCircle2, XCircle, FileText, FileSpreadsheet } from "lucide-react";
-import { isAdminRole, isCampusBound } from "../lib/roles";
+import { isManagerRole, isCampusBound } from "../lib/roles";
 import { ownerName } from "../lib/format";
 import BulkTransferDialog from "../components/assets/BulkTransferDialog";
 import { campusLabel } from "../lib/campus";
@@ -324,7 +324,7 @@ function ImportModal({ onClose, onImported }) {
 export default function AssetsListPage() {
   const { t } = useLang();
   const { user } = useAuth();
-  const isAdmin = isAdminRole(user?.role);
+  const isAdmin = isManagerRole(user?.role);
   const [assets, setAssets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");

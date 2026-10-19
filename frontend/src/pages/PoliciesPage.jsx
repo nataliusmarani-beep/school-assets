@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { useLang } from "../context/LangContext";
 import { useAuth } from "../context/AuthContext";
 import api from "../lib/api";
-import { isAdminRole } from "../lib/roles";
+import { isManagerRole } from "../lib/roles";
 import {
   ScrollText, Monitor, Package, ArrowRightLeft, BookOpen,
   ShieldCheck, ChevronDown, ChevronUp, Gavel, Download, CheckCircle2,
@@ -152,7 +152,7 @@ function PolicyCard({ policy, t }) {
 function AckStatus() {
   const { t } = useLang();
   const { user } = useAuth();
-  const admin = isAdminRole(user?.role);
+  const admin = isManagerRole(user?.role);
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
 

@@ -600,9 +600,23 @@ LEADER_WRITE_ALLOWED = ("/api/auth/logout",)  # leaders are view-only, so they d
 
 
 async def admin_required(user: dict = Depends(get_current_user)) -> dict:
+    """Every admin screen: Admin, Super Admin and Campus Admin (Campus Admin is held to their own campus where a record has one)."""
+    if user.get("role") not in ADMIN_ROLES + ("campus_admin",):
+        raise HTTPException(403, "Admin access required")
+    return user
+
+
+async def whole_system_admin_required(user: dict = Depends(get_current_user)) -> dict:
+    """Actions that expose every campus at once (the full database backup)."""
     if user.get("role") not in ADMIN_ROLES:
         raise HTTPException(403, "Admin access required")
     return user
+
+
+def ensure_campus_scope(user: dict, campus: str):
+    """A Campus Admin may only touch records of their own campus; other admins are unrestricted here."""
+    if user.get("role") == "campus_admin" and (not (user.get("campus") or "") or (campus or "") != user.get("campus")):
+        raise HTTPException(403, "Anda hanya dapat mengelola data kampus Anda sendiri.")
 
 
 def is_ict_pic(user: dict, campus: str, category: str) -> bool:
@@ -622,16 +636,19 @@ async def ict_pic_required(user: dict = Depends(get_current_user)) -> dict:
 
 
 async def asset_manager_required(user: dict = Depends(get_current_user)) -> dict:
-    """Admins, plus campus-bound admins (checked per asset with ensure_asset_manager: own campus; ICT admins only ICT categories)."""
+    """Admins and campus-bound admins; every asset is checked with ensure_asset_manager (Admin: non-ICT, Campus/ICT Admin: own campus)."""
     if user.get("role") not in ADMIN_ROLES + CAMPUS_BOUND:
         raise HTTPException(403, "Admin access required")
     return user
 
 
 def ensure_asset_manager(user: dict, campus: str, category: str):
-    if user.get("role") in ADMIN_ROLES or is_ict_pic(user, campus, category):
+    role = user.get("role")
+    if role == "super_admin" or is_ict_pic(user, campus, category):
         return
-    raise HTTPException(403, "Anda hanya dapat mengelola aset di kampus Anda sendiri (ICT Admin: hanya aset ICT/media).")
+    if role == "admin" and category not in ICT_CATEGORIES:   # Admin handles every asset except ICT / media
+        return
+    raise HTTPException(403, "Akses ditolak: Admin hanya mengelola aset non-ICT; Campus Admin dan ICT Admin hanya di kampusnya sendiri.")
 
 
 async def report_reader_required(user: dict = Depends(get_current_user)) -> dict:
@@ -669,10 +686,15 @@ def _guard_campus_admin(actor: dict, role: Optional[str], campus: Optional[str],
 
 
 def _transfer_in_scope(conn, user: dict, req) -> bool:
-    if user.get("role") != "campus_admin":
+    role = user.get("role")
+    if role == "super_admin":
         return True
-    a = conn.execute("SELECT campus FROM assets WHERE id = ?", (req["asset_id"],)).fetchone()
-    return bool(a and (user.get("campus") or "") and a["campus"] == user.get("campus"))
+    a = conn.execute("SELECT campus, category FROM assets WHERE id = ?", (req["asset_id"],)).fetchone()
+    if not a:
+        return role == "admin"
+    if role == "admin":
+        return a["category"] not in ICT_CATEGORIES
+    return bool((user.get("campus") or "") and a["campus"] == user.get("campus"))
 
 
 async def super_admin_required(user: dict = Depends(get_current_user)) -> dict:
@@ -2305,6 +2327,10 @@ async def bulk_import_assets(
             errs.append(f'asset_tag "{tag}" already exists in the database')
         if tag:
             seen_tags.add(tag)
+        try:
+            ensure_asset_manager(user, (row.get("campus") or "").strip(), (row.get("category") or "").strip())
+        except HTTPException as e:
+            errs.append(e.detail)
         preview.append({
             "row": i,
             "name": (row.get("name") or "").strip(),
@@ -2436,7 +2462,7 @@ async def update_asset(aid: str, body: AssetUpdate, user: dict = Depends(asset_m
     updates = {k: v for k, v in body.model_dump(exclude_none=True).items()}
     if not updates:
         raise HTTPException(400, "No fields to update")
-    if user["role"] in CAMPUS_BOUND:
+    if user["role"] != "super_admin":
         conn = get_conn()
         cur = conn.execute("SELECT campus, category FROM assets WHERE id = ?", (aid,)).fetchone()
         conn.close()
@@ -2571,7 +2597,7 @@ async def create_fault(body: FaultIn, user: dict = Depends(get_current_user)):
 @api.put("/faults/{fid}")
 async def update_fault(fid: str, body: FaultUpdate, user: dict = Depends(asset_manager_required)):
     updates = {k: v for k, v in body.model_dump(exclude_none=True).items()}
-    if user["role"] in CAMPUS_BOUND:
+    if user["role"] != "super_admin":
         conn = get_conn()
         fa = conn.execute("SELECT a.campus, a.category FROM faults f JOIN assets a ON a.id = f.asset_id WHERE f.id = ?", (fid,)).fetchone()
         conn.close()
@@ -2618,9 +2644,30 @@ async def list_compliance(user: dict = Depends(get_current_user)):
     return items
 
 
+def _compliance_scope(conn, user: dict, asset_id: Optional[str] = None, cid: Optional[str] = None):
+    """A Campus Admin only handles compliance items tied to an asset of their own campus."""
+    if user.get("role") != "campus_admin":
+        return
+    own = conn is None
+    conn = conn or get_conn()
+    if cid:
+        row = conn.execute("SELECT asset_id FROM compliance WHERE id = ?", (cid,)).fetchone()
+        asset_id = row["asset_id"] if row else None
+        if not row:
+            conn.close() if own else None
+            return
+    a = conn.execute("SELECT campus FROM assets WHERE id = ?", (asset_id,)).fetchone() if asset_id else None
+    if own:
+        conn.close()
+    if not a:
+        raise HTTPException(403, "Campus Admin hanya dapat mengelola kepatuhan untuk aset di kampusnya.")
+    ensure_campus_scope(user, a["campus"])
+
+
 @api.post("/compliance")
-async def create_compliance(body: ComplianceIn, _: dict = Depends(admin_required)):
+async def create_compliance(body: ComplianceIn, user: dict = Depends(admin_required)):
     conn = get_conn()
+    _compliance_scope(conn, user, body.asset_id)
     cid = str(uuid.uuid4())
     ts = now_iso()
     conn.execute("""
@@ -2636,8 +2683,9 @@ async def create_compliance(body: ComplianceIn, _: dict = Depends(admin_required
 
 
 @api.put("/compliance/{cid}")
-async def update_compliance(cid: str, body: ComplianceUpdate, _: dict = Depends(admin_required)):
+async def update_compliance(cid: str, body: ComplianceUpdate, user: dict = Depends(admin_required)):
     updates = {k: v for k, v in body.model_dump(exclude_none=True).items()}
+    _compliance_scope(None, user, cid=cid)
     if updates.get("status") == "completed" and not updates.get("completed_date"):
         updates["completed_date"] = now_iso()
     set_clause = ", ".join(f"{k} = ?" for k in updates)
@@ -2654,7 +2702,8 @@ async def update_compliance(cid: str, body: ComplianceUpdate, _: dict = Depends(
 
 
 @api.delete("/compliance/{cid}")
-async def delete_compliance(cid: str, _: dict = Depends(admin_required)):
+async def delete_compliance(cid: str, user: dict = Depends(admin_required)):
+    _compliance_scope(None, user, cid=cid)
     conn = get_conn()
     conn.execute("DELETE FROM compliance WHERE id = ?", (cid,))
     conn.commit()
@@ -3401,6 +3450,10 @@ async def bulk_assign(body: BulkAssignIn, user: dict = Depends(admin_required)):
         if not r:
             skipped.append({"asset_id": aid, "reason": "not_found"}); continue
         asset = row_to_dict(r)
+        try:
+            ensure_asset_manager(user, asset["campus"], asset["category"])
+        except HTTPException:
+            skipped.append({"asset_id": aid, "name": asset["name"], "reason": "forbidden"}); continue
         if asset["status"] in INACTIVE_STATUSES:
             skipped.append({"asset_id": aid, "name": asset["name"], "reason": "inactive"}); continue
         try:
@@ -3708,7 +3761,7 @@ async def report_ownership(_: dict = Depends(report_reader_required)):
 
 
 @api.get("/backup")
-async def backup_db(user: dict = Depends(admin_required)):
+async def backup_db(user: dict = Depends(whole_system_admin_required)):
     if not DB_PATH.exists():
         raise HTTPException(404, "Database file not found")
     return FileResponse(
@@ -5663,8 +5716,17 @@ async def list_classrooms(user: dict = Depends(get_current_user)):
     return out
 
 
+def _room_scope(conn, user: dict, room):
+    try:
+        ensure_campus_scope(user, room["campus"])
+    except HTTPException:
+        conn.close()
+        raise
+
+
 @api.post("/classrooms")
-async def create_classroom(body: ClassroomIn, _: dict = Depends(admin_required)):
+async def create_classroom(body: ClassroomIn, user: dict = Depends(admin_required)):
+    ensure_campus_scope(user, body.campus or "")
     name = " ".join((body.name or "").split())
     if not name:
         raise HTTPException(400, "Nama kelas wajib diisi")
@@ -5687,9 +5749,10 @@ async def create_classroom(body: ClassroomIn, _: dict = Depends(admin_required))
 
 
 @api.put("/classrooms/{cid}")
-async def update_classroom(cid: str, body: ClassroomUpdateIn, _: dict = Depends(admin_required)):
+async def update_classroom(cid: str, body: ClassroomUpdateIn, user: dict = Depends(admin_required)):
     conn = get_conn()
     room = _get_room(conn, cid)
+    _room_scope(conn, user, room)
     ts = now_iso()
     if body.name is not None:
         name = " ".join(body.name.split())
@@ -5722,9 +5785,10 @@ async def update_classroom(cid: str, body: ClassroomUpdateIn, _: dict = Depends(
 
 
 @api.delete("/classrooms/{cid}")
-async def delete_classroom(cid: str, _: dict = Depends(admin_required)):
+async def delete_classroom(cid: str, user: dict = Depends(admin_required)):
     conn = get_conn()
     room = _get_room(conn, cid)
+    _room_scope(conn, user, room)
     if _room_assets(conn, room):
         conn.close()
         raise HTTPException(409, "Kelas masih memiliki aset. Pindahkan asetnya dulu.")
@@ -5761,6 +5825,7 @@ async def classroom_detail(cid: str, user: dict = Depends(get_current_user)):
 async def classroom_handover(cid: str, body: ClassHandoverIn, user: dict = Depends(admin_required)):
     conn = get_conn()
     room = _get_room(conn, cid)
+    _room_scope(conn, user, room)
     if _active_handover(conn, cid):
         conn.close()
         raise HTTPException(409, "Kelas ini masih punya serah terima yang belum selesai")
@@ -5802,9 +5867,9 @@ def _close_assignments_of(conn, h: dict, ts: str):
 
 
 @api.post("/classrooms/{cid}/handover/cancel")
-async def classroom_handover_cancel(cid: str, _: dict = Depends(admin_required)):
+async def classroom_handover_cancel(cid: str, user: dict = Depends(admin_required)):
     conn = get_conn()
-    _get_room(conn, cid)
+    _room_scope(conn, user, _get_room(conn, cid))
     h = _active_handover(conn, cid)
     if not h:
         conn.close()
@@ -5821,9 +5886,10 @@ async def classroom_handover_cancel(cid: str, _: dict = Depends(admin_required))
 
 
 @api.post("/classrooms/{cid}/resolve-discrepancy")
-async def classroom_resolve(cid: str, body: ResolveIn, _: dict = Depends(admin_required)):
+async def classroom_resolve(cid: str, body: ResolveIn, user: dict = Depends(admin_required)):
     conn = get_conn()
     room = _get_room(conn, cid)
+    _room_scope(conn, user, room)
     ids = {a["id"] for a in _room_assets(conn, room)}
     n = 0
     for aid in body.asset_ids:
@@ -5841,10 +5907,11 @@ class SetKindIn(BaseModel):
 
 
 @api.post("/classrooms/{cid}/set-kind")
-async def classroom_set_kind(cid: str, body: SetKindIn, _: dict = Depends(admin_required)):
+async def classroom_set_kind(cid: str, body: SetKindIn, user: dict = Depends(admin_required)):
     """Mark assets of this room as class assets (follow the room) or personal (stay with their holder)."""
     conn = get_conn()
     room = _get_room(conn, cid)
+    _room_scope(conn, user, room)
     in_room = {a["id"]: a for a in _room_assets(conn, room)}
     changed, skipped = 0, []
     for aid in dict.fromkeys(body.asset_ids):

@@ -58,7 +58,7 @@ def test_cannot_borrow_before_accepting_policy(client, make_user, db):
 
 def test_cannot_assign_to_user_without_policy(client, make_user, db):
     aid = _shared_asset(db)
-    admin, unsigned, signed = make_user("admin"), make_user("staff", accepted=False), make_user("staff")
+    admin, unsigned, signed = make_user("super_admin"), make_user("staff", accepted=False), make_user("staff")
     r = client.post(f"/api/assets/{aid}/transfer", headers=auth(admin), json={"new_owner_name": "x", "new_owner_user_id": unsigned["id"]})
     assert r.status_code == 403 and "belum menyetujui" in r.json()["detail"]
     r = client.post("/api/assignments/bulk", headers=auth(admin), json={"asset_ids": [aid], "to_user_id": signed["id"], "kind": "personal"})

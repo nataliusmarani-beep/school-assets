@@ -80,7 +80,7 @@ export default function AppLayout({ children }) {
     return () => clearInterval(interval);
   }, [user]);
 
-  const visibleLinks = NAV_LINKS.filter((l) => (l.roles ? l.roles.includes(user?.role) : !l.adminOnly || isAdminRole(user?.role)));
+  const visibleLinks = NAV_LINKS.filter((l) => (l.roles ? l.roles.includes(user?.role) : !l.adminOnly || isManagerRole(user?.role)));
 
   const handleBackup = async () => {
     setBacking(true);

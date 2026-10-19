@@ -122,3 +122,28 @@ def test_campus_admin_gets_loan_emails(make_user, db):
     assert "ca@example.com" in server.loan_manager_emails(db, "YPJ Kuala Kencana", "IT Equipment")
     assert "ca@example.com" in server.loan_manager_emails(db, "YPJ Kuala Kencana", "Furniture")
     assert "ca2@example.com" not in server.loan_manager_emails(db, "YPJ Kuala Kencana", "IT Equipment")
+
+
+def test_admin_manages_only_non_ict_assets(client, make_user, db):
+    for aid, cat in [("n1", "Furniture"), ("n2", "IT Equipment")]:
+        db.execute("INSERT INTO assets (id,name,asset_tag,category,campus,location,purchase_price,purchase_date,created_at,updated_at) VALUES (?,?,?,?,?,?,0,'2026-01-01','t','t')",
+                   (aid, aid, f"T-{aid}", cat, "YPJ Kuala Kencana", "Lab"))
+    db.commit()
+    admin, sup = make_user("admin"), make_user("super_admin", "")
+    assert client.put("/api/assets/n1", headers=auth(admin), json={"name": "x"}).status_code == 200
+    assert client.put("/api/assets/n2", headers=auth(admin), json={"name": "x"}).status_code == 403
+    assert client.delete("/api/assets/n2", headers=auth(admin)).status_code == 403
+    assert client.put("/api/assets/n2", headers=auth(sup), json={"name": "x"}).status_code == 200
+
+
+def test_campus_admin_gets_admin_screens_but_own_campus_only(client, make_user, db):
+    db.execute("INSERT INTO classrooms (id,name,campus,room_type,created_at,updated_at) VALUES ('r1','Kelas A','YPJ TPRA','kelas','t','t')")
+    db.commit()
+    ca = make_user("campus_admin", "YPJ Kuala Kencana")
+    h = auth(ca)
+    assert client.get("/api/activity", headers=h).status_code == 200
+    assert client.post("/api/classrooms", headers=h, json={"name": "Kelas B", "campus": "YPJ Kuala Kencana"}).status_code == 200
+    assert client.post("/api/classrooms", headers=h, json={"name": "Kelas C", "campus": "YPJ TPRA"}).status_code == 403
+    assert client.delete("/api/classrooms/r1", headers=h).status_code == 403
+    assert client.get("/api/backup", headers=h).status_code == 403
+    assert client.post("/api/users", headers=h, json={"email": "z@example.com", "password": "secret123", "name": "Z", "role": "super_admin", "campus": "YPJ Kuala Kencana"}).status_code == 403

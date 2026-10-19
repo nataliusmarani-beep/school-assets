@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
 import { Plus, ShieldCheck, Trash2 } from "lucide-react";
-import { isAdminRole } from "../lib/roles";
+import { isManagerRole } from "../lib/roles";
 
 const STATUS_STYLES = {
   pending: "bg-amber-50 text-amber-700 border-amber-200",
@@ -21,7 +21,7 @@ const STATUS_STYLES = {
 export default function CompliancePage() {
   const { t } = useLang();
   const { user } = useAuth();
-  const isAdmin = isAdminRole(user?.role);
+  const isAdmin = isManagerRole(user?.role);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);

@@ -4,7 +4,7 @@ import { Button } from "../components/ui/button";
 import { toast } from "sonner";
 import { useLang } from "../context/LangContext";
 import { useAuth } from "../context/AuthContext";
-import { isAdminRole } from "../lib/roles";
+import { isManagerRole } from "../lib/roles";
 import {
   Boxes, CircleDollarSign, TrendingDown, Wrench,
   ShieldAlert, CalendarClock, ArrowUpRight, Mail,
@@ -31,7 +31,7 @@ function MetricCard({ label, value, hint, icon: Icon, testid }) {
 export default function DashboardPage() {
   const { t, lang, fx } = useLang();
   const { user } = useAuth();
-  const isAdmin = isAdminRole(user?.role);
+  const isAdmin = isManagerRole(user?.role);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
