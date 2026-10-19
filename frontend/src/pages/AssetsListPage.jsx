@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import api, { fmtCurrency, fmtDate } from "../lib/api";
 import { useLang } from "../context/LangContext";
@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../components/ui/select";
-import { Search, Plus, Filter, Upload, Download, CheckCircle2, XCircle, FileText, FileSpreadsheet } from "lucide-react";
+import { Search, Plus, Filter, Upload, Download, CheckCircle2, XCircle, FileText, FileSpreadsheet, ChevronRight, ChevronDown } from "lucide-react";
 import { isManagerRole, isCampusBound } from "../lib/roles";
 import { ownerName } from "../lib/format";
 import BulkTransferDialog from "../components/assets/BulkTransferDialog";
@@ -361,6 +361,21 @@ export default function AssetsListPage() {
 
   const selectable = assets.filter((a) => !a.pending_assignment);
 
+  // Accordion: assets grouped by category, each group collapsible with its asset count.
+  // Groups stay collapsed by default; searching or filtering opens them so the matches are visible.
+  const [openCats, setOpenCats] = useState(new Set());
+  const filtering = !!search || category !== "all" || campus !== "all" || status !== "all";
+  const catLabel = (c) => { const i = CATEGORY_VALUES.indexOf(c); return i >= 0 ? t(CATEGORY_KEYS[i]) : (c || "—"); };
+  const groups = (() => {
+    const by = new Map();
+    assets.forEach((a) => { const k = a.category || ""; if (!by.has(k)) by.set(k, []); by.get(k).push(a); });
+    const order = (k) => { const i = CATEGORY_VALUES.indexOf(k); return i < 0 ? 999 : i; };
+    return [...by.entries()].sort((x, y) => order(x[0]) - order(y[0])).map(([key, items]) => ({ key, items }));
+  })();
+  const isOpen = (key) => filtering || openCats.has(key);
+  const toggleCat = (key) => setOpenCats((s) => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n; });
+  const allOpen = groups.length > 0 && groups.every((g) => openCats.has(g.key));
+
   const load = () => {
     setLoading(true);
     const params = {};
@@ -487,6 +502,16 @@ export default function AssetsListPage() {
         </div>
       )}
 
+      {groups.length > 1 && (
+        <div className="mb-2 flex items-center justify-between text-xs text-slate-500">
+          <span>{groups.length} {t("asset_categories")}</span>
+          <button type="button" className="text-blue-800 hover:underline disabled:opacity-40" disabled={filtering}
+            onClick={() => setOpenCats(allOpen ? new Set() : new Set(groups.map((g) => g.key)))} data-testid="toggle-all-groups">
+            {allOpen || filtering ? t("collapse_all") : t("expand_all")}
+          </button>
+        </div>
+      )}
+
       {/* Table */}
       <div className="bg-white border border-slate-200 overflow-hidden">
         <div className="overflow-x-auto">
@@ -520,56 +545,79 @@ export default function AssetsListPage() {
                     <div className="text-xs">{t("no_assets_sub")}</div>
                   </td>
                 </tr>
-              ) : assets.map((a) => {
-                const cls = STATUS_CLS[a.status] || STATUS_CLS.active;
-                const dot = CAMPUS_DOT[a.campus];
+              ) : groups.map((g) => {
+                const open = isOpen(g.key);
+                const sel = g.items.filter((a) => !a.pending_assignment);
                 return (
-                  <tr key={a.id} className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer" data-testid={`asset-row-${a.id}`}>
-                    {isAdmin && (
-                      <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
-                        <input type="checkbox" data-testid={`asset-select-${a.id}`} checked={selected.has(a.id)} disabled={!!a.pending_assignment}
-                          title={a.pending_assignment ? t("pending_banner").replace("{name}", a.pending_assignment.to_name) : undefined}
-                          onChange={() => setSelected((s) => { const n = new Set(s); n.has(a.id) ? n.delete(a.id) : n.add(a.id); return n; })} />
-                      </td>
-                    )}
-                    <td className="py-3 px-4 font-mono text-xs text-slate-600">
-                      <Link to={`/assets/${a.id}`} className="hover:text-blue-800">{a.asset_tag}</Link>
-                    </td>
-                    <td className="py-3 px-4">
-                      <Link to={`/assets/${a.id}`} className="font-medium text-slate-900 hover:text-blue-800">{a.name}</Link>
-                      <div className="text-xs text-slate-500 mt-0.5">{a.serial_number || "—"}</div>
-                    </td>
-                    <td className="py-3 px-4 text-slate-700">{a.category}</td>
-                    <td className="py-3 px-4 text-slate-700">
-                      {a.campus ? (
-                        <span className="flex items-center gap-1.5">
-                          <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dot || "bg-slate-400"}`} />
-                          {campusLabel(a.campus)}
-                        </span>
-                      ) : "—"}
-                    </td>
-                    <td className="py-3 px-4 text-slate-700">{a.location}</td>
-                    <td className="py-3 px-4 text-slate-700">
-                      {ownerName(a.assigned_to_name) || "—"}
-                      {a.handover_flag === "discrepancy" && (
-                        <div className="mt-1"><span className="inline-flex items-center px-2 py-0.5 text-xs border bg-rose-50 text-rose-700 border-rose-200">{t("cr_discrepancy")}</span></div>
-                      )}
-                      {a.pending_assignment && (
-                        <div className="mt-1" data-testid={`awaiting-${a.id}`}>
-                          <span className="inline-flex items-center px-2 py-0.5 text-xs border bg-amber-50 text-amber-800 border-amber-300"
-                            title={t("pending_banner").replace("{name}", a.pending_assignment.to_name)}>
-                            {t("awaiting_confirmation")} · {ownerName(a.pending_assignment.to_name)}
-                          </span>
+                  <Fragment key={g.key || "none"}>
+                    <tr className="bg-slate-50 border-b border-slate-200 cursor-pointer select-none hover:bg-slate-100"
+                        onClick={() => toggleCat(g.key)} data-testid={`asset-group-${g.key}`}>
+                      <td colSpan={isAdmin ? 9 : 8} className="py-2.5 px-4">
+                        <div className="flex items-center gap-3">
+                          {isAdmin && (
+                            <input type="checkbox" onClick={(e) => e.stopPropagation()}
+                              checked={sel.length > 0 && sel.every((a) => selected.has(a.id))}
+                              onChange={(e) => setSelected((s0) => { const n = new Set(s0); sel.forEach((a) => e.target.checked ? n.add(a.id) : n.delete(a.id)); return n; })} />
+                          )}
+                          {open ? <ChevronDown className="w-4 h-4 text-slate-500" /> : <ChevronRight className="w-4 h-4 text-slate-500" />}
+                          <span className="font-medium text-slate-900">{catLabel(g.key)}</span>
+                          <span className="text-xs text-slate-600 bg-white border border-slate-200 px-2 py-0.5">{g.items.length} {g.items.length !== 1 ? t("count_assets") : t("count_asset")}</span>
                         </div>
-                      )}
-                    </td>
-                    <td className="py-3 px-4">
-                      <span className={`inline-flex items-center px-2 py-0.5 text-xs border ${cls}`}>
-                        {t(STATUS_KEYS[a.status] || "status_active")}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-slate-700 text-sm">{a.asset_type || "—"}</td>
-                  </tr>
+                      </td>
+                    </tr>
+                    {open && g.items.map((a) => {
+                const cls = STATUS_CLS[a.status] || STATUS_CLS.active;
+                    const dot = CAMPUS_DOT[a.campus];
+                    return (
+                      <tr key={a.id} className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer" data-testid={`asset-row-${a.id}`}>
+                        {isAdmin && (
+                          <td className="py-3 px-4" onClick={(e) => e.stopPropagation()}>
+                            <input type="checkbox" data-testid={`asset-select-${a.id}`} checked={selected.has(a.id)} disabled={!!a.pending_assignment}
+                              title={a.pending_assignment ? t("pending_banner").replace("{name}", a.pending_assignment.to_name) : undefined}
+                              onChange={() => setSelected((s) => { const n = new Set(s); n.has(a.id) ? n.delete(a.id) : n.add(a.id); return n; })} />
+                          </td>
+                        )}
+                        <td className="py-3 px-4 font-mono text-xs text-slate-600">
+                          <Link to={`/assets/${a.id}`} className="hover:text-blue-800">{a.asset_tag}</Link>
+                        </td>
+                        <td className="py-3 px-4">
+                          <Link to={`/assets/${a.id}`} className="font-medium text-slate-900 hover:text-blue-800">{a.name}</Link>
+                          <div className="text-xs text-slate-500 mt-0.5">{a.serial_number || "—"}</div>
+                        </td>
+                        <td className="py-3 px-4 text-slate-700">{a.category}</td>
+                        <td className="py-3 px-4 text-slate-700">
+                          {a.campus ? (
+                            <span className="flex items-center gap-1.5">
+                              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dot || "bg-slate-400"}`} />
+                              {campusLabel(a.campus)}
+                            </span>
+                          ) : "—"}
+                        </td>
+                        <td className="py-3 px-4 text-slate-700">{a.location}</td>
+                        <td className="py-3 px-4 text-slate-700">
+                          {ownerName(a.assigned_to_name) || "—"}
+                          {a.handover_flag === "discrepancy" && (
+                            <div className="mt-1"><span className="inline-flex items-center px-2 py-0.5 text-xs border bg-rose-50 text-rose-700 border-rose-200">{t("cr_discrepancy")}</span></div>
+                          )}
+                          {a.pending_assignment && (
+                            <div className="mt-1" data-testid={`awaiting-${a.id}`}>
+                              <span className="inline-flex items-center px-2 py-0.5 text-xs border bg-amber-50 text-amber-800 border-amber-300"
+                                title={t("pending_banner").replace("{name}", a.pending_assignment.to_name)}>
+                                {t("awaiting_confirmation")} · {ownerName(a.pending_assignment.to_name)}
+                              </span>
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3 px-4">
+                          <span className={`inline-flex items-center px-2 py-0.5 text-xs border ${cls}`}>
+                            {t(STATUS_KEYS[a.status] || "status_active")}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-slate-700 text-sm">{a.asset_type || "—"}</td>
+                      </tr>
+                    );
+                        })}
+                  </Fragment>
                 );
               })}
             </tbody>

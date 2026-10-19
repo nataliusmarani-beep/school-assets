@@ -72,6 +72,9 @@ export const translations = {
     last_refreshed: "Last refreshed",
     count_asset: "asset",
     count_assets: "assets",
+    asset_categories: "categories",
+    expand_all: "Expand all",
+    collapse_all: "Collapse all",
 
     // Status labels
     status_active: "Active",
@@ -1427,6 +1430,9 @@ export const translations = {
     last_refreshed: "Diperbarui",
     count_asset: "aset",
     count_assets: "aset",
+    asset_categories: "kategori",
+    expand_all: "Buka semua",
+    collapse_all: "Tutup semua",
 
     // Status labels
     status_active: "Aktif",
