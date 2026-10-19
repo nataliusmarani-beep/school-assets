@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import api, { formatErr } from "../../lib/api";
 import { useLang } from "../../context/LangContext";
 import { useAuth } from "../../context/AuthContext";
+import { isCampusBound } from "../../lib/roles";
 import { toast } from "sonner";
 import { campusLabel } from "../../lib/campus";
 import { fmtDateTime } from "./LoanForms";
@@ -26,7 +27,7 @@ export default function LoanDashboard() {
   const { user } = useAuth();
   const [d, setD] = useState(null);
   const [campus, setCampus] = useState("");
-  const canPickCampus = user?.role !== "ict_admin";
+  const canPickCampus = !isCampusBound(user?.role);
 
   useEffect(() => {
     const load = () => api.get("/loans/dashboard", { params: { campus: campus || undefined } }).then((r) => setD(r.data)).catch((e) => toast.error(formatErr(e)));

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import api, { formatErr } from "../lib/api";
 import { useLang } from "../context/LangContext";
 import { useAuth } from "../context/AuthContext";
+import { isCampusBound } from "../lib/roles";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -325,7 +326,7 @@ export default function LoanSetupPage() {
   const { t } = useLang();
   const { user } = useAuth();
   const own = user?.campus && CAMPUSES.includes(user.campus) ? user.campus : "";
-  const fixedCampus = user?.role === "ict_admin";
+  const fixedCampus = isCampusBound(user?.role);
   const [campus, setCampus] = useState(own || CAMPUSES[0]);
   const [tab, setTab] = useState("resources");
   const [resources, setResources] = useState([]);

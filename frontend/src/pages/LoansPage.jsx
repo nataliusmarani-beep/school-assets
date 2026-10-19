@@ -232,9 +232,9 @@ export default function LoansPage() {
   const [params, setParams] = useSearchParams();
   const role = user?.role;
   const writer = canWrite(role);
-  const manager = ["super_admin", "admin", "ict_admin"].includes(role);
+  const manager = ["super_admin", "admin", "campus_admin", "ict_admin"].includes(role);
   const viewAll = ["super_admin", "leader"].includes(role);
-  const dashboard = ["super_admin", "admin", "ict_admin", "leader"].includes(role);
+  const dashboard = ["super_admin", "admin", "campus_admin", "ict_admin", "leader"].includes(role);
   const tabs = useMemo(() => [
     ...(dashboard ? [{ id: "dashboard", label: "ln_tab_dashboard" }] : []),
     ...(writer ? [{ id: "borrow", label: "ln_tab_borrow" }, { id: "mine", label: "ln_tab_mine" }] : []),

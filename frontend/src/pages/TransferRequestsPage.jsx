@@ -8,7 +8,7 @@ import { Textarea } from "../components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { toast } from "sonner";
 import { ArrowRightLeft, CheckCircle2, XCircle } from "lucide-react";
-import { isAdminRole } from "../lib/roles";
+import { isManagerRole } from "../lib/roles";
 import { ownerName } from "../lib/format";
 
 const STATUS_META = {
@@ -96,7 +96,7 @@ function RequestCard({ req, t, isAdmin, onApprove, onReject }) {
 export default function TransferRequestsPage() {
   const { t } = useLang();
   const { user } = useAuth();
-  const isAdmin = isAdminRole(user?.role);
+  const isAdmin = isManagerRole(user?.role);
 
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);

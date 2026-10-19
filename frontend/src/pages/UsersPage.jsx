@@ -10,7 +10,7 @@ import { toast } from "sonner";
 import { useAuth } from "../context/AuthContext";
 import { Plus, Trash2, Pencil, Upload, Mail, KeyRound, Search, X } from "lucide-react";
 import BulkUsersDialog from "../components/BulkUsersDialog";
-import { isAdminRole, isSuperAdmin } from "../lib/roles";
+import { isAdminRole, isSuperAdmin, isCampusAdmin } from "../lib/roles";
 import { campusLabel } from "../lib/campus";
 
 const EMPTY_FORM = { name: "", email: "", password: "", role: "staff", department: "", campus: "", supervisor_name: "", supervisor: "", employee_id: "", phone: "" };
@@ -80,7 +80,7 @@ function SupervisorNameField({ value, onChangeName, onChangeEmail, users }) {
 }
 
 /* ── FormFields lifted out of UsersPage so React never remounts it on re-render ── */
-function FormFields({ values, set, isEdit, t, allNames, allDepts, users, canSuper }) {
+function FormFields({ values, set, isEdit, t, allNames, allDepts, users, canSuper, limited = false, fixedCampus = "" }) {
   return (
     <div className="space-y-4">
       <div><Label className="label-mono">{t("full_name")}</Label>
@@ -114,9 +114,10 @@ function FormFields({ values, set, isEdit, t, allNames, allDepts, users, canSupe
             <SelectTrigger className="mt-2 rounded-none" data-testid="user-role-select"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="staff">{t("staff")}</SelectItem>
-              <SelectItem value="admin">{t("admin")}</SelectItem>
+              {!limited && <SelectItem value="admin">{t("admin")}</SelectItem>}
+              {!limited && <SelectItem value="campus_admin">{t("campus_admin")}</SelectItem>}
               <SelectItem value="ict_admin">{t("ict_admin")}</SelectItem>
-              <SelectItem value="leader">{t("leader")}</SelectItem>
+              {!limited && <SelectItem value="leader">{t("leader")}</SelectItem>}
               {(canSuper || values.role === "super_admin") && <SelectItem value="super_admin">{t("super_admin")}</SelectItem>}
             </SelectContent>
           </Select></div>
@@ -126,7 +127,7 @@ function FormFields({ values, set, isEdit, t, allNames, allDepts, users, canSupe
       </div>
 
       <div><Label className="label-mono">{t("col_campus")}</Label>
-        <Select value={values.campus} onValueChange={(v) => set({ ...values, campus: v })}>
+        <Select value={fixedCampus || values.campus} disabled={!!fixedCampus} onValueChange={(v) => set({ ...values, campus: v })}>
           <SelectTrigger className="mt-2 rounded-none"><SelectValue placeholder={t("select_campus")} /></SelectTrigger>
           <SelectContent>
             <SelectItem value="YPJ Kuala Kencana">YPJ Kuala Kencana</SelectItem>
@@ -160,6 +161,8 @@ function FormFields({ values, set, isEdit, t, allNames, allDepts, users, canSupe
 export default function UsersPage() {
   const { t } = useLang();
   const { user } = useAuth();
+  const limited = isCampusAdmin(user?.role);   // Campus Admin: own campus, staff / ICT Admin accounts only
+  const ownCampus = limited ? (user?.campus || "") : "";
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
@@ -172,14 +175,14 @@ export default function UsersPage() {
 
   const load = () => {
     setLoading(true);
-    api.get("/users").then((r) => setUsers(r.data)).finally(() => setLoading(false));
+    api.get("/users").then((r) => setUsers(limited ? r.data.filter((u) => u.campus === ownCampus) : r.data)).finally(() => setLoading(false));
   };
   useEffect(() => { load(); }, []);
 
   const submit = async (e) => {
     e.preventDefault();
     try {
-      await api.post("/users", form);
+      await api.post("/users", limited ? { ...form, campus: ownCampus } : form);
       toast.success(t("user_created_ok"));
       setOpen(false);
       setForm(EMPTY_FORM);
@@ -203,7 +206,7 @@ export default function UsersPage() {
 
   const submitEdit = async (e) => {
     e.preventDefault();
-    const payload = { ...editForm };
+    const payload = limited ? { ...editForm, campus: ownCampus } : { ...editForm };
     if (!payload.password) delete payload.password;
     try {
       await api.put(`/users/${editTarget.id}`, payload);
@@ -237,6 +240,7 @@ export default function UsersPage() {
         .some((v) => (v || "").toLowerCase().includes(q)))
     : users;
 
+  const canEdit = (u) => !limited || ["staff", "ict_admin"].includes(u.role);
   const allNames = users.map((u) => u.name);
   const allDepts = [...new Set(users.map((u) => u.department).filter(Boolean))];
 
@@ -250,9 +254,9 @@ export default function UsersPage() {
           </h1>
         </div>
         <div className="flex items-center gap-3">
-        <Button variant="outline" className="rounded-none" onClick={() => setBulkOpen(true)} data-testid="bulk-add-user-button">
+        {!limited && <Button variant="outline" className="rounded-none" onClick={() => setBulkOpen(true)} data-testid="bulk-add-user-button">
           <Upload className="w-4 h-4 mr-2" strokeWidth={1.75} /> {t("bulk_add_users")}
-        </Button>
+        </Button>}
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
             <Button className="rounded-none bg-slate-900 hover:bg-slate-800" data-testid="add-user-button">
@@ -262,7 +266,7 @@ export default function UsersPage() {
           <DialogContent className="rounded-none max-h-[90vh] overflow-y-auto">
             <DialogHeader><DialogTitle>{t("create_user")}</DialogTitle></DialogHeader>
             <form onSubmit={submit}>
-              <FormFields values={form} set={setForm} isEdit={false} t={t} allNames={allNames} allDepts={allDepts} users={users} canSuper={isSuperAdmin(user?.role)} />
+              <FormFields values={form} set={setForm} isEdit={false} t={t} allNames={allNames} allDepts={allDepts} users={users} canSuper={isSuperAdmin(user?.role)} limited={limited} fixedCampus={ownCampus} />
               <DialogFooter className="mt-6">
                 <Button type="submit" className="rounded-none bg-slate-900" data-testid="submit-user-button">
                   {t("create_user")}
@@ -322,7 +326,7 @@ export default function UsersPage() {
                     <span className={`text-xs px-2 py-0.5 border capitalize ${
                       isSuperAdmin(u.role) ? "bg-amber-50 text-amber-800 border-amber-300 font-medium"
                         : isAdminRole(u.role) ? "bg-blue-50 text-blue-800 border-blue-200" : "bg-slate-100 text-slate-600 border-slate-200"
-                    }`} data-testid={`role-badge-${u.id}`}>{isSuperAdmin(u.role) ? t("super_admin") : isAdminRole(u.role) ? t("admin") : ["ict_admin", "leader"].includes(u.role) ? t(u.role) : t("staff")}</span>
+                    }`} data-testid={`role-badge-${u.id}`}>{isSuperAdmin(u.role) ? t("super_admin") : isAdminRole(u.role) ? t("admin") : ["ict_admin", "campus_admin", "leader"].includes(u.role) ? t(u.role) : t("staff")}</span>
                   </td>
                   <td className="py-3 px-4 text-slate-700">{u.department || "—"}</td>
                   <td className="py-3 px-4 text-slate-700">
@@ -336,17 +340,19 @@ export default function UsersPage() {
                   <td className="py-3 px-4 text-slate-500 text-xs">{fmtDate(u.created_at)}</td>
                   <td className="py-3 px-4 text-right">
                     <div className="flex items-center justify-end gap-2">
+                      {canEdit(u) && <>
                       <button onClick={() => sendLink(u, "invite")} title={t("send_invitation")} className="text-slate-400 hover:text-blue-700" data-testid={`invite-user-${u.id}`}>
                         <Mail className="w-4 h-4" />
                       </button>
                       <button onClick={() => sendLink(u, "reset")} title={t("reset_password")} className="text-slate-400 hover:text-amber-600" data-testid={`reset-user-${u.id}`}>
                         <KeyRound className="w-4 h-4" />
                       </button>
-                      {(!isSuperAdmin(u.role) || isSuperAdmin(user?.role)) && (
+                      </>}
+                      {(!isSuperAdmin(u.role) || isSuperAdmin(user?.role)) && canEdit(u) && (
                       <button onClick={() => openEdit(u)} className="text-slate-400 hover:text-slate-700" data-testid={`edit-user-${u.id}`}>
                         <Pencil className="w-4 h-4" />
                       </button>)}
-                      {u.id !== user?.id && (!isSuperAdmin(u.role) || isSuperAdmin(user?.role)) && (
+                      {u.id !== user?.id && (!isSuperAdmin(u.role) || isSuperAdmin(user?.role)) && canEdit(u) && (
                         <button onClick={() => remove(u)} className="text-rose-500 hover:text-rose-700" data-testid={`delete-user-${u.id}`}>
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -365,7 +371,7 @@ export default function UsersPage() {
         <DialogContent className="rounded-none max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>{t("edit_user")}</DialogTitle></DialogHeader>
           <form onSubmit={submitEdit}>
-            <FormFields values={editForm} set={setEditForm} isEdit={true} t={t} allNames={allNames} allDepts={allDepts} users={users} canSuper={isSuperAdmin(user?.role)} />
+            <FormFields values={editForm} set={setEditForm} isEdit={true} t={t} allNames={allNames} allDepts={allDepts} users={users} canSuper={isSuperAdmin(user?.role)} limited={limited} fixedCampus={ownCampus} />
             <DialogFooter className="mt-6">
               <Button variant="outline" className="rounded-none" type="button" onClick={() => setEditOpen(false)}>{t("cancel")}</Button>
               <Button type="submit" className="rounded-none bg-slate-900">{t("save_changes")}</Button>

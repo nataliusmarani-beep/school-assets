@@ -4,6 +4,7 @@ import QRCode from "qrcode";
 import api, { formatErr } from "../lib/api";
 import { useLang } from "../context/LangContext";
 import { useAuth } from "../context/AuthContext";
+import { isCampusBound } from "../lib/roles";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { toast } from "sonner";
@@ -45,7 +46,7 @@ export default function QrLabelsPage() {
       <h1 className="font-display text-3xl font-semibold tracking-tight text-slate-900">{t("qr_print_labels")}</h1>
       <p className="text-sm text-slate-500 mt-2">{t("qr_labels_hint")}</p>
       <div className="flex gap-3 flex-wrap items-center my-5">
-        <select className="border border-slate-200 bg-white px-3 py-2 text-sm h-10" value={campus} disabled={user?.role === "ict_admin"} onChange={(e) => setCampus(e.target.value)}>
+        <select className="border border-slate-200 bg-white px-3 py-2 text-sm h-10" value={campus} disabled={isCampusBound(user?.role)} onChange={(e) => setCampus(e.target.value)}>
           {CAMPUSES.map((c) => <option key={c} value={c}>{campusLabel(c)}</option>)}</select>
         <Input className="w-64 rounded-none" value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("ln_search")} />
         <Button variant="outline" className="rounded-none" onClick={() => setSel(new Set(shown.map((a) => a.id)))}>{t("qr_select_all")}</Button>

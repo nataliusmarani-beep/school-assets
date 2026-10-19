@@ -26,7 +26,7 @@ import {
 import { useState, useEffect } from "react";
 import api from "../../lib/api";
 import { toast } from "sonner";
-import { isAdminRole } from "../../lib/roles";
+import { isAdminRole, isManagerRole } from "../../lib/roles";
 
 const NAV_LINKS = [
   { to: "/", labelKey: "nav_dashboard", icon: LayoutDashboard, testid: "nav-dashboard" },
@@ -40,9 +40,9 @@ const NAV_LINKS = [
   { to: "/loans", labelKey: "nav_loan_requests", icon: BookOpen, testid: "nav-loans", badge: "pendingLoans" },
   { to: "/schedule", labelKey: "nav_schedule", icon: CalendarDays, testid: "nav-schedule" },
   { to: "/byod", labelKey: "nav_byod", icon: Laptop, testid: "nav-byod" },
-  { to: "/scan", labelKey: "nav_scan", icon: ScanLine, testid: "nav-scan", roles: ["super_admin", "admin", "ict_admin"] },
-  { to: "/users", labelKey: "nav_users", icon: Users, testid: "nav-users", adminOnly: true },
-  { to: "/reports", labelKey: "nav_reports", icon: BarChart3, testid: "nav-reports", roles: ["super_admin", "admin", "leader", "ict_admin"] },
+  { to: "/scan", labelKey: "nav_scan", icon: ScanLine, testid: "nav-scan", roles: ["super_admin", "admin", "campus_admin", "ict_admin"] },
+  { to: "/users", labelKey: "nav_users", icon: Users, testid: "nav-users", roles: ["super_admin", "admin", "campus_admin"] },
+  { to: "/reports", labelKey: "nav_reports", icon: BarChart3, testid: "nav-reports", roles: ["super_admin", "admin", "campus_admin", "leader", "ict_admin"] },
   { to: "/activity-logs", labelKey: "nav_activity", icon: History, testid: "nav-activity", adminOnly: true },
   { to: "/policies", labelKey: "nav_policies", icon: ScrollText, testid: "nav-policies" },
   { to: "/help", labelKey: "nav_help", icon: HelpCircle, testid: "nav-help" },
@@ -71,7 +71,7 @@ export default function AppLayout({ children }) {
   useEffect(() => {
     if (!user) return;
     const fetchCounts = () => {
-      if (isAdminRole(user.role)) api.get("/transfer-requests/pending-count").then((r) => setPendingTransfers(r.data.count)).catch(() => {});
+      if (isManagerRole(user.role)) api.get("/transfer-requests/pending-count").then((r) => setPendingTransfers(r.data.count)).catch(() => {});
       // loan badge: requests waiting for me as ICT / supervisor
       api.get("/loans/pending-count").then((r) => setPendingLoans(r.data.count)).catch(() => {});
     };

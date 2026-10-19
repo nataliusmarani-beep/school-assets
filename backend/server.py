@@ -591,7 +591,9 @@ async def get_current_user(request: Request) -> dict:
 
 
 ADMIN_ROLES = ("admin", "super_admin")  # super_admin can do everything an admin can, plus manage admin accounts
-ALL_ROLES = ("super_admin", "admin", "ict_admin", "leader", "staff")
+ALL_ROLES = ("super_admin", "admin", "campus_admin", "ict_admin", "leader", "staff")
+# campus_admin: Admin + ICT Admin for ONE campus (backs up the ICT Admin, manages that campus only). ict_admin / campus_admin are campus-bound.
+CAMPUS_BOUND = ("ict_admin", "campus_admin")
 # ict_admin: PIC of the ICT-media categories for ONE campus (loans, schedules, hand-over). leader: read-only, sees everything.
 ICT_CATEGORIES = ("IT Equipment", "AV Equipment", "Music Equipment")
 LEADER_WRITE_ALLOWED = ("/api/auth/logout",)  # leaders are view-only, so they do not sign the policy acknowledgement (see policy_status)
@@ -604,23 +606,24 @@ async def admin_required(user: dict = Depends(get_current_user)) -> dict:
 
 
 def is_ict_pic(user: dict, campus: str, category: str) -> bool:
-    """True when this user may run loans for an asset: super_admin always, ict_admin only for ICT categories on their own campus."""
+    """True when this user may run loans for an asset: super_admin always, ict_admin only for ICT categories on their own campus, campus_admin for any category on their own campus."""
     if user.get("role") == "super_admin":
         return True
-    return (user.get("role") == "ict_admin" and category in ICT_CATEGORIES
+    role = user.get("role")
+    return (role in CAMPUS_BOUND and (role == "campus_admin" or category in ICT_CATEGORIES)
             and bool(user.get("campus")) and user.get("campus") == (campus or ""))
 
 
 async def ict_pic_required(user: dict = Depends(get_current_user)) -> dict:
     """Any account that may manage ICT loans (campus/category are checked per record with is_ict_pic)."""
-    if user.get("role") not in ("super_admin", "ict_admin"):
+    if user.get("role") not in ("super_admin",) + CAMPUS_BOUND:
         raise HTTPException(403, "ICT Admin access required")
     return user
 
 
 async def asset_manager_required(user: dict = Depends(get_current_user)) -> dict:
-    """Admins, plus ICT admins (checked per asset with ensure_asset_manager: own campus, ICT categories only)."""
-    if user.get("role") not in ADMIN_ROLES + ("ict_admin",):
+    """Admins, plus campus-bound admins (checked per asset with ensure_asset_manager: own campus; ICT admins only ICT categories)."""
+    if user.get("role") not in ADMIN_ROLES + CAMPUS_BOUND:
         raise HTTPException(403, "Admin access required")
     return user
 
@@ -628,7 +631,7 @@ async def asset_manager_required(user: dict = Depends(get_current_user)) -> dict
 def ensure_asset_manager(user: dict, campus: str, category: str):
     if user.get("role") in ADMIN_ROLES or is_ict_pic(user, campus, category):
         return
-    raise HTTPException(403, "ICT Admin hanya dapat mengelola aset ICT/media di kampusnya sendiri.")
+    raise HTTPException(403, "Anda hanya dapat mengelola aset di kampus Anda sendiri (ICT Admin: hanya aset ICT/media).")
 
 
 async def report_reader_required(user: dict = Depends(get_current_user)) -> dict:
@@ -636,6 +639,40 @@ async def report_reader_required(user: dict = Depends(get_current_user)) -> dict
     if user.get("role") not in ADMIN_ROLES + ("leader",):
         raise HTTPException(403, "Akses laporan tidak diizinkan")
     return user
+
+
+async def user_manager_required(user: dict = Depends(get_current_user)) -> dict:
+    """Admins, plus Campus Admins (who may only manage staff / ICT Admin accounts of their own campus)."""
+    if user.get("role") not in ADMIN_ROLES + ("campus_admin",):
+        raise HTTPException(403, "Admin access required")
+    return user
+
+
+CAMPUS_ADMIN_MANAGES = ("staff", "ict_admin")
+
+
+def _guard_campus_admin_conn(actor: dict, target, conn):
+    try:
+        _guard_campus_admin(actor, target["role"], target["campus"])
+    except HTTPException:
+        conn.close()
+        raise
+
+
+def _guard_campus_admin(actor: dict, role: Optional[str], campus: Optional[str], *, existing: bool = False):
+    """A Campus Admin may only create / edit / remove staff and ICT Admin accounts of their own campus."""
+    if actor.get("role") != "campus_admin":
+        return
+    own = (actor.get("campus") or "").strip()
+    if not own or (campus or "").strip() != own or (role is not None and role not in CAMPUS_ADMIN_MANAGES):
+        raise HTTPException(403, "Campus Admin hanya dapat mengelola akun staff dan ICT Admin di kampusnya sendiri.")
+
+
+def _transfer_in_scope(conn, user: dict, req) -> bool:
+    if user.get("role") != "campus_admin":
+        return True
+    a = conn.execute("SELECT campus FROM assets WHERE id = ?", (req["asset_id"],)).fetchone()
+    return bool(a and (user.get("campus") or "") and a["campus"] == user.get("campus"))
 
 
 async def super_admin_required(user: dict = Depends(get_current_user)) -> dict:
@@ -649,7 +686,7 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str
     name: str
-    role: Literal["super_admin", "admin", "ict_admin", "leader", "staff"] = "staff"
+    role: Literal["super_admin", "admin", "campus_admin", "ict_admin", "leader", "staff"] = "staff"
     department: Optional[str] = None
     campus: Optional[str] = ""
     supervisor: Optional[str] = ""
@@ -1238,15 +1275,16 @@ def normalize_phone(value) -> str:
 
 
 def _require_campus_for_ict_admin(role: Optional[str], campus: Optional[str]):
-    """An ICT Admin is the PIC of one campus, so the account must have one."""
-    if role == "ict_admin" and not (campus or "").strip():
-        raise HTTPException(400, "ICT Admin harus memiliki kampus (setiap kampus punya Admin ICT sendiri).")
+    """ICT Admins and Campus Admins run one campus, so the account must have one."""
+    if role in CAMPUS_BOUND and not (campus or "").strip():
+        raise HTTPException(400, "ICT Admin dan Campus Admin harus memiliki kampus.")
 
 
 @api.post("/auth/register")
-async def register(body: UserCreate, actor: dict = Depends(admin_required)):
+async def register(body: UserCreate, actor: dict = Depends(user_manager_required)):
     """Creating accounts is an admin action (there is no public sign-up)."""
     _guard_privileged_role(actor, body.role)
+    _guard_campus_admin(actor, body.role, body.campus)
     _require_campus_for_ict_admin(body.role, body.campus)
     conn = get_conn()
     email = body.email.lower()
@@ -1418,7 +1456,7 @@ async def list_users(user: dict = Depends(get_current_user)):
 
 
 @api.post("/users")
-async def create_user(body: UserCreate, actor: dict = Depends(admin_required)):
+async def create_user(body: UserCreate, actor: dict = Depends(user_manager_required)):
     return await register(body, actor)
 
 
@@ -1639,12 +1677,13 @@ def _send_password_link(conn, u: dict, kind: str, hours: int) -> dict:
 
 
 @api.post("/users/{uid}/invite")
-async def invite_user(uid: str, admin: dict = Depends(admin_required)):
+async def invite_user(uid: str, admin: dict = Depends(user_manager_required)):
     conn = get_conn()
-    u = conn.execute("SELECT id,name,email FROM users WHERE id = ?", (uid,)).fetchone()
+    u = conn.execute("SELECT id,name,email,role,campus FROM users WHERE id = ?", (uid,)).fetchone()
     if not u:
         conn.close()
         raise HTTPException(404, "User not found")
+    _guard_campus_admin_conn(admin, u, conn)
     res = _send_password_link(conn, dict(u), "invite", INVITE_HOURS)
     conn.close()
     logger.info("Invitation for %s created by %s (sent=%s)", u["email"], admin.get("email"), res["sent"])
@@ -1652,12 +1691,13 @@ async def invite_user(uid: str, admin: dict = Depends(admin_required)):
 
 
 @api.post("/users/{uid}/reset-password")
-async def admin_reset_password(uid: str, admin: dict = Depends(admin_required)):
+async def admin_reset_password(uid: str, admin: dict = Depends(user_manager_required)):
     conn = get_conn()
-    u = conn.execute("SELECT id,name,email FROM users WHERE id = ?", (uid,)).fetchone()
+    u = conn.execute("SELECT id,name,email,role,campus FROM users WHERE id = ?", (uid,)).fetchone()
     if not u:
         conn.close()
         raise HTTPException(404, "User not found")
+    _guard_campus_admin_conn(admin, u, conn)
     res = _send_password_link(conn, dict(u), "reset", ADMIN_RESET_HOURS)
     conn.close()
     logger.info("Password reset link for %s created by %s (sent=%s)", u["email"], admin.get("email"), res["sent"])
@@ -1725,9 +1765,11 @@ async def set_password(body: SetPasswordIn):
 
 
 @api.delete("/users/{uid}")
-async def delete_user(uid: str, actor: dict = Depends(admin_required)):
+async def delete_user(uid: str, actor: dict = Depends(user_manager_required)):
     conn = get_conn()
-    t = conn.execute("SELECT role FROM users WHERE id = ?", (uid,)).fetchone()
+    t = conn.execute("SELECT role, campus FROM users WHERE id = ?", (uid,)).fetchone()
+    if t:
+        _guard_campus_admin_conn(actor, t, conn)
     if t and t["role"] == "super_admin":
         if actor.get("role") != "super_admin":
             conn.close()
@@ -1757,7 +1799,7 @@ class UserPatch(BaseModel):
 
 
 @api.put("/users/{uid}")
-async def update_user(uid: str, body: UserPatch, actor: dict = Depends(admin_required)):
+async def update_user(uid: str, body: UserPatch, actor: dict = Depends(user_manager_required)):
     updates = {k: v for k, v in body.model_dump(exclude_none=True).items() if v is not None}
     if not updates:
         raise HTTPException(400, "No fields to update")
@@ -1769,6 +1811,12 @@ async def update_user(uid: str, body: UserPatch, actor: dict = Depends(admin_req
     target = chk.execute("SELECT role, campus FROM users WHERE id = ?", (uid,)).fetchone()
     if target:
         _guard_privileged_role(actor, target["role"], updates.get("role"))
+        try:
+            _guard_campus_admin(actor, target["role"], target["campus"])
+            _guard_campus_admin(actor, updates.get("role", target["role"]), updates.get("campus", target["campus"]))
+        except HTTPException:
+            chk.close()
+            raise
         _require_campus_for_ict_admin(updates.get("role", target["role"]), updates.get("campus", target["campus"]))
         if target["role"] == "super_admin" and updates.get("role", "super_admin") != "super_admin" \
                 and chk.execute("SELECT COUNT(*) FROM users WHERE role='super_admin'").fetchone()[0] <= 1:
@@ -2388,7 +2436,7 @@ async def update_asset(aid: str, body: AssetUpdate, user: dict = Depends(asset_m
     updates = {k: v for k, v in body.model_dump(exclude_none=True).items()}
     if not updates:
         raise HTTPException(400, "No fields to update")
-    if user["role"] == "ict_admin":
+    if user["role"] in CAMPUS_BOUND:
         conn = get_conn()
         cur = conn.execute("SELECT campus, category FROM assets WHERE id = ?", (aid,)).fetchone()
         conn.close()
@@ -2523,7 +2571,7 @@ async def create_fault(body: FaultIn, user: dict = Depends(get_current_user)):
 @api.put("/faults/{fid}")
 async def update_fault(fid: str, body: FaultUpdate, user: dict = Depends(asset_manager_required)):
     updates = {k: v for k, v in body.model_dump(exclude_none=True).items()}
-    if user["role"] == "ict_admin":
+    if user["role"] in CAMPUS_BOUND:
         conn = get_conn()
         fa = conn.execute("SELECT a.campus, a.category FROM faults f JOIN assets a ON a.id = f.asset_id WHERE f.id = ?", (fid,)).fetchone()
         conn.close()
@@ -2869,10 +2917,11 @@ async def create_transfer_request(asset_id: str, body: TransferRequestIn, user: 
 @api.get("/transfer-requests")
 async def list_transfer_requests(user: dict = Depends(get_current_user), status: Optional[str] = None):
     conn = get_conn()
-    if user["role"] in ADMIN_ROLES:
+    if user["role"] in ADMIN_ROLES + ("campus_admin",):
         base = "SELECT * FROM transfer_requests"
         rows = conn.execute(base + (" WHERE status = ?" if status else "") + " ORDER BY created_at DESC",
                             ([status] if status else [])).fetchall()
+        rows = [r for r in rows if _transfer_in_scope(conn, user, r)]
     else:
         rows = conn.execute(
             "SELECT * FROM transfer_requests WHERE requested_by = ? ORDER BY created_at DESC", (user["id"],)
@@ -2882,20 +2931,24 @@ async def list_transfer_requests(user: dict = Depends(get_current_user), status:
 
 
 @api.get("/transfer-requests/pending-count")
-async def pending_count(_: dict = Depends(admin_required)):
+async def pending_count(user: dict = Depends(user_manager_required)):
     conn = get_conn()
-    n = conn.execute("SELECT COUNT(*) FROM transfer_requests WHERE status = 'pending'").fetchone()[0]
+    n = sum(1 for r in conn.execute("SELECT asset_id FROM transfer_requests WHERE status = 'pending'").fetchall()
+            if _transfer_in_scope(conn, user, r))
     conn.close()
     return {"count": n}
 
 
 @api.put("/transfer-requests/{rid}/approve")
-async def approve_transfer(rid: str, user: dict = Depends(admin_required)):
+async def approve_transfer(rid: str, user: dict = Depends(user_manager_required)):
     conn = get_conn()
     req = conn.execute("SELECT * FROM transfer_requests WHERE id = ?", (rid,)).fetchone()
     if not req:
         conn.close()
         raise HTTPException(404, "Request not found")
+    if not _transfer_in_scope(conn, user, req):
+        conn.close()
+        raise HTTPException(403, "Permintaan ini bukan untuk kampus Anda")
     req = dict(req)
     if req["status"] != "pending":
         conn.close()
@@ -2936,12 +2989,15 @@ async def approve_transfer(rid: str, user: dict = Depends(admin_required)):
 
 
 @api.put("/transfer-requests/{rid}/reject")
-async def reject_transfer(rid: str, reason: Optional[str] = None, user: dict = Depends(admin_required)):
+async def reject_transfer(rid: str, reason: Optional[str] = None, user: dict = Depends(user_manager_required)):
     conn = get_conn()
     req = conn.execute("SELECT * FROM transfer_requests WHERE id = ?", (rid,)).fetchone()
     if not req:
         conn.close()
         raise HTTPException(404, "Request not found")
+    if not _transfer_in_scope(conn, user, req):
+        conn.close()
+        raise HTTPException(403, "Permintaan ini bukan untuk kampus Anda")
     if dict(req)["status"] != "pending":
         conn.close()
         raise HTTPException(400, "Request is not pending")
@@ -3948,14 +4004,14 @@ def can_manage_loan(user: dict, campus: str, category: str) -> bool:
         return True
     if category in ICT_CATEGORIES:
         return is_ict_pic(user, campus, category)
-    return role == "admin"
+    return role == "admin" or is_ict_pic(user, campus, category)
 
 
 def loan_manager_emails(conn, campus: str, category: str) -> list:
     if category in ICT_CATEGORIES:
-        rows = conn.execute("SELECT email FROM users WHERE role = 'ict_admin' AND campus = ?", (campus,)).fetchall()
+        rows = conn.execute("SELECT email FROM users WHERE role IN ('ict_admin', 'campus_admin') AND campus = ?", (campus,)).fetchall()
     else:
-        rows = conn.execute("SELECT email FROM users WHERE role = 'admin' AND campus IN (?, '')", (campus,)).fetchall()
+        rows = conn.execute("SELECT email FROM users WHERE (role = 'admin' AND campus IN (?, '')) OR (role = 'campus_admin' AND campus = ?)", (campus, campus)).fetchall()
     emails = [r["email"] for r in rows]
     if LOAN_NOTIFY_EMAIL:
         emails.append(LOAN_NOTIFY_EMAIL)
@@ -4102,7 +4158,7 @@ async def loan_catalog(user: dict = Depends(get_current_user), search: Optional[
     conn = get_conn()
     conds, params = ["s.borrowable = 1", "a.status != 'retired'"], []
     own_campus = (user.get("campus") or "").strip()
-    if user["role"] in ("staff", "ict_admin") and own_campus:
+    if user["role"] in ("staff",) + CAMPUS_BOUND and own_campus:
         conds.append("a.campus = ?"); params.append(own_campus)
     elif campus:
         conds.append("a.campus = ?"); params.append(campus)
@@ -4145,7 +4201,7 @@ async def loan_availability(asset_id: str, start_at: str, end_at: str, _: dict =
 async def pool_availability(device_type: str, start_at: str, end_at: str, campus: Optional[str] = None, user: dict = Depends(get_current_user)):
     """How many laptops / iPads are free for a window (teachers see the count, ICT also the units)."""
     own = (user.get("campus") or "").strip()
-    campus = own if (user["role"] in ("staff", "ict_admin") and own) else (campus or own)
+    campus = own if (user["role"] in ("staff",) + CAMPUS_BOUND and own) else (campus or own)
     conn = get_conn()
     try:
         start, end = booking_engine.parse_dt(start_at), booking_engine.parse_dt(end_at)
@@ -4188,7 +4244,7 @@ async def create_loan(body: LoanIn, user: dict = Depends(get_current_user)):
             raise HTTPException(400, "Pilih jenis perangkat saja, atau satu aset/cart tertentu.")
     elif bool(body.asset_id) == bool(body.resource_id):
         raise HTTPException(400, "Pilih satu aset atau satu cart/lab.")
-    if user["role"] not in ADMIN_ROLES + ("ict_admin", "staff"):
+    if user["role"] not in ADMIN_ROLES + CAMPUS_BOUND + ("staff",):
         raise HTTPException(403, "Akun ini tidak dapat mengajukan peminjaman")
     conn = get_conn()
     ensure_policy_compliant(conn, user["id"])
@@ -4301,7 +4357,9 @@ async def list_loans(user: dict = Depends(get_current_user), scope: str = "mine"
     elif scope == "manage":
         if user["role"] == "super_admin":
             pass
-        elif user["role"] == "ict_admin":
+        elif user["role"] == "campus_admin":
+            conds.append("b.campus = ?"); params.append(user.get("campus") or "")
+        elif user["role"] in CAMPUS_BOUND:
             conds += ["b.campus = ?", f"b.category IN ({','.join('?' * len(ICT_CATEGORIES))})"]; params += [user.get("campus") or "", *ICT_CATEGORIES]
         elif user["role"] == "admin":
             conds.append(f"b.category NOT IN ({','.join('?' * len(ICT_CATEGORIES))})"); params += list(ICT_CATEGORIES)
@@ -4333,7 +4391,7 @@ async def loans_pending_count(user: dict = Depends(get_current_user)):
     booking_engine.mark_overdue(conn, _local_now())
     mine = conn.execute("SELECT COUNT(*) FROM bookings WHERE supervisor_id = ? AND status = 'pending_supervisor'", (user["id"],)).fetchone()[0]
     manage = 0
-    if user["role"] in ("super_admin", "ict_admin", "admin"):
+    if user["role"] in ("super_admin", "admin") + CAMPUS_BOUND:
         rows = conn.execute("SELECT campus, category FROM bookings WHERE status IN ('pending_ict', 'overdue')").fetchall()
         manage = sum(1 for r in rows if can_manage_loan(user, r["campus"], r["category"]))
     conn.close()
@@ -4364,7 +4422,7 @@ async def put_loan_policy(body: PolicyIn, user: dict = Depends(get_current_user)
     """Rules per category (campus '' = every campus). ICT Admin may set them for their own campus."""
     if body.campus and body.campus not in [c for c in VALID_CAMPUSES if c]:
         raise HTTPException(400, "Kampus tidak valid")
-    if not (user["role"] in ADMIN_ROLES or (user["role"] == "ict_admin" and body.category in ICT_CATEGORIES
+    if not (user["role"] in ADMIN_ROLES or (user["role"] in CAMPUS_BOUND and (user["role"] == "campus_admin" or body.category in ICT_CATEGORIES)
                                             and body.campus and body.campus == user.get("campus"))):
         raise HTTPException(403, "Tidak diizinkan mengubah aturan ini")
     conn = get_conn()
@@ -4388,13 +4446,13 @@ def can_setup_campus(user: dict, campus: str) -> bool:
     role = user.get("role")
     if role in ADMIN_ROLES:
         return True
-    return role == "ict_admin" and bool(user.get("campus")) and user.get("campus") == campus
+    return role in CAMPUS_BOUND and bool(user.get("campus")) and user.get("campus") == campus
 
 
 def _visible_campuses(user: dict, campus: Optional[str]) -> list:
     """Campuses a reader may look at. Staff and ICT Admins see their own campus; admins, leaders and the super admin any."""
     own = (user.get("campus") or "").strip()
-    if user["role"] in ("staff", "ict_admin") and own:
+    if user["role"] in ("staff",) + CAMPUS_BOUND and own:
         return [own]
     if campus:
         return [campus]
@@ -4893,7 +4951,7 @@ async def loan_calendar(resource_id: str, week_start: str, user: dict = Depends(
 # ---- Phase 3: scan, reminders, dashboard, reports ----
 async def loan_viewer_required(user: dict = Depends(get_current_user)) -> dict:
     """Who may see the ICT dashboard and loan reports (read only): admins, ICT admins and leaders."""
-    if user.get("role") not in ("super_admin", "admin", "ict_admin", "leader"):
+    if user.get("role") not in ("super_admin", "admin", "leader") + CAMPUS_BOUND:
         raise HTTPException(403, "Tidak diizinkan")
     return user
 
@@ -4903,11 +4961,13 @@ def _loan_scope(user: dict, campus: Optional[str], alias: str = "b") -> tuple:
     admin = non-ICT categories, leader / super admin = everything (optionally one campus)."""
     marks = ",".join("?" * len(ICT_CATEGORIES))
     conds, params = [], []
-    if user["role"] == "ict_admin":
+    if user["role"] == "campus_admin":
+        conds.append(f"{alias}.campus = ?"); params.append(user.get("campus") or "")
+    elif user["role"] == "ict_admin":
         conds += [f"{alias}.campus = ?", f"{alias}.category IN ({marks})"]; params += [user.get("campus") or "", *ICT_CATEGORIES]
     elif user["role"] == "admin":
         conds.append(f"{alias}.category NOT IN ({marks})"); params += list(ICT_CATEGORIES)
-    if campus and user["role"] != "ict_admin":
+    if campus and user["role"] not in CAMPUS_BOUND:
         conds.append(f"{alias}.campus = ?"); params.append(campus)
     return conds, params
 
@@ -5054,11 +5114,13 @@ async def loan_dashboard(user: dict = Depends(loan_viewer_required), campus: Opt
     today_list = rows("b.status IN ('approved','partially_approved','in_use') AND substr(b.start_at,1,10) <= ? AND substr(b.end_at,1,10) >= ?", (today, today))
     marks = ",".join("?" * len(ICT_CATEGORIES))
     asset_conds, asset_params = ["s.borrowable = 1", "a.status IN ('in_repair','lost')"], []
-    if user["role"] == "ict_admin":
+    if user["role"] == "campus_admin":
+        asset_conds.append("a.campus = ?"); asset_params.append(user.get("campus") or "")
+    elif user["role"] == "ict_admin":
         asset_conds += ["a.campus = ?", f"a.category IN ({marks})"]; asset_params += [user.get("campus") or "", *ICT_CATEGORIES]
     elif user["role"] == "admin":
         asset_conds.append(f"a.category NOT IN ({marks})"); asset_params += list(ICT_CATEGORIES)
-    if campus and user["role"] != "ict_admin":
+    if campus and user["role"] not in CAMPUS_BOUND:
         asset_conds.append("a.campus = ?"); asset_params.append(campus)
     broken = [dict(r) for r in conn.execute(f"""SELECT a.id, a.name, a.asset_tag, a.status, a.campus, a.category FROM assets a JOIN asset_loan_settings s ON s.asset_id = a.id
                                                 WHERE {' AND '.join(asset_conds)} ORDER BY a.status, a.name""", asset_params)]
@@ -5997,7 +6059,7 @@ def _byod_view(conn, user: dict, r: dict, full: bool = True) -> dict:
 
 @api.post("/byod/projects")
 async def create_byod_project(body: ByodProjectIn, user: dict = Depends(get_current_user)):
-    if user["role"] not in ("staff", "ict_admin", "admin", "super_admin"):
+    if user["role"] not in ("staff", "admin", "super_admin") + CAMPUS_BOUND:
         raise HTTPException(403, "Akun ini tidak dapat membuat permohonan BYOD")
     campus = (user.get("campus") or body.campus or "").strip()
     if campus not in [c for c in VALID_CAMPUSES if c]:
@@ -6053,7 +6115,7 @@ async def list_byod_requests(scope: str = "mine", status: Optional[str] = None, 
     elif scope == "manage":
         if user["role"] in ("super_admin", "admin"):
             pass
-        elif user["role"] == "ict_admin":
+        elif user["role"] in CAMPUS_BOUND:
             conds.append("r.campus = ?"); params.append(user.get("campus") or "")
         else:
             raise HTTPException(403, "Tidak diizinkan")
@@ -6387,12 +6449,12 @@ async def byod_extend(rid: str, body: ByodExtendIn, user: dict = Depends(get_cur
 @api.get("/reports/byod-devices")
 async def report_byod_devices(user: dict = Depends(get_current_user)):
     """Devices to allow on the school WiFi: approved requests that have not ended yet (for the ICT Admin's campus)."""
-    if user["role"] not in ("super_admin", "admin", "ict_admin", "leader"):
+    if user["role"] not in ("super_admin", "admin", "leader") + CAMPUS_BOUND:
         raise HTTPException(403, "Tidak diizinkan")
     import openpyxl
     conn = get_conn()
     conds, params = ["r.status = 'approved'", "r.valid_to >= ?"], [_today_local().isoformat()]
-    if user["role"] == "ict_admin":
+    if user["role"] in CAMPUS_BOUND:
         conds.append("r.campus = ?"); params.append(user.get("campus") or "")
     rows = conn.execute(f"""SELECT r.number, r.campus, r.student_name, r.student_class, r.teacher_name, r.valid_from, r.valid_to, p.hour_from, p.hour_to,
                                    p.name AS project, d.kind, d.brand, d.model, d.os, d.os_version, d.mac

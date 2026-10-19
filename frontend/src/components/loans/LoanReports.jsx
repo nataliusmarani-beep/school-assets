@@ -2,6 +2,7 @@ import { useState } from "react";
 import api, { formatErr } from "../../lib/api";
 import { useLang } from "../../context/LangContext";
 import { useAuth } from "../../context/AuthContext";
+import { isCampusBound } from "../../lib/roles";
 import { toast } from "sonner";
 import { FileSpreadsheet } from "lucide-react";
 import { campusLabel } from "../../lib/campus";
@@ -27,7 +28,7 @@ export default function LoanReports() {
   const [range, setRange] = useState({ from: `${thisMonth()}-01`, to: new Date().toISOString().slice(0, 10) });
   const [usage, setUsage] = useState(null);
   const [incidents, setIncidents] = useState(null);
-  const canPickCampus = user?.role !== "ict_admin";
+  const canPickCampus = !isCampusBound(user?.role);
   const cp = campus ? { campus } : {};
 
   const run = async (fn) => { try { await fn(); } catch (e) { toast.error(formatErr(e)); } };

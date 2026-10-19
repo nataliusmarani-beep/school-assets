@@ -83,7 +83,7 @@ function App() {
               <ProtectedRoute><Layout><CompliancePage /></Layout></ProtectedRoute>
             }/>
             <Route path="/users" element={
-              <ProtectedRoute adminOnly><Layout><UsersPage /></Layout></ProtectedRoute>
+              <ProtectedRoute managerOnly><Layout><UsersPage /></Layout></ProtectedRoute>
             }/>
             <Route path="/reports" element={
               <ProtectedRoute><Layout><ReportsPage /></Layout></ProtectedRoute>

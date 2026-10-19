@@ -13,7 +13,7 @@ import {
   SelectValue,
 } from "../components/ui/select";
 import { Search, Plus, Filter, Upload, Download, CheckCircle2, XCircle, FileText, FileSpreadsheet } from "lucide-react";
-import { isAdminRole } from "../lib/roles";
+import { isAdminRole, isCampusBound } from "../lib/roles";
 import { ownerName } from "../lib/format";
 import BulkTransferDialog from "../components/assets/BulkTransferDialog";
 import { campusLabel } from "../lib/campus";
@@ -398,7 +398,7 @@ export default function AssetsListPage() {
             <FileSpreadsheet className="w-4 h-4" strokeWidth={1.75} />
             {exporting ? t("exporting") : t("export_excel")}
           </button>
-          {(isAdmin || user?.role === "ict_admin") && (
+          {(isAdmin || isCampusBound(user?.role)) && (
             <>
               {isAdmin && (
               <button

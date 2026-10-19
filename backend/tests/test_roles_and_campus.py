@@ -87,3 +87,38 @@ def test_ict_admin_manages_only_own_campus_ict_assets(client, make_user, db):
     assert client.delete("/api/assets/a1", headers=h).status_code == 200
     assert client.get("/api/users", headers=h).status_code in (200, 403)
     assert client.post("/api/users/x/invite", headers=h).status_code == 403
+
+
+def test_campus_admin_scope(client, make_user, db):
+    for aid, cat, campus in [("c1", "Furniture", "YPJ Kuala Kencana"), ("c2", "IT Equipment", "YPJ Kuala Kencana"), ("c3", "IT Equipment", "YPJ TPRA")]:
+        db.execute("INSERT INTO assets (id,name,asset_tag,category,campus,location,purchase_price,purchase_date,created_at,updated_at) VALUES (?,?,?,?,?,?,0,'2026-01-01','t','t')",
+                   (aid, aid, f"T-{aid}", cat, campus, "Lab"))
+    db.commit()
+    ca = make_user("campus_admin", "YPJ Kuala Kencana")
+    h = auth(ca)
+    # assets: any category on own campus, nothing on another campus
+    assert client.put("/api/assets/c1", headers=h, json={"name": "n"}).status_code == 200
+    assert client.put("/api/assets/c2", headers=h, json={"name": "n"}).status_code == 200
+    assert client.put("/api/assets/c3", headers=h, json={"name": "n"}).status_code == 403
+    # loan management: ICT and non-ICT categories on own campus only
+    assert server.can_manage_loan(ca, "YPJ Kuala Kencana", "IT Equipment")
+    assert server.can_manage_loan(ca, "YPJ Kuala Kencana", "Furniture")
+    assert not server.can_manage_loan(ca, "YPJ TPRA", "IT Equipment")
+    # users: staff / ICT Admin of own campus only
+    body = {"email": "s@example.com", "password": "secret123", "name": "S", "role": "staff", "campus": "YPJ Kuala Kencana"}
+    assert client.post("/api/users", headers=h, json=body).status_code == 200
+    assert client.post("/api/users", headers=h, json={**body, "email": "t@example.com", "campus": "YPJ TPRA"}).status_code == 403
+    assert client.post("/api/users", headers=h, json={**body, "email": "a@example.com", "role": "admin"}).status_code == 403
+    assert client.post("/api/users", headers=h, json={**body, "email": "b@example.com", "role": "campus_admin"}).status_code == 403
+    # no campus -> refused for campus-bound roles
+    assert client.post("/api/users", headers=auth(make_user("admin")), json={**body, "email": "c@example.com", "role": "campus_admin", "campus": ""}).status_code == 400
+    # backup stays admin-only
+    assert client.get("/api/backup", headers=h).status_code in (403, 404, 405)
+
+
+def test_campus_admin_gets_loan_emails(make_user, db):
+    ca = make_user("campus_admin", "YPJ Kuala Kencana", email="ca@example.com")
+    other = make_user("campus_admin", "YPJ TPRA", email="ca2@example.com")
+    assert "ca@example.com" in server.loan_manager_emails(db, "YPJ Kuala Kencana", "IT Equipment")
+    assert "ca@example.com" in server.loan_manager_emails(db, "YPJ Kuala Kencana", "Furniture")
+    assert "ca2@example.com" not in server.loan_manager_emails(db, "YPJ Kuala Kencana", "IT Equipment")

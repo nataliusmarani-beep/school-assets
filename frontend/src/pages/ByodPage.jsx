@@ -111,7 +111,7 @@ export default function ByodPage() {
   const { user } = useAuth();
   const role = user?.role;
   const canCreate = role !== "leader";
-  const manager = ["super_admin", "admin", "ict_admin"].includes(role);
+  const manager = ["super_admin", "admin", "campus_admin", "ict_admin"].includes(role);
   const viewAll = ["super_admin", "admin", "leader"].includes(role);
   const tabs = useMemo(() => [
     ...(canCreate ? [{ id: "mine", label: "byod_tab_mine" }] : []),

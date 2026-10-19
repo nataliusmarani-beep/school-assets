@@ -18,7 +18,7 @@ const STATE_STYLE = {
 export default function ScanPage() {
   const { t } = useLang();
   const { user } = useAuth();
-  const manager = ["super_admin", "admin", "ict_admin"].includes(user?.role);
+  const manager = ["super_admin", "admin", "campus_admin", "ict_admin"].includes(user?.role);
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
   const [params] = useSearchParams();

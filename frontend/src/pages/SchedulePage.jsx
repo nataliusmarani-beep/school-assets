@@ -80,7 +80,7 @@ export default function SchedulePage() {
   const navigate = useNavigate();
   const role = user?.role;
   const writer = canWrite(role);
-  const manager = ["super_admin", "admin", "ict_admin"].includes(role);
+  const manager = ["super_admin", "admin", "campus_admin", "ict_admin"].includes(role);
   const [resources, setResources] = useState([]);
   const [rid, setRid] = useState("");
   const [week, setWeek] = useState(mondayOf(new Date()));
