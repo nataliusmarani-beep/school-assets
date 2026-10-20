@@ -3,6 +3,7 @@
 Everything here works on a plain sqlite3 connection and takes "now" as an argument, so the rules can be
 tested without the web app. Times are campus-local, stored as naive ISO strings ("YYYY-MM-DDTHH:MM").
 """
+import re
 import uuid
 from datetime import date, datetime, timedelta
 from typing import Optional
@@ -237,6 +238,11 @@ def init_booking_schema(conn):
     _migrate_school_periods_unit(conn)
     # columns added after the first release of the module
     _ensure_column(conn, "resources", "unit", "TEXT NOT NULL DEFAULT ''")
+    # carts / labs created before school units existed: take the unit from the name ("Lab Komputer SD")
+    for r in conn.execute("SELECT id, name FROM resources WHERE unit = ''").fetchall():
+        found = [u for u in ("PAUD", "SD", "SMP") if re.search(rf"\b{u}\b", r["name"], re.I)]
+        if len(found) == 1:
+            conn.execute("UPDATE resources SET unit = ? WHERE id = ?", (found[0], r["id"]))
     _ensure_column(conn, "resources", "category", "TEXT NOT NULL DEFAULT 'IT Equipment'")
     _ensure_column(conn, "bookings", "schedule_id", "TEXT")
     _ensure_column(conn, "bookings", "device_type", "TEXT NOT NULL DEFAULT ''")          # 'laptop' | 'ipad' for kind 'pool'
@@ -349,7 +355,9 @@ def period_times(conn, campus: str, period_from: int, period_to: int, unit: str 
     by_no = {p["period_no"]: p for p in periods_for(conn, campus, unit)}
     a, b = by_no.get(period_from), by_no.get(period_to)
     if not a or not b:
-        raise BookingError("Master jam pelajaran belum lengkap untuk jam yang dipilih.", "periods")
+        where = f" unit {unit}" if unit else ""
+        raise BookingError(f"Master jam pelajaran{where} belum lengkap untuk jam yang dipilih (jam ke-{period_from}–{period_to}). "
+                           "Isi dulu di tab Jam pelajaran.", "periods")
     return a["start_time"], b["end_time"]
 
 

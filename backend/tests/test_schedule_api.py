@@ -173,3 +173,17 @@ def test_holiday_date_range(client, make_user):
     assert days == ["2026-12-21", "2026-12-22", "2026-12-23", "2026-12-24", "2026-12-25"]
     assert client.post("/api/loans/holidays", headers=auth(ict), json={"campus": KK, "date": "2026-12-21", "end_date": "2026-12-25"}).status_code == 409
     assert client.post("/api/loans/holidays", headers=auth(ict), json={"campus": KK, "date": "2026-12-25", "end_date": "2026-12-20"}).status_code == 400
+
+
+def test_existing_cart_gets_unit_from_name_and_error_names_unit(db):
+    db.execute("INSERT INTO resources (id,campus,name,kind,capacity,category,location,active,created_at) VALUES ('r_old',?,?,?,30,'IT Equipment','',1,'t')",
+               (KK, "Lab Komputer SD", "computer_lab"))
+    db.commit()
+    be.init_booking_schema(db)
+    assert be.resource_unit(db, "r_old") == "SD"
+    try:
+        be.period_times(db, KK, 1, 3, "SD")
+    except be.BookingError as e:
+        assert "unit SD" in e.message and "Jam pelajaran" in e.message
+    else:
+        raise AssertionError("expected BookingError")
