@@ -163,3 +163,13 @@ def test_periods_are_separate_per_school_unit(client, make_user):
     assert client.put("/api/loans/periods", headers=auth(ict), json={"campus": KK, "unit": "PAUD", "periods": []}).status_code == 200
     rows = client.get("/api/loans/periods", headers=auth(ict), params={"campus": KK}).json()
     assert {r["unit"] for r in rows} == {"SMP"}
+
+
+def test_holiday_date_range(client, make_user):
+    ict = make_user("ict_admin", KK)
+    r = client.post("/api/loans/holidays", headers=auth(ict), json={"campus": KK, "date": "2026-12-21", "end_date": "2026-12-25", "name": "Natal"})
+    assert r.status_code == 200 and r.json()["created"] == 5
+    days = [h["date"] for h in client.get("/api/loans/holidays", headers=auth(ict), params={"campus": KK}).json()]
+    assert days == ["2026-12-21", "2026-12-22", "2026-12-23", "2026-12-24", "2026-12-25"]
+    assert client.post("/api/loans/holidays", headers=auth(ict), json={"campus": KK, "date": "2026-12-21", "end_date": "2026-12-25"}).status_code == 409
+    assert client.post("/api/loans/holidays", headers=auth(ict), json={"campus": KK, "date": "2026-12-25", "end_date": "2026-12-20"}).status_code == 400

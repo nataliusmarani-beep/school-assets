@@ -4790,6 +4790,7 @@ async def put_periods(body: PeriodsIn, user: dict = Depends(get_current_user)):
 class HolidayIn(BaseModel):
     campus: str = ""
     date: str
+    end_date: Optional[str] = None     # last day of a multi-day break; one row is kept per day
     name: str = ""
 
 
@@ -4813,17 +4814,33 @@ async def add_holiday(body: HolidayIn, user: dict = Depends(get_current_user)):
         raise HTTPException(400, "Kampus tidak valid")
     if (not body.campus and user["role"] not in ADMIN_ROLES) or (body.campus and not can_setup_campus(user, body.campus)):
         raise HTTPException(403, "Tidak diizinkan")
+    last = date_obj
+    if body.end_date:
+        try:
+            last = datetime.strptime(body.end_date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(400, "Tanggal tidak valid")
+        if last < date_obj:
+            raise HTTPException(400, "Tanggal berakhir tidak boleh sebelum tanggal mulai")
+        if (last - date_obj).days > 365:
+            raise HTTPException(400, "Rentang libur maksimal 1 tahun")
     conn = get_conn()
-    hid = str(uuid.uuid4())
-    try:
-        conn.execute("INSERT INTO holidays (id, campus, date, name) VALUES (?,?,?,?)", (hid, body.campus, date_obj.strftime("%Y-%m-%d"), body.name.strip()))
-    except sqlite3.IntegrityError:
+    ids = []
+    for i in range((last - date_obj).days + 1):
+        hid = str(uuid.uuid4())
+        try:
+            conn.execute("INSERT INTO holidays (id, campus, date, name) VALUES (?,?,?,?)",
+                         (hid, body.campus, (date_obj + timedelta(days=i)).strftime("%Y-%m-%d"), body.name.strip()))
+            ids.append(hid)
+        except sqlite3.IntegrityError:
+            pass                      # that day is already a holiday
+    if not ids:
         conn.close()
         raise HTTPException(409, "Hari libur ini sudah ada")
     conn.commit()
-    row = dict(conn.execute("SELECT * FROM holidays WHERE id = ?", (hid,)).fetchone())
+    row = dict(conn.execute("SELECT * FROM holidays WHERE id = ?", (ids[0],)).fetchone())
     conn.close()
-    return row
+    return {**row, "created": len(ids)}
 
 
 @api.delete("/loans/holidays/{hid}")

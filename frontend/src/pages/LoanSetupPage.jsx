@@ -185,29 +185,41 @@ function PeriodsTab({ campus, t }) {
 }
 
 /* ---------- holidays ---------- */
+const dayAfter = (iso) => { const d = new Date(`${iso}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10); };
 function HolidaysTab({ campus, t, canAll }) {
   const [rows, setRows] = useState([]);
-  const [f, setF] = useState({ date: "", name: "", all: false });
+  const [f, setF] = useState({ date: "", end_date: "", name: "", all: false });
   const load = useCallback(() => { api.get("/loans/holidays", { params: { campus } }).then((r) => setRows(r.data)).catch((e) => toast.error(formatErr(e))); }, [campus]);
   useEffect(() => { load(); }, [load]);
+  // one row per day in the database; consecutive days with the same name and campus are shown as one range
+  const ranges = useMemo(() => {
+    const out = [];
+    [...rows].sort((a, b) => a.date.localeCompare(b.date)).forEach((h) => {
+      const last = out[out.length - 1];
+      if (last && last.campus === h.campus && last.name === h.name && dayAfter(last.end) === h.date) { last.end = h.date; last.ids.push(h.id); }
+      else out.push({ campus: h.campus, name: h.name, start: h.date, end: h.date, ids: [h.id] });
+    });
+    return out;
+  }, [rows]);
   const add = async () => {
-    try { await api.post("/loans/holidays", { campus: f.all ? "" : campus, date: f.date, name: f.name }); setF({ date: "", name: "", all: false }); load(); }
+    try { await api.post("/loans/holidays", { campus: f.all ? "" : campus, date: f.date, end_date: f.end_date || null, name: f.name }); setF({ date: "", end_date: "", name: "", all: false }); load(); }
     catch (e) { toast.error(formatErr(e)); }
   };
-  const del = async (id) => { try { await api.delete(`/loans/holidays/${id}`); load(); } catch (e) { toast.error(formatErr(e)); } };
+  const del = async (ids) => { try { await Promise.all(ids.map((id) => api.delete(`/loans/holidays/${id}`))); load(); } catch (e) { toast.error(formatErr(e)); load(); } };
   return (
     <Section title={t("su_tab_holidays")} hint={t("su_holidays_hint")}>
       <div className="flex gap-2 flex-wrap items-end mb-4">
-        <div><Label className="label-mono">{t("su_date")}</Label><Input type="date" className="mt-2 rounded-none" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} data-testid="holiday-date" /></div>
+        <div><Label className="label-mono">{t("su_start_date")}</Label><Input type="date" className="mt-2 rounded-none" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value, end_date: f.end_date && f.end_date < e.target.value ? e.target.value : f.end_date })} data-testid="holiday-date" /></div>
+        <div><Label className="label-mono">{t("su_end_date")}</Label><Input type="date" className="mt-2 rounded-none" min={f.date} value={f.end_date} onChange={(e) => setF({ ...f, end_date: e.target.value })} data-testid="holiday-end-date" /></div>
         <div className="flex-1 min-w-[180px]"><Label className="label-mono">{t("su_name")}</Label><Input className="mt-2 rounded-none" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} data-testid="holiday-name" /></div>
         {canAll && <label className="flex items-center gap-2 text-sm pb-2"><input type="checkbox" checked={f.all} onChange={(e) => setF({ ...f, all: e.target.checked })} /> {t("su_all_campuses")}</label>}
         <Button className="rounded-none" disabled={!f.date} onClick={add} data-testid="holiday-add"><Plus className="w-4 h-4 mr-1" /> {t("su_add")}</Button>
       </div>
       <div className="divide-y divide-slate-100 border border-slate-200">
-        {rows.map((h) => (
-          <div key={h.id} className="flex items-center justify-between px-3 py-2 text-sm"><span><span className="font-mono">{h.date}</span> · {h.name || "—"} {!h.campus && <span className="text-xs text-slate-400">({t("su_all_campuses")})</span>}</span>
-            <Button size="icon" variant="ghost" onClick={() => del(h.id)}><Trash2 className="w-4 h-4 text-slate-400" /></Button></div>))}
-        {rows.length === 0 && <div className="p-4 text-sm text-slate-500">{t("ln_empty")}</div>}
+        {ranges.map((h) => (
+          <div key={h.ids[0]} className="flex items-center justify-between px-3 py-2 text-sm"><span><span className="font-mono">{h.start === h.end ? h.start : `${h.start} → ${h.end}`}</span> · {h.name || "—"} {!h.campus && <span className="text-xs text-slate-400">({t("su_all_campuses")})</span>}</span>
+            <Button size="icon" variant="ghost" onClick={() => del(h.ids)}><Trash2 className="w-4 h-4 text-slate-400" /></Button></div>))}
+        {ranges.length === 0 && <div className="p-4 text-sm text-slate-500">{t("ln_empty")}</div>}
       </div>
     </Section>
   );
