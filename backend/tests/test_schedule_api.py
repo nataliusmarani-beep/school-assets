@@ -148,3 +148,18 @@ def test_pairings_must_belong_to_cart(client, make_user, db):
     bad = {"academic_year": "2026-2027", "semester": "Ganjil", "items": [{"asset_id": "nope", "student_name": "X", "student_no": "1"}]}
     assert client.put(f"/api/loans/resources/{rid}/pairings", headers=auth(ict), json=bad).status_code == 400
     assert client.put(f"/api/loans/resources/{rid}/units", headers=auth(ict), json={"asset_ids": ["nope"]}).status_code == 400
+
+
+def test_periods_are_separate_per_school_unit(client, make_user):
+    ict = make_user("ict_admin", KK)
+    paud = [{"period_no": 1, "start_time": "08:00", "end_time": "08:30"}]
+    smp = [{"period_no": 1, "start_time": "07:00", "end_time": "07:45"}, {"period_no": 2, "start_time": "07:45", "end_time": "08:30"}]
+    assert client.put("/api/loans/periods", headers=auth(ict), json={"campus": KK, "unit": "PAUD", "periods": paud}).status_code == 200
+    assert client.put("/api/loans/periods", headers=auth(ict), json={"campus": KK, "unit": "SMP", "periods": smp}).status_code == 200
+    assert client.put("/api/loans/periods", headers=auth(ict), json={"campus": KK, "unit": "TK", "periods": paud}).status_code == 422
+    rows = client.get("/api/loans/periods", headers=auth(ict), params={"campus": KK}).json()
+    assert {(r["unit"], r["period_no"]) for r in rows} == {("PAUD", 1), ("SMP", 1), ("SMP", 2)}
+    # replacing one unit leaves the others alone
+    assert client.put("/api/loans/periods", headers=auth(ict), json={"campus": KK, "unit": "PAUD", "periods": []}).status_code == 200
+    rows = client.get("/api/loans/periods", headers=auth(ict), params={"campus": KK}).json()
+    assert {r["unit"] for r in rows} == {"SMP"}

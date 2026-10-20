@@ -4388,7 +4388,7 @@ async def create_loan(body: LoanIn, user: dict = Depends(get_current_user)):
     start_at, end_at = body.start_at, body.end_at
     if body.date and body.period_from:
         try:
-            t_from, t_to = booking_engine.period_times(conn, target["campus"], body.period_from, body.period_to or body.period_from)
+            t_from, t_to = booking_engine.period_times(conn, target["campus"], body.period_from, body.period_to or body.period_from, booking_engine.resource_unit(conn, target.get("resource_id")))
         except booking_engine.BookingError as e:
             conn.close()
             raise HTTPException(400, e.message)
@@ -4594,6 +4594,7 @@ class ResourceIn(BaseModel):
     category: str = "IT Equipment"
     capacity: int = Field(1, ge=1)
     location: str = ""
+    unit: Literal["", "PAUD", "SD", "SMP"] = ""
     active: bool = True
 
 
@@ -4613,8 +4614,8 @@ async def create_resource(body: ResourceIn, user: dict = Depends(get_current_use
         raise HTTPException(403, "Tidak diizinkan membuat cart/lab untuk kampus dan kategori ini")
     conn = get_conn()
     rid = str(uuid.uuid4())
-    conn.execute("INSERT INTO resources (id, campus, name, kind, category, capacity, location, active, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
-                 (rid, body.campus, body.name.strip(), body.kind, body.category, body.capacity, body.location.strip(), int(body.active), now_iso()))
+    conn.execute("INSERT INTO resources (id, campus, name, kind, category, capacity, location, unit, active, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                 (rid, body.campus, body.name.strip(), body.kind, body.category, body.capacity, body.location.strip(), body.unit, int(body.active), now_iso()))
     conn.commit()
     out = _resource_view(conn, conn.execute("SELECT * FROM resources WHERE id = ?", (rid,)).fetchone())
     conn.close()
@@ -4628,8 +4629,8 @@ async def update_resource(rid: str, body: ResourceIn, user: dict = Depends(get_c
     if not (can_manage_loan(user, res["campus"], res["category"]) and can_manage_loan(user, res["campus"], body.category)) or body.campus != res["campus"]:
         conn.close()
         raise HTTPException(403, "Tidak diizinkan mengubah cart/lab ini")
-    conn.execute("UPDATE resources SET name = ?, kind = ?, category = ?, capacity = ?, location = ?, active = ? WHERE id = ?",
-                 (body.name.strip(), body.kind, body.category, body.capacity, body.location.strip(), int(body.active), rid))
+    conn.execute("UPDATE resources SET name = ?, kind = ?, category = ?, capacity = ?, location = ?, unit = ?, active = ? WHERE id = ?",
+                 (body.name.strip(), body.kind, body.category, body.capacity, body.location.strip(), body.unit, int(body.active), rid))
     conn.commit()
     out = _resource_view(conn, conn.execute("SELECT * FROM resources WHERE id = ?", (rid,)).fetchone())
     conn.close()
@@ -4736,6 +4737,7 @@ class PeriodItem(BaseModel):
 
 class PeriodsIn(BaseModel):
     campus: str
+    unit: Literal["", "PAUD", "SD", "SMP"] = ""
     periods: List[PeriodItem]
 
 
@@ -4746,14 +4748,14 @@ _HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 async def list_periods(user: dict = Depends(get_current_user), campus: Optional[str] = None):
     conn = get_conn()
     camps = _visible_campuses(user, campus)
-    rows = conn.execute(f"SELECT campus, period_no, start_time, end_time FROM school_periods WHERE campus IN ({','.join('?' * len(camps))}) ORDER BY campus, period_no", camps).fetchall()
+    rows = conn.execute(f"SELECT campus, unit, period_no, start_time, end_time FROM school_periods WHERE campus IN ({','.join('?' * len(camps))}) ORDER BY campus, unit, period_no", camps).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
 
 @api.put("/loans/periods")
 async def put_periods(body: PeriodsIn, user: dict = Depends(get_current_user)):
-    """Replace the master list of lesson periods of a campus."""
+    """Replace the master list of lesson periods of one school unit (PAUD / SD / SMP) of a campus."""
     if body.campus not in [c for c in VALID_CAMPUSES if c] or not can_setup_campus(user, body.campus):
         raise HTTPException(403, "Tidak diizinkan")
     nos = [p.period_no for p in body.periods]
@@ -4768,16 +4770,18 @@ async def put_periods(body: PeriodsIn, user: dict = Depends(get_current_user)):
             raise HTTPException(400, f"Jam ke-{p.period_no} tumpang tindih dengan jam sebelumnya")
         prev_end = p.end_time
     conn = get_conn()
-    used = conn.execute("SELECT DISTINCT period_from, period_to FROM fixed_schedules WHERE campus = ? AND status = 'active'", (body.campus,)).fetchall()
+    # a schedule is affected when its cart follows this unit's list (its own unit, or no unit while editing the campus-wide list)
+    used = conn.execute("""SELECT DISTINCT s.period_from, s.period_to FROM fixed_schedules s JOIN resources r ON r.id = s.resource_id
+                           WHERE s.campus = ? AND s.status = 'active' AND r.unit = ?""", (body.campus, body.unit)).fetchall()
     keep = set(nos)
     for u in used:
         if u["period_from"] not in keep or u["period_to"] not in keep:
             conn.close()
             raise HTTPException(409, "Jam pelajaran yang masih dipakai jadwal tetap tidak boleh dihapus.")
-    conn.execute("DELETE FROM school_periods WHERE campus = ?", (body.campus,))
+    conn.execute("DELETE FROM school_periods WHERE campus = ? AND unit = ?", (body.campus, body.unit))
     for p in ordered:
-        conn.execute("INSERT INTO school_periods (id, campus, period_no, start_time, end_time) VALUES (?,?,?,?,?)",
-                     (str(uuid.uuid4()), body.campus, p.period_no, p.start_time, p.end_time))
+        conn.execute("INSERT INTO school_periods (id, campus, period_no, start_time, end_time, unit) VALUES (?,?,?,?,?,?)",
+                     (str(uuid.uuid4()), body.campus, p.period_no, p.start_time, p.end_time, body.unit))
     conn.commit()
     conn.close()
     return {"ok": True, "periods": len(ordered)}
@@ -4995,7 +4999,7 @@ async def delete_schedule_exception(sid: str, eid: str, user: dict = Depends(get
         conn.close()
         raise HTTPException(404, "Pengecualian tidak ditemukan")
     # putting a session back must not exceed the cart's capacity
-    t_from, t_to = booking_engine.period_times(conn, s["campus"], s["period_from"], s["period_to"])
+    t_from, t_to = booking_engine.period_times(conn, s["campus"], s["period_from"], s["period_to"], booking_engine.resource_unit(conn, s["resource_id"]))
     start, end = booking_engine.parse_dt(f"{ex['date']}T{t_from}"), booking_engine.parse_dt(f"{ex['date']}T{t_to}")
     info = booking_engine.check_availability(conn, resource_id=s["resource_id"], units=s["units"], start=start, end=end)
     if not info["ok"]:
@@ -5047,7 +5051,7 @@ async def loan_calendar(resource_id: str, week_start: str, user: dict = Depends(
         conn.close()
         raise HTTPException(400, "Tanggal tidak valid")
     monday -= timedelta(days=monday.weekday())
-    periods = [dict(r) for r in conn.execute("SELECT period_no, start_time, end_time FROM school_periods WHERE campus = ? ORDER BY period_no", (res["campus"],))]
+    periods = booking_engine.periods_for(conn, res["campus"], res.get("unit") or "")
     holidays = {r["date"]: r["name"] for r in conn.execute("SELECT date, name FROM holidays WHERE campus IN (?, '')", (res["campus"],))}
     days = booking_engine.week_cells(conn, res, monday, periods, holidays)
     resource = _resource_view(conn, conn.execute("SELECT * FROM resources WHERE id = ?", (resource_id,)).fetchone())

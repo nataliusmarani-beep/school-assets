@@ -56,7 +56,7 @@ function PoolLimit({ campus, t }) {
 
 /* ---------- carts & labs ---------- */
 function ResourcesTab({ campus, t, load, resources }) {
-  const empty = { name: "", kind: "laptop_cart", category: "IT Equipment", capacity: 30, location: "", active: true };
+  const empty = { name: "", kind: "laptop_cart", category: "IT Equipment", capacity: 30, location: "", unit: "SD", active: true };
   const [form, setForm] = useState(empty);
   const [edit, setEdit] = useState(null);
   const [members, setMembers] = useState(null);     // { resource, assets, selected:Set, q }
@@ -85,27 +85,28 @@ function ResourcesTab({ campus, t, load, resources }) {
     <>
       <PoolLimit campus={campus} t={t} />
       <Section title={t("su_add_resource")} hint={t("su_resource_hint")}>
-        <div className="grid sm:grid-cols-5 gap-3">
+        <div className="grid sm:grid-cols-6 gap-3">
           <div className="sm:col-span-2"><Label className="label-mono">{t("su_name")}</Label><Input className="mt-2 rounded-none" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Laptop Cart A" data-testid="resource-name" /></div>
           <div><Label className="label-mono">{t("su_kind")}</Label><select className={SEL} value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>{KINDS.map((k) => <option key={k} value={k}>{t(`su_kind_${k}`)}</option>)}</select></div>
           <div><Label className="label-mono">{t("su_category")}</Label><select className={SEL} value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>{ICT_CATEGORIES.map((k) => <option key={k}>{k}</option>)}</select></div>
+          <div><Label className="label-mono">{t("su_school_unit")}</Label><select className={SEL} value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} data-testid="resource-unit">{SCHOOL_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}</select></div>
           <div><Label className="label-mono">{t("su_capacity")}</Label><Input type="number" min="1" className="mt-2 rounded-none" value={form.capacity} onChange={(e) => setForm({ ...form, capacity: e.target.value })} /></div>
         </div>
         <Button className="rounded-none mt-4" disabled={!form.name.trim()} onClick={create} data-testid="resource-create"><Plus className="w-4 h-4 mr-1" /> {t("su_add")}</Button>
       </Section>
       <div className="bg-white border border-slate-200 overflow-x-auto">
         <table className="w-full text-sm"><thead><tr className="border-b border-slate-200 text-left">
-          {["su_name", "su_kind", "su_category", "su_units", "su_capacity", ""].map((k, i) => <th key={i} className="label-mono py-3 px-4">{k && t(k)}</th>)}</tr></thead>
+          {["su_name", "su_kind", "su_school_unit", "su_category", "su_units", "su_capacity", ""].map((k, i) => <th key={i} className="label-mono py-3 px-4">{k && t(k)}</th>)}</tr></thead>
           <tbody>{resources.map((r) => (
             <tr key={r.id} className="border-b border-slate-100" data-testid={`resource-${r.name}`}>
               <td className="py-3 px-4 font-medium">{r.name}{!r.active && <span className="ml-2 text-xs text-slate-400">({t("su_inactive")})</span>}</td>
-              <td className="py-3 px-4">{t(`su_kind_${r.kind}`)}</td><td className="py-3 px-4">{r.category}</td>
+              <td className="py-3 px-4">{t(`su_kind_${r.kind}`)}</td><td className="py-3 px-4">{r.unit || "—"}</td><td className="py-3 px-4">{r.category}</td>
               <td className="py-3 px-4">{r.unit_count}</td><td className="py-3 px-4">{r.effective_capacity}</td>
               <td className="py-3 px-4 text-right whitespace-nowrap">
                 <Button size="sm" variant="outline" className="rounded-none mr-2" onClick={() => openMembers(r)} data-testid={`resource-units-${r.name}`}>{t("su_units_edit")}</Button>
                 <Button size="sm" variant="outline" className="rounded-none" onClick={() => setEdit({ ...r })}>{t("edit")}</Button></td>
             </tr>))}
-            {resources.length === 0 && <tr><td colSpan="6" className="py-8 text-center text-slate-500">{t("sc_no_resources")}</td></tr>}</tbody></table>
+            {resources.length === 0 && <tr><td colSpan="7" className="py-8 text-center text-slate-500">{t("sc_no_resources")}</td></tr>}</tbody></table>
       </div>
 
       <Dialog open={!!edit} onOpenChange={(o) => !o && setEdit(null)}>
@@ -114,6 +115,7 @@ function ResourcesTab({ campus, t, load, resources }) {
             <div><Label className="label-mono">{t("su_name")}</Label><Input className="mt-2 rounded-none" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></div>
             <div className="grid grid-cols-2 gap-3">
               <div><Label className="label-mono">{t("su_kind")}</Label><select className={SEL} value={edit.kind} onChange={(e) => setEdit({ ...edit, kind: e.target.value })}>{KINDS.map((k) => <option key={k} value={k}>{t(`su_kind_${k}`)}</option>)}</select></div>
+              <div><Label className="label-mono">{t("su_school_unit")}</Label><select className={SEL} value={edit.unit || ""} onChange={(e) => setEdit({ ...edit, unit: e.target.value })}><option value="">—</option>{SCHOOL_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}</select></div>
               <div><Label className="label-mono">{t("su_capacity")}</Label><Input type="number" min="1" className="mt-2 rounded-none" value={edit.capacity} onChange={(e) => setEdit({ ...edit, capacity: e.target.value })} /></div>
             </div>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!edit.active} onChange={(e) => setEdit({ ...edit, active: e.target.checked })} /> {t("su_active")}</label>
@@ -145,19 +147,25 @@ function ResourcesTab({ campus, t, load, resources }) {
 }
 
 /* ---------- lesson periods ---------- */
+const SCHOOL_UNITS = ["PAUD", "SD", "SMP"];
 function PeriodsTab({ campus, t }) {
+  const [unit, setUnit] = useState("SD");
   const [rows, setRows] = useState([]);
   const load = useCallback(() => {
-    api.get("/loans/periods", { params: { campus } }).then((r) => setRows(r.data.filter((p) => p.campus === campus))).catch((e) => toast.error(formatErr(e)));
-  }, [campus]);
+    api.get("/loans/periods", { params: { campus } }).then((r) => setRows(r.data.filter((p) => p.campus === campus && (p.unit || "") === unit))).catch((e) => toast.error(formatErr(e)));
+  }, [campus, unit]);
   useEffect(() => { load(); }, [load]);
   const upd = (i, patch) => setRows(rows.map((r, k) => (k === i ? { ...r, ...patch } : r)));
   const save = async () => {
-    try { await api.put("/loans/periods", { campus, periods: rows.map((r) => ({ period_no: Number(r.period_no), start_time: r.start_time, end_time: r.end_time })) }); toast.success(t("ln_saved")); load(); }
+    try { await api.put("/loans/periods", { campus, unit, periods: rows.map((r) => ({ period_no: Number(r.period_no), start_time: r.start_time, end_time: r.end_time })) }); toast.success(t("ln_saved")); load(); }
     catch (e) { toast.error(formatErr(e)); }
   };
   return (
     <Section title={t("su_tab_periods")} hint={t("su_periods_hint")}>
+      <div className="flex gap-1 mb-4" data-testid="period-unit-tabs">
+        {SCHOOL_UNITS.map((u) => <button key={u} onClick={() => setUnit(u)} data-testid={`period-unit-${u}`}
+          className={`px-4 py-1.5 text-sm border ${unit === u ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-600 border-slate-200 hover:border-slate-400"}`}>{u}</button>)}
+      </div>
       <div className="space-y-2 max-w-xl">
         {rows.map((r, i) => (
           <div key={i} className="flex items-center gap-2">

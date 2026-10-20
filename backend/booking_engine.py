@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS resources (
     location TEXT NOT NULL DEFAULT '',
     pic_user_id TEXT,
     active INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    unit TEXT NOT NULL DEFAULT ''                   -- school unit: PAUD | SD | SMP ('' = follows the campus-wide periods)
 );
 
 CREATE TABLE IF NOT EXISTS school_periods (
@@ -51,7 +52,8 @@ CREATE TABLE IF NOT EXISTS school_periods (
     period_no INTEGER NOT NULL,
     start_time TEXT NOT NULL,                       -- "07:30"
     end_time TEXT NOT NULL,
-    UNIQUE (campus, period_no)
+    unit TEXT NOT NULL DEFAULT '',                  -- PAUD | SD | SMP ('' = campus-wide default)
+    UNIQUE (campus, unit, period_no)
 );
 
 CREATE TABLE IF NOT EXISTS holidays (
@@ -214,9 +216,27 @@ def _ensure_column(conn, table: str, column: str, ddl: str):
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
 
 
+def _migrate_school_periods_unit(conn):
+    """Periods used to be one list per campus; they are now one list per campus and school unit (PAUD / SD / SMP)."""
+    if "unit" in [r[1] for r in conn.execute("PRAGMA table_info(school_periods)").fetchall()]:
+        return
+    conn.executescript("""
+        ALTER TABLE school_periods RENAME TO school_periods_old;
+        CREATE TABLE school_periods (
+            id TEXT PRIMARY KEY, campus TEXT NOT NULL, period_no INTEGER NOT NULL,
+            start_time TEXT NOT NULL, end_time TEXT NOT NULL, unit TEXT NOT NULL DEFAULT '',
+            UNIQUE (campus, unit, period_no));
+        INSERT INTO school_periods (id, campus, period_no, start_time, end_time, unit)
+            SELECT id, campus, period_no, start_time, end_time, '' FROM school_periods_old;
+        DROP TABLE school_periods_old;
+    """)
+
+
 def init_booking_schema(conn):
     conn.executescript(SCHEMA_SQL)
+    _migrate_school_periods_unit(conn)
     # columns added after the first release of the module
+    _ensure_column(conn, "resources", "unit", "TEXT NOT NULL DEFAULT ''")
     _ensure_column(conn, "resources", "category", "TEXT NOT NULL DEFAULT 'IT Equipment'")
     _ensure_column(conn, "bookings", "schedule_id", "TEXT")
     _ensure_column(conn, "bookings", "device_type", "TEXT NOT NULL DEFAULT ''")          # 'laptop' | 'ipad' for kind 'pool'
@@ -310,10 +330,24 @@ def check_request_rules(conn, *, campus: str, category: str, asset_id: Optional[
 
 
 # ---- Fixed schedules ----
-def period_times(conn, campus: str, period_from: int, period_to: int) -> tuple:
-    """("07:30", "09:10") for periods N..M of a campus."""
-    a = conn.execute("SELECT start_time FROM school_periods WHERE campus = ? AND period_no = ?", (campus, period_from)).fetchone()
-    b = conn.execute("SELECT end_time FROM school_periods WHERE campus = ? AND period_no = ?", (campus, period_to)).fetchone()
+def resource_unit(conn, resource_id: Optional[str]) -> str:
+    r = conn.execute("SELECT unit FROM resources WHERE id = ?", (resource_id,)).fetchone() if resource_id else None
+    return (r["unit"] if r else "") or ""
+
+
+def periods_for(conn, campus: str, unit: str = "") -> list:
+    """Lesson periods of a school unit; a unit without its own list follows the campus-wide one."""
+    for u in ([unit, ""] if unit else [""]):
+        rows = conn.execute("SELECT period_no, start_time, end_time FROM school_periods WHERE campus = ? AND unit = ? ORDER BY period_no", (campus, u)).fetchall()
+        if rows:
+            return [dict(r) for r in rows]
+    return []
+
+
+def period_times(conn, campus: str, period_from: int, period_to: int, unit: str = "") -> tuple:
+    """("07:30", "09:10") for periods N..M of a campus (and school unit)."""
+    by_no = {p["period_no"]: p for p in periods_for(conn, campus, unit)}
+    a, b = by_no.get(period_from), by_no.get(period_to)
     if not a or not b:
         raise BookingError("Master jam pelajaran belum lengkap untuk jam yang dipilih.", "periods")
     return a["start_time"], b["end_time"]
@@ -329,7 +363,7 @@ def fixed_occurrences(conn, resource_id: str, day_from: date, day_to: date, camp
     for s in schedules:
         cam = campus or s["campus"]
         try:
-            t_from, t_to = period_times(conn, s["campus"], s["period_from"], s["period_to"])
+            t_from, t_to = period_times(conn, s["campus"], s["period_from"], s["period_to"], resource_unit(conn, s["resource_id"]))
         except BookingError:
             continue
         skipped = {r["date"] for r in conn.execute("SELECT date FROM schedule_exceptions WHERE schedule_id = ?", (s["id"],))}
@@ -972,7 +1006,7 @@ def validate_schedule(conn, data: dict, exclude_id: Optional[str] = None, now: O
     if int(data["period_from"]) > int(data["period_to"]):
         problems.append("Jam mulai harus sebelum atau sama dengan jam selesai.")
     try:
-        period_times(conn, data["campus"], int(data["period_from"]), int(data["period_to"]))
+        period_times(conn, data["campus"], int(data["period_from"]), int(data["period_to"]), resource_unit(conn, data["resource_id"]))
     except BookingError as e:
         problems.append(e.message)
     try:
@@ -995,7 +1029,7 @@ def validate_schedule(conn, data: dict, exclude_id: Optional[str] = None, now: O
             problems.append(f"Bentrok dengan jadwal tetap kelas {o['class_name']} ({o['teacher_name']}) pada jam yang sama.")
     # approved bookings that would be displaced: ICT must settle those first
     today = (now or datetime.now()).date()
-    t_from, t_to = period_times(conn, data["campus"], int(data["period_from"]), int(data["period_to"]))
+    t_from, t_to = period_times(conn, data["campus"], int(data["period_from"]), int(data["period_to"]), resource_unit(conn, data["resource_id"]))
     d = max(v_from, today)
     while d <= v_to:
         if d.weekday() == int(data["weekday"]):
@@ -1088,7 +1122,7 @@ def week_cells(conn, res: dict, monday: date, periods: list, holidays: dict) -> 
         for e in conn.execute("SELECT date, note FROM schedule_exceptions WHERE schedule_id = ? AND date >= ? AND date <= ?",
                               (s["id"], monday.isoformat(), (monday + timedelta(days=6)).isoformat())):
             try:
-                t_from, t_to = period_times(conn, s["campus"], s["period_from"], s["period_to"])
+                t_from, t_to = period_times(conn, s["campus"], s["period_from"], s["period_to"], resource_unit(conn, s["resource_id"]))
             except BookingError:
                 continue
             libur.append({"schedule_id": s["id"], "exception": e["date"], "start": parse_dt(f"{e['date']}T{t_from}"), "end": parse_dt(f"{e['date']}T{t_to}"),
