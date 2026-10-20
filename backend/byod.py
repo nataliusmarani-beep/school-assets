@@ -166,10 +166,12 @@ def validate_devices(devices: list) -> list:
         kind = (d.get("kind") or "").strip().lower()
         if kind not in DEVICE_KINDS:
             raise ByodError("Hanya Laptop, iPad, atau Tablet yang diizinkan.", "kind")
-        mac = normalize_mac(d.get("mac"))
-        if mac in macs:
-            raise ByodError("MAC address perangkat terduplikasi.", "mac")
-        macs.add(mac)
+        # optional: parents often cannot find it; ICT can fill it in when approving
+        mac = normalize_mac(d.get("mac")) if (d.get("mac") or "").strip() else ""
+        if mac:
+            if mac in macs:
+                raise ByodError("MAC address perangkat terduplikasi.", "mac")
+            macs.add(mac)
         brand, model = (d.get("brand") or "").strip(), (d.get("model") or "").strip()
         if not brand or not model:
             raise ByodError("Merek dan model perangkat wajib diisi.", "device")
@@ -182,7 +184,7 @@ def mac_in_use(conn, macs: list, exclude_request_id: Optional[str] = None, today
     """First MAC already registered on another open request that has not ended."""
     today = today or date.today()
     marks = ",".join("?" * len(OPEN_STATUSES))
-    for mac in macs:
+    for mac in filter(None, macs):
         row = conn.execute(f"""SELECT r.number FROM byod_devices d JOIN byod_requests r ON r.id = d.request_id
                                WHERE d.mac = ? AND r.status IN ({marks}) AND r.valid_to >= ? AND r.id != ? LIMIT 1""",
                            (mac, *OPEN_STATUSES, today.isoformat(), exclude_request_id or "")).fetchone()

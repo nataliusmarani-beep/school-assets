@@ -139,3 +139,17 @@ def test_visibility_and_policy_gate(client, make_user):
     assert client.get("/api/byod/requests?scope=mine", headers=auth(stranger)).json() == []
     assert len(client.get("/api/byod/requests?scope=mine", headers=auth(teacher)).json()) == 1
     assert client.post("/api/byod/projects", headers=auth(leader), json=project()).status_code == 403             # leaders are view-only
+
+
+def test_mac_is_optional_but_must_be_valid_when_given():
+    import byod
+    base = {"kind": "laptop", "brand": "Apple", "model": "MacBook Air"}
+    assert byod.validate_devices([{**base}])[0]["mac"] == ""
+    assert byod.validate_devices([{**base, "mac": "  "}, {**base, "mac": ""}])[1]["mac"] == ""     # blanks are not duplicates
+    assert byod.validate_devices([{**base, "mac": "a1-b2-c3-d4-e5-f6"}])[0]["mac"] == "A1:B2:C3:D4:E5:F6"
+    try:
+        byod.validate_devices([{**base, "mac": "zz"}])
+    except byod.ByodError:
+        pass
+    else:
+        raise AssertionError("invalid MAC must still be rejected")

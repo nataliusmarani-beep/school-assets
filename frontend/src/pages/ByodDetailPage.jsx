@@ -34,7 +34,7 @@ function Step({ label, done, when, who }) {
 
 function printForm(v, t) {
   const rows = (pairs) => pairs.map(([k, val]) => `<tr><td class="k">${esc(k)}</td><td>${esc(val)}</td></tr>`).join("");
-  const devs = v.devices.map((d) => `<tr><td>${esc(t(`byod_kind_${d.kind}`))}</td><td>${esc(d.brand)} ${esc(d.model)}</td><td>${esc(d.os)} ${esc(d.os_version)}</td><td class="mono">${esc(d.mac)}</td></tr>`).join("");
+  const devs = v.devices.map((d) => `<tr><td>${esc(t(`byod_kind_${d.kind}`))}</td><td>${esc(d.brand)} ${esc(d.model)}</td><td>${esc(d.os)} ${esc(d.os_version)}</td><td class="mono">${esc(d.mac || "—")}</td></tr>`).join("");
   const terms = BYOD_STATEMENTS.map((k) => `<li>${esc(t(`byod_s_${k}`))}</li>`).join("");
   const sig = (img, name, when, label) => `<div class="sig"><div class="lbl">${esc(label)}</div>${img ? `<img src="${img}" />` : "<div class='blank'></div>"}<div>${esc(name || "—")}</div><div class="small">${esc(when ? fmt(when) : "")}</div></div>`;
   const w = window.open("", "_blank");
@@ -147,7 +147,7 @@ export default function ByodDetailPage() {
             <thead><tr className="text-left border-b border-slate-200">{["byod_devices", "byod_model", "byod_os", "byod_mac", "byod_serial"].map((k) => <th key={k} className="label-mono py-2 px-2">{t(k)}</th>)}</tr></thead>
             <tbody>{v.devices.map((d) => (
               <tr key={d.id} className="border-b border-slate-100"><td className="py-2 px-2">{t(`byod_kind_${d.kind}`)}</td><td className="py-2 px-2">{d.brand} {d.model}</td>
-                <td className="py-2 px-2">{d.os} {d.os_version}</td><td className="py-2 px-2 font-mono text-xs">{d.mac}</td><td className="py-2 px-2 text-xs">{d.serial || "—"}</td></tr>))}</tbody></table></div>
+                <td className="py-2 px-2">{d.os} {d.os_version}</td><td className="py-2 px-2 font-mono text-xs">{d.mac || "—"}</td><td className="py-2 px-2 text-xs">{d.serial || "—"}</td></tr>))}</tbody></table></div>
         </div>)}
 
       {(v.parent_signature || v.teacher_signature) && (

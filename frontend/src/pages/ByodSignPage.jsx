@@ -46,7 +46,7 @@ export default function ByodSignPage() {
   }, [token]);
 
   const allTicked = BYOD_STATEMENTS.every((k) => stmts[k]);
-  const devicesOk = devices.every((d) => d.brand.trim() && d.model.trim() && d.mac.trim());
+  const devicesOk = devices.every((d) => d.brand.trim() && d.model.trim());
   const canSubmit = allTicked && devicesOk && parent.name.trim().length >= 3 && parent.relation.trim().length >= 2 && signature && !busy;
   const setDev = (i, patch) => setDevices((ds) => ds.map((d, j) => (j === i ? { ...d, ...patch } : d)));
 
@@ -133,7 +133,7 @@ export default function ByodSignPage() {
               <div><label className={LABEL}>{t("byod_os_version")}</label><input className={INPUT} value={d.os_version} onChange={(e) => setDev(i, { os_version: e.target.value })} /></div>
               <div><label className={LABEL}>{t("byod_serial")}</label><input className={INPUT} value={d.serial} onChange={(e) => setDev(i, { serial: e.target.value })} /></div>
             </div>
-            <div><label className={LABEL}>{t("byod_mac")} *</label><input className={`${INPUT} font-mono`} placeholder="A1:B2:C3:D4:E5:F6" value={d.mac} onChange={(e) => setDev(i, { mac: e.target.value })} data-testid={`byod-mac-${i}`} /></div>
+            <div><label className={LABEL}>{t("byod_mac")} <span className="text-slate-400 normal-case">({t("byod_mac_optional")})</span></label><input className={`${INPUT} font-mono`} placeholder="A1:B2:C3:D4:E5:F6" value={d.mac} onChange={(e) => setDev(i, { mac: e.target.value })} data-testid={`byod-mac-${i}`} /></div>
           </div>))}
         {devices.length < form.max_devices && (
           <button onClick={() => setDevices((ds) => [...ds, emptyDevice()])} className="text-sm text-slate-700 inline-flex items-center gap-1 border border-slate-300 px-3 py-1.5"><Plus className="w-4 h-4" />{t("byod_pub_add_device")}</button>)}
