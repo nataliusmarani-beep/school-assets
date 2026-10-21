@@ -1004,9 +1004,14 @@ def validate_schedule(conn, data: dict, exclude_id: Optional[str] = None, now: O
     """Problems with a fixed schedule: bad periods / dates, too many units, another fixed class on the same cart at the
     same time, or already-approved bookings in the way. Returns a list of Indonesian messages (empty = fine)."""
     problems = []
-    r = conn.execute("SELECT capacity, campus, active FROM resources WHERE id = ?", (data["resource_id"],)).fetchone()
+    r = conn.execute("SELECT capacity, campus, active, kind, unit FROM resources WHERE id = ?", (data["resource_id"],)).fetchone()
     if not r or not r["active"]:
         return ["Cart/lab tidak ditemukan atau tidak aktif."]
+    # iPads belong to the unit that owns the cart (SD): another unit's class only gets them through a special loan request
+    g = re.match(r"\s*(\d+)", data.get("class_name") or "")
+    class_unit = ("SD" if 1 <= int(g.group(1)) <= 6 else "SMP" if 7 <= int(g.group(1)) <= 9 else "") if g else ""
+    if r["kind"] == "ipad_cart" and r["unit"] and class_unit and class_unit != r["unit"]:
+        return [f"iPad hanya untuk jadwal tetap unit {r['unit']}. Kelas {data['class_name'].strip()} ({class_unit}) memakai iPad lewat pengajuan peminjaman khusus."]
     if r["campus"] != data["campus"]:
         problems.append("Cart/lab bukan milik kampus ini.")
     if not 0 <= int(data["weekday"]) <= 6:

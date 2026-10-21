@@ -187,3 +187,15 @@ def test_existing_cart_gets_unit_from_name_and_error_names_unit(db):
         assert "unit SD" in e.message and "Jam pelajaran" in e.message
     else:
         raise AssertionError("expected BookingError")
+
+
+def test_ipad_cart_rejects_fixed_schedule_of_other_unit(client, make_user, db):
+    ict = make_user("ict_admin", KK)
+    client.put("/api/loans/periods", headers=auth(ict), json={"campus": KK, "unit": "SD", "periods": PERIODS})
+    r = client.post("/api/loans/resources", headers=auth(ict), json={"campus": KK, "name": "iPad Cart B", "kind": "ipad_cart", "capacity": 22, "unit": "SD"})
+    assert r.status_code == 200, r.text
+    rid = r.json()["id"]
+    bad = client.post("/api/loans/schedules", headers=auth(ict), json=schedule_body(rid, class_name="7A", units=2))
+    assert bad.status_code == 409 and "unit SD" in bad.text
+    ok = client.post("/api/loans/schedules", headers=auth(ict), json=schedule_body(rid, class_name="4B", units=2))
+    assert ok.status_code == 200, ok.text
