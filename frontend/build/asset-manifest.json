@@ -1,7 +1,7 @@
 {
   "files": {
-    "main.css": "/static/css/main.930cf487.css",
-    "main.js": "/static/js/main.c8cbf645.js",
+    "main.css": "/static/css/main.fdff3974.css",
+    "main.js": "/static/js/main.bd589fb2.js",
     "static/media/ypj-logo.png": "/static/media/ypj-logo.06eace968b2283edb77d.png",
     "static/media/ypj-hero.jpg": "/static/media/ypj-hero.37626d00ab9beaa19cbd.jpg",
     "static/media/id-loans-borrow.jpg": "/static/media/id-loans-borrow.795d030a61840072c616.jpg",
@@ -41,11 +41,11 @@
     "static/media/id-scan.jpg": "/static/media/id-scan.83145d7a369918602e0b.jpg",
     "static/media/en-scan.jpg": "/static/media/en-scan.df49fe8dbc966ee1fd04.jpg",
     "index.html": "/index.html",
-    "main.930cf487.css.map": "/static/css/main.930cf487.css.map",
-    "main.c8cbf645.js.map": "/static/js/main.c8cbf645.js.map"
+    "main.fdff3974.css.map": "/static/css/main.fdff3974.css.map",
+    "main.bd589fb2.js.map": "/static/js/main.bd589fb2.js.map"
   },
   "entrypoints": [
-    "static/css/main.930cf487.css",
-    "static/js/main.c8cbf645.js"
+    "static/css/main.fdff3974.css",
+    "static/js/main.bd589fb2.js"
   ]
 }
