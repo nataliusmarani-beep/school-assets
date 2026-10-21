@@ -23,7 +23,7 @@ import {
   School,
   Laptop,
 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useCallback, useRef, useState, useEffect } from "react";
 import api from "../../lib/api";
 import { toast } from "sonner";
 import { isManagerRole } from "../../lib/roles";
@@ -54,6 +54,10 @@ export default function AppLayout({ children }) {
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [backing, setBacking] = useState(false);
+  // SidebarContent below is re-created on every render, so its <nav> remounts and would reset
+  // to the top; keep the scroll offset here and restore it whenever the nav mounts.
+  const navScroll = useRef(0);
+  const navRef = useCallback((el) => { if (el) el.scrollTop = navScroll.current; }, []);
   const [pendingTransfers, setPendingTransfers] = useState(0);
   const [pendingLoans, setPendingLoans] = useState(0);
   const [pendingMine, setPendingMine] = useState(0);
@@ -136,7 +140,7 @@ export default function AppLayout({ children }) {
         </Link>
       </div>
 
-      <nav className="flex-1 px-3 py-6 overflow-y-auto">
+      <nav ref={navRef} onScroll={(e) => { navScroll.current = e.currentTarget.scrollTop; }} className="flex-1 px-3 py-6 overflow-y-auto">
         <div className="label-mono px-3 mb-3 text-slate-500">{t("nav_section")}</div>
         <div className="space-y-1">
           {visibleLinks.map((l) => (

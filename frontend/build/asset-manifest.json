@@ -1,7 +1,7 @@
 {
   "files": {
     "main.css": "/static/css/main.fdff3974.css",
-    "main.js": "/static/js/main.2bb11840.js",
+    "main.js": "/static/js/main.a3acbcde.js",
     "static/media/ypj-logo.png": "/static/media/ypj-logo.06eace968b2283edb77d.png",
     "static/media/ypj-hero.jpg": "/static/media/ypj-hero.37626d00ab9beaa19cbd.jpg",
     "static/media/id-loans-borrow.jpg": "/static/media/id-loans-borrow.795d030a61840072c616.jpg",
@@ -42,10 +42,10 @@
     "static/media/en-scan.jpg": "/static/media/en-scan.df49fe8dbc966ee1fd04.jpg",
     "index.html": "/index.html",
     "main.fdff3974.css.map": "/static/css/main.fdff3974.css.map",
-    "main.2bb11840.js.map": "/static/js/main.2bb11840.js.map"
+    "main.a3acbcde.js.map": "/static/js/main.a3acbcde.js.map"
   },
   "entrypoints": [
     "static/css/main.fdff3974.css",
-    "static/js/main.2bb11840.js"
+    "static/js/main.a3acbcde.js"
   ]
 }
