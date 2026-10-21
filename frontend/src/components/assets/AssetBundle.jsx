@@ -35,11 +35,11 @@ export default function AssetBundle({ bundle, t, testid = "asset-bundle" }) {
     });
   }, [base, sort]);
   const toggleSort = (key) => setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" }));
-  const Th = ({ k, label, right }) => {
+  const th = (k, label, right) => {
     const on = sort.key === k;
     const Icon = !on ? ArrowUpDown : sort.dir === "asc" ? ArrowUp : ArrowDown;
     return (
-      <th className={`px-4 py-3 ${right ? "text-right" : ""}`} aria-sort={on ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
+      <th key={k} className={`px-4 py-3 ${right ? "text-right" : ""}`} aria-sort={on ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
         <button type="button" onClick={() => toggleSort(k)} data-testid={`${testid}-sort-${k}`}
           className={`inline-flex items-center gap-1 uppercase hover:text-slate-900 ${on ? "text-slate-900" : ""}`}>
           {label} <Icon className={`w-3 h-3 ${on ? "" : "opacity-40"}`} strokeWidth={2} />
@@ -71,12 +71,12 @@ export default function AssetBundle({ bundle, t, testid = "asset-bundle" }) {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left label-mono bg-slate-50">
-                <Th k="asset" label={t("ma_col_asset")} />
-                <Th k="location" label={t("ma_col_location")} />
-                <Th k="category" label={t("ma_col_category")} />
-                <Th k="type" label={t("ma_col_type")} />
-                <Th k="status" label={t("ma_col_status")} />
-                <Th k="value" label={t("ma_col_value")} right />
+                {th("asset", t("ma_col_asset"))}
+                {th("location", t("ma_col_location"))}
+                {th("category", t("ma_col_category"))}
+                {th("type", t("ma_col_type"))}
+                {th("status", t("ma_col_status"))}
+                {th("value", t("ma_col_value"), true)}
               </tr>
             </thead>
             <tbody>
