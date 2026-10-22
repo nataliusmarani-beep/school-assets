@@ -44,7 +44,7 @@ function printForm(v, t) {
     table{border-collapse:collapse;width:100%}td,th{border:1px solid #e2e8f0;padding:5px 8px;text-align:left;vertical-align:top}td.k{width:32%;color:#475569;background:#f8fafc}.mono{font-family:monospace}
     .sigs{display:flex;gap:16px;margin-top:8px}.sig{flex:1;border:1px solid #cbd5e1;padding:8px}.sig img{height:70px;display:block}.blank{height:70px}.lbl{font-size:11px;text-transform:uppercase;color:#64748b}.small{font-size:11px;color:#64748b}
     ol{padding-left:18px}li{margin:3px 0}
-    .wm{position:fixed;top:50%;left:50%;width:288px;height:288px;margin:-144px 0 0 -144px;object-fit:contain;opacity:.07;z-index:-1;pointer-events:none;-webkit-print-color-adjust:exact;print-color-adjust:exact}</style></head><body>
+    .wm{position:fixed;top:50%;left:50%;width:288px;height:288px;margin:-144px 0 0 -144px;object-fit:contain;opacity:.10;z-index:-1;pointer-events:none;-webkit-print-color-adjust:exact;print-color-adjust:exact}</style></head><body>
     <img class="wm" src="${new URL(require("../ypj-logo.png"), window.location.origin).href}" alt="" />
     <h1>${esc(t("byod_pub_title"))}</h1><div class="small">${esc(v.number)} · ${esc(campusLabel(v.campus))} · ${esc(t(`byod_st_${v.effective_status}`))}</div>
     <h2>${esc(t("byod_info"))}</h2><table>${rows([[t("byod_student"), `${v.student_name} ${v.student_class ? "(" + v.student_class + ")" : ""} ${v.student_no}`], [t("byod_project"), `${v.project.name} ${v.project.subject || ""}`],
