@@ -89,7 +89,7 @@ function RequestDialog({ asset, onClose, onDone, t, canOverride }) {
           <div><Label className="label-mono">{t("ln_start")} *</Label>
             <DateTimeField value={f.start_at} onChange={(v) => set({ start_at: v })} testId="loan-start" /></div>
           <div><Label className="label-mono">{t("ln_end")} *</Label>
-            <DateTimeField value={f.end_at} onChange={(v) => set({ end_at: v })} testId="loan-end" /></div>
+            <DateTimeField value={f.end_at} onChange={(v) => set({ end_at: v })} testId="loan-end" tone="emerald" /></div>
         </div>
         {avail && (
           <div className={`text-xs px-3 py-2 border ${avail.blocked ? "border-rose-200 bg-rose-50 text-rose-700" : avail.ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"}`} data-testid="loan-availability">
@@ -173,7 +173,7 @@ function PoolRequestDialog({ device, onClose, onDone, t }) {
           <div><Label className="label-mono">{t("ln_start")} *</Label>
             <DateTimeField value={f.start_at} onChange={(v) => set({ start_at: v })} testId="pool-start" /></div>
           <div><Label className="label-mono">{t("ln_end")} *</Label>
-            <DateTimeField value={f.end_at} onChange={(v) => set({ end_at: v })} testId="pool-end" /></div>
+            <DateTimeField value={f.end_at} onChange={(v) => set({ end_at: v })} testId="pool-end" tone="emerald" /></div>
         </div>
         {avail && (
           <div className={`text-xs px-3 py-2 border ${tooMany || avail.free === 0 ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`} data-testid="pool-availability">

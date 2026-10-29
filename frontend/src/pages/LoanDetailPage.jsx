@@ -209,7 +209,7 @@ export default function LoanDetailPage() {
               <div><Label className="label-mono">{t("ln_start")}</Label>
                 <DateTimeField value={decision.start_at} onChange={(v) => setDecision({ ...decision, start_at: v })} /></div>
               <div><Label className="label-mono">{t("ln_end")}</Label>
-                <DateTimeField value={decision.end_at} onChange={(v) => setDecision({ ...decision, end_at: v })} /></div>
+                <DateTimeField value={decision.end_at} onChange={(v) => setDecision({ ...decision, end_at: v })} tone="emerald" /></div>
             </div>)}
           {isPool && decision.decision !== "rejected" && (
             <div data-testid="pool-picker">
