@@ -170,3 +170,17 @@ def test_backup_access_and_campus_copy(client, make_user, db, tmp_path):
     assert all(x[0] == "" for x in c.execute("SELECT password_hash FROM users"))
     assert c.execute("SELECT COUNT(*) FROM password_tokens").fetchone()[0] == 0
     c.close()
+
+
+def test_campus_admin_downloads_only_own_campus_reports(client, make_user, db):
+    import io, openpyxl
+    for aid, campus in (("r1", "YPJ Kuala Kencana"), ("r2", "YPJ TPRA")):
+        db.execute("INSERT INTO assets (id,name,asset_tag,category,campus,location,purchase_price,purchase_date,created_at,updated_at) "
+                   "VALUES (?,?,?,?,?,'x',0,'2026-01-01','t','t')", (aid, f"Aset {aid}", f"TAG-{aid}", "Furniture", campus))
+    db.commit()
+    ca = make_user("campus_admin", "YPJ Kuala Kencana")
+    for path in ("asset-inventory", "depreciation", "fully-depreciated", "faults", "compliance", "ownership"):
+        assert client.get(f"/api/reports/{path}", headers=auth(ca)).status_code == 200, path
+    ws = openpyxl.load_workbook(io.BytesIO(client.get("/api/reports/asset-inventory", headers=auth(ca)).content)).active
+    assert [r[0] for r in ws.iter_rows(min_row=2, values_only=True)] == ["Aset r1"]
+    assert client.get("/api/reports/asset-inventory", headers=auth(make_user("staff"))).status_code == 403

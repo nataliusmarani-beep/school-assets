@@ -72,6 +72,11 @@ export default function ReportsPage() {
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
+      // the error body of a blob request is a Blob: read the server's message out of it
+      const body = err?.response?.data;
+      if (body instanceof Blob) {
+        try { err.response.data = JSON.parse(await body.text()); } catch { /* keep the generic message */ }
+      }
       toast.error(formatErr(err));
     } finally {
       setDownloading((d) => ({ ...d, [report.key]: false }));

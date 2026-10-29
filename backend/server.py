@@ -645,10 +645,15 @@ def ensure_asset_manager(user: dict, campus: str, category: str):
 
 
 async def report_reader_required(user: dict = Depends(get_current_user)) -> dict:
-    """Reports are read-only: admins and leaders (management / foundation) may download them."""
-    if user.get("role") not in ADMIN_ROLES + ("leader",):
+    """Reports are read-only: admins, leaders (management / foundation) and Campus Admins (own campus only) may download them."""
+    if user.get("role") not in ADMIN_ROLES + ("leader", "campus_admin"):
         raise HTTPException(403, "Akses laporan tidak diizinkan")
     return user
+
+
+def _report_campus(user: dict) -> Optional[str]:
+    """Campus Admins only get the rows of their own campus; everyone else with report access gets all."""
+    return (user.get("campus") or "") if user.get("role") == "campus_admin" else None
 
 
 async def user_manager_required(user: dict = Depends(get_current_user)) -> dict:
@@ -3547,15 +3552,16 @@ def _style_header(ws):
 
 
 @api.get("/reports/asset-inventory")
-async def report_asset_inventory(_: dict = Depends(report_reader_required)):
+async def report_asset_inventory(user: dict = Depends(report_reader_required)):
+    campus = _report_campus(user)
     import openpyxl
     conn = get_conn()
     rows = conn.execute("""
         SELECT name, asset_tag, category, campus, location, status,
                assigned_to_name, purchase_price, purchase_date, useful_life_years,
                warranty_end_date, serial_number, supplier, created_at
-        FROM assets ORDER BY name
-    """).fetchall()
+        FROM assets WHERE (? IS NULL OR campus = ?) ORDER BY name
+    """, (campus, campus)).fetchall()
     conn.close()
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -3580,13 +3586,14 @@ async def report_asset_inventory(_: dict = Depends(report_reader_required)):
 
 
 @api.get("/reports/depreciation")
-async def report_depreciation(_: dict = Depends(report_reader_required)):
+async def report_depreciation(user: dict = Depends(report_reader_required)):
+    campus = _report_campus(user)
     import openpyxl
     conn = get_conn()
     rows = conn.execute("""
         SELECT name, asset_tag, category, campus, purchase_price, purchase_date, useful_life_years, residual_value
-        FROM assets ORDER BY name
-    """).fetchall()
+        FROM assets WHERE (? IS NULL OR campus = ?) ORDER BY name
+    """, (campus, campus)).fetchall()
     conn.close()
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -3618,11 +3625,12 @@ def _add_years(d, n: int):
 
 
 @api.get("/reports/fully-depreciated")
-async def report_fully_depreciated(_: dict = Depends(report_reader_required)):
+async def report_fully_depreciated(user: dict = Depends(report_reader_required)):
+    campus = _report_campus(user)
     """Assets still on the books (not retired / lost) that have reached the end of their useful life."""
     import openpyxl
     conn = get_conn()
-    rows = [dict(r) for r in conn.execute("SELECT * FROM assets ORDER BY name").fetchall()]
+    rows = [dict(r) for r in conn.execute("SELECT * FROM assets WHERE (? IS NULL OR campus = ?) ORDER BY name", (campus, campus)).fetchall()]
     conn.close()
     today = datetime.now(LOCAL_TZ).date()
     out = []
@@ -3660,7 +3668,8 @@ async def report_fully_depreciated(_: dict = Depends(report_reader_required)):
 
 
 @api.get("/reports/faults")
-async def report_faults(_: dict = Depends(report_reader_required)):
+async def report_faults(user: dict = Depends(report_reader_required)):
+    campus = _report_campus(user)
     import openpyxl
     conn = get_conn()
     rows = conn.execute("""
@@ -3669,8 +3678,9 @@ async def report_faults(_: dict = Depends(report_reader_required)):
                f.reported_by_name, f.resolution_note, f.resolved_at, f.created_at
         FROM faults f
         LEFT JOIN assets a ON a.id = f.asset_id
+        WHERE (? IS NULL OR a.campus = ?)
         ORDER BY f.created_at DESC
-    """).fetchall()
+    """, (campus, campus)).fetchall()
     conn.close()
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -3693,7 +3703,8 @@ async def report_faults(_: dict = Depends(report_reader_required)):
 
 
 @api.get("/reports/compliance")
-async def report_compliance(_: dict = Depends(report_reader_required)):
+async def report_compliance(user: dict = Depends(report_reader_required)):
+    campus = _report_campus(user)
     import openpyxl
     conn = get_conn()
     rows = conn.execute("""
@@ -3702,8 +3713,9 @@ async def report_compliance(_: dict = Depends(report_reader_required)):
                a.name AS asset_name, a.asset_tag, c.created_at
         FROM compliance c
         LEFT JOIN assets a ON a.id = c.asset_id
+        WHERE (? IS NULL OR a.campus = ?)
         ORDER BY c.due_date
-    """).fetchall()
+    """, (campus, campus)).fetchall()
     conn.close()
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -3726,7 +3738,8 @@ async def report_compliance(_: dict = Depends(report_reader_required)):
 
 
 @api.get("/reports/ownership")
-async def report_ownership(_: dict = Depends(report_reader_required)):
+async def report_ownership(user: dict = Depends(report_reader_required)):
+    campus = _report_campus(user)
     import openpyxl
     conn = get_conn()
     rows = conn.execute("""
@@ -3734,8 +3747,9 @@ async def report_ownership(_: dict = Depends(report_reader_required)):
                ol.from_name, ol.to_name, ol.note, ol.by_name, ol.at
         FROM ownership_logs ol
         LEFT JOIN assets a ON a.id = ol.asset_id
+        WHERE (? IS NULL OR a.campus = ?)
         ORDER BY ol.at DESC
-    """).fetchall()
+    """, (campus, campus)).fetchall()
     conn.close()
     wb = openpyxl.Workbook()
     ws = wb.active
