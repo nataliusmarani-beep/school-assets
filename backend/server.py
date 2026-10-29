@@ -4332,7 +4332,7 @@ async def pool_availability(device_type: str, start_at: str, end_at: str, campus
         conn.close()
         raise HTTPException(400, e.message)
     conn.close()
-    return {"device_type": device_type, "label": booking_engine.pool_label(device_type), "free": len(free),
+    return {"device_type": device_type, "label": booking_engine.pool_label(device_type), "free": booking_engine.pool_free_count(free),
             "max_units": int(policy.get("max_units") or 10)}
 
 

@@ -127,3 +127,22 @@ def test_unit_in_cart_respects_cart_capacity(client, make_user, db, monkeypatch)
     assert r.status_code == 409
     assert client.post("/api/loans", headers=auth(other), json={"resource_id": "c1", "units": 1, "start_at": "2026-08-05T09:00",
                                                                 "end_at": "2026-08-05T10:00", "terms_accepted": True}).status_code == 200
+
+
+def test_availability_counts_only_what_the_cart_can_still_give(client, make_user, db, monkeypatch):
+    """A cart of 5 laptops whose fixed schedule holds 4 of them: only 1 may be lent, not all 5."""
+    monkeypatch.setattr(server, "_local_now", lambda: server.datetime(2026, 8, 3, 9, 0))
+    seed(db, n_laptops=5, n_ipads=0)
+    db.execute("INSERT INTO resources (id,campus,name,kind,capacity,category,created_at) VALUES ('c1',?,'Laptop Cart A','laptop_cart',5,'IT Equipment','t')", (KK,))
+    db.execute("UPDATE asset_loan_settings SET resource_id = 'c1'")
+    db.execute("INSERT INTO school_periods (id,campus,period_no,start_time,end_time,unit) VALUES ('p1',?,1,'08:00','09:00','')", (KK,))
+    db.execute("INSERT INTO fixed_schedules (id,campus,academic_year,semester,resource_id,class_name,weekday,period_from,period_to,units,valid_from,valid_to,created_at) "
+               "VALUES ('s1',?,'2026/2027','1','c1','7A',2,1,1,4,'2026-07-01','2026-12-31','t')", (KK,))   # 2026-08-05 is a Wednesday
+    db.commit()
+    teacher = make_user("staff", KK)
+    q = {"device_type": "laptop", "start_at": "2026-08-05T08:00", "end_at": "2026-08-05T09:00"}
+    assert client.get("/api/loans/pool/availability", headers=auth(teacher), params=q).json()["free"] == 1
+    assert ask(client, teacher, 2, start=q["start_at"], end=q["end_at"]).status_code == 409
+    assert ask(client, teacher, 1, start=q["start_at"], end=q["end_at"]).status_code == 200
+    q2 = {**q, "start_at": "2026-08-05T10:00", "end_at": "2026-08-05T11:00"}       # outside the scheduled period
+    assert client.get("/api/loans/pool/availability", headers=auth(teacher), params=q2).json()["free"] == 5

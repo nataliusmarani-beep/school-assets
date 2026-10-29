@@ -485,6 +485,17 @@ def pool_free_units(conn, campus: str, device_type: str, start: datetime, end: d
     return free
 
 
+def pool_free_count(free: list) -> int:
+    """How many units may really be lent: a cart gives at most `cart_free` of its units, the rest is held by its fixed schedule."""
+    per_cart, loose = {}, 0
+    for u in free:
+        if u["resource_id"]:
+            per_cart.setdefault(u["resource_id"], [u["cart_free"], 0])[1] += 1
+        else:
+            loose += 1
+    return loose + sum(min(cap, n) for cap, n in per_cart.values())
+
+
 def validate_pool_selection(conn, booking: dict, unit_ids: list, start: datetime, end: datetime) -> None:
     """ICT's pick must be free units of the right kind, within what each cart can still give for that window."""
     if len(set(unit_ids)) != len(unit_ids):
@@ -627,7 +638,7 @@ def reserve(conn, *, data: dict, now: datetime, override: bool = False, override
             max_units = int(check["policy"].get("max_units") or 10)
             if units > max_units and not override:
                 raise BookingError(f"Satu permintaan maksimal {max_units} unit untuk kategori ini.", "max_units")
-            free_n = len(pool_free_units(conn, data["campus"], device_type, start, end))
+            free_n = pool_free_count(pool_free_units(conn, data["campus"], device_type, start, end))
             if units > free_n:
                 raise BookingError(f"Tidak tersedia pada waktu tersebut. Tersisa {free_n} {pool_label(device_type)}.", "conflict")
         else:
