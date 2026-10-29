@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { toast } from "sonner";
 import { ArrowLeft } from "lucide-react";
 import { StatusBadge } from "./LoansPage";
-import { UnitCheck, CartCheck, emptyUnit, emptyCart, cartBody, fileSrc, fmtDateTime } from "../components/loans/LoanForms";
+import { UnitCheck, CartCheck, PhotoField, emptyUnit, emptyCart, cartBody, fileSrc, fmtDateTime } from "../components/loans/LoanForms";
 import { campusLabel } from "../lib/campus";
 
 function Row({ k, children }) {
@@ -48,7 +48,7 @@ export default function LoanDetailPage() {
   const [loan, setLoan] = useState(null);
   const [dialog, setDialog] = useState(null);       // decide | supervisor | cancel | out | in
   const [busy, setBusy] = useState(false);
-  const [decision, setDecision] = useState({ decision: "approved", units: "", start_at: "", end_at: "", note: "" });
+  const [decision, setDecision] = useState({ decision: "approved", units: "", start_at: "", end_at: "", note: "", before_photo: "" });
   const [note, setNote] = useState("");
   const [unit, setUnit] = useState(null);
   const [cart, setCart] = useState(emptyCart());
@@ -93,13 +93,17 @@ export default function LoanDetailPage() {
   const cartRows = dialog === "in"
     ? loan.units.filter((u) => u.status === "out").map((u) => ({ asset_id: u.asset_id, name: u.asset_name, tag: u.asset_tag, who: u.student_name ? `${u.student_name}${u.student_no ? ` (${u.student_no})` : ""}` : "" }))
     : (loan.cart_units || []).map((u) => ({ asset_id: u.id, name: u.name, tag: u.asset_tag, who: "" }));
-  const openOut = () => { setUnit(emptyUnit(loan.asset_id, loan.accessories)); setCart(emptyCart()); setDialog("out"); };
+  const openOut = () => {
+    setUnit({ ...emptyUnit(loan.asset_id, loan.accessories), photo: loan.before_photo || "" });   // photo attached when approving
+    setCart({ ...emptyCart(), groupPhoto: loan.before_photo || "" });
+    setDialog("out");
+  };
   const openIn = () => {
     const out = loan.units.find((u) => u.status === "out");
     setUnit(emptyUnit(out?.asset_id || loan.asset_id, loan.accessories)); setCart(emptyCart()); setDialog("in");
   };
   const openDecide = () => {
-    setDecision({ decision: "approved", units: String(loan.units_requested), start_at: loan.start_at, end_at: loan.end_at, note: "" });
+    setDecision({ decision: "approved", units: String(loan.units_requested), start_at: loan.start_at, end_at: loan.end_at, note: "", before_photo: loan.before_photo || "" });
     setPicked([]); setCands(null);
     setDialog("decide");
   };
@@ -148,6 +152,8 @@ export default function LoanDetailPage() {
           <Row k={t("ln_decided_by")}>{loan.decided_by_name ? `${loan.decided_by_name} · ${fmtDateTime(loan.decided_at)}` : ""}</Row>
           <Row k={t("ln_decision_note")}>{loan.decision_note}</Row>
           {loan.accessories.length > 0 && <Row k={t("ln_accessories")}>{loan.accessories.join(", ")}</Row>}
+          {loan.before_photo && <div className="py-2 text-sm"><div className="text-slate-500 mb-1">{t("ln_photo_before")}</div>
+            <a href={fileSrc(loan.before_photo)} target="_blank" rel="noreferrer"><img src={fileSrc(loan.before_photo)} alt="" className="h-28 object-cover border border-slate-200" data-testid="loan-before-photo" /></a></div>}
           {loan.faults?.length > 0 && <div className="mt-3 text-sm text-rose-700">{t("ln_fault_created")} <Link to="/faults" className="underline">{t("nav_faults")}</Link></div>}
         </div>
       </div>
@@ -223,10 +229,13 @@ export default function LoanDetailPage() {
               <Button type="button" variant="outline" size="sm" className="rounded-none mt-2" disabled={!cands}
                 onClick={() => setPicked(cands.units.slice(0, Number(decision.units) || 0).map((u) => u.id))} data-testid="pool-autopick">{t("pool_autopick")}</Button>
             </div>)}
+          {decision.decision !== "rejected" && (
+            <div data-testid="decide-before-photo"><PhotoField label={t("ln_photo_before")} value={decision.before_photo}
+              onChange={(p) => setDecision({ ...decision, before_photo: p })} hint={t("ln_photo_before_hint")} /></div>)}
           <div><Label className="label-mono">{t("ln_decision_note")}{decision.decision !== "approved" ? " *" : ""}</Label>
             <Textarea rows={2} value={decision.note} onChange={(e) => setDecision({ ...decision, note: e.target.value })} className="mt-2 rounded-none" data-testid="loan-decision-note" /></div>
           <DialogFooter><Button className="rounded-none" disabled={busy || (isPool && decision.decision !== "rejected" && picked.length !== (Number(decision.units) || 0))} data-testid="loan-decision-save"
-            onClick={() => act(() => api.put(`/loans/${id}/decide`, { decision: decision.decision, units: decision.units ? Number(decision.units) : null, start_at: decision.start_at || null, end_at: decision.end_at || null, note: decision.note, unit_ids: isPool && decision.decision !== "rejected" ? picked : [] }), t("ln_saved"))}>{t("save_changes")}</Button></DialogFooter>
+            onClick={() => act(() => api.put(`/loans/${id}/decide`, { decision: decision.decision, units: decision.units ? Number(decision.units) : null, start_at: decision.start_at || null, end_at: decision.end_at || null, note: decision.note, unit_ids: isPool && decision.decision !== "rejected" ? picked : [], before_photo: decision.decision !== "rejected" ? decision.before_photo : "" }), t("ln_saved"))}>{t("save_changes")}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 

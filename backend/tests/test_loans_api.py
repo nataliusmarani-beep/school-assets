@@ -119,3 +119,19 @@ def test_catalog_and_settings(client, make_user, db):
     assert r.status_code == 200 and r.json()["accessories"] == ["Charger", "Tas"] and r.json()["max_loan_days"] == 2
     assert client.put("/api/loans/policies", headers=auth(ict), json={"category": "AV Equipment", "campus": TPRA}).status_code == 403
     assert client.put("/api/loans/policies", headers=auth(ict), json={"category": "AV Equipment", "campus": KK, "max_loan_days": 5}).status_code == 200
+
+
+def test_before_photo_attached_at_approval_is_used_at_check_out(client, make_user, db, monkeypatch):
+    monkeypatch.setattr(server, "_local_now", lambda: server.datetime(2026, 8, 3, 9, 0))
+    seed_camera(db)
+    teacher = make_user("staff", KK)
+    ict = make_user("ict_admin", KK)
+    loan = client.post("/api/loans", headers=auth(teacher), json=request_body(
+        start_at="2026-08-05T08:00", end_at="2026-08-06T15:00")).json()
+    bad = client.put(f"/api/loans/{loan['id']}/decide", headers=auth(ict), json={"decision": "approved", "before_photo": "loans/none.jpg"})
+    assert bad.status_code == 400
+    d = client.put(f"/api/loans/{loan['id']}/decide", headers=auth(ict), json={"decision": "approved", "before_photo": "loans/p.jpg"})
+    assert d.status_code == 200 and d.json()["before_photo"] == "loans/p.jpg"
+    monkeypatch.setattr(server, "_local_now", lambda: server.datetime(2026, 8, 5, 8, 30))
+    out = client.post(f"/api/loans/{loan['id']}/check-out", headers=auth(ict), json={"units": [full_cycle_unit(photo="")]})
+    assert out.status_code == 200 and out.json()["units"][0]["pre_photo"] == "loans/p.jpg"

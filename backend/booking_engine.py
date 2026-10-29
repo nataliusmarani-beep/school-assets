@@ -246,6 +246,7 @@ def init_booking_schema(conn):
     _ensure_column(conn, "resources", "category", "TEXT NOT NULL DEFAULT 'IT Equipment'")
     _ensure_column(conn, "bookings", "schedule_id", "TEXT")
     _ensure_column(conn, "bookings", "device_type", "TEXT NOT NULL DEFAULT ''")          # 'laptop' | 'ipad' for kind 'pool'
+    _ensure_column(conn, "bookings", "before_photo", "TEXT NOT NULL DEFAULT ''")           # condition photo ICT attaches when approving
     _ensure_column(conn, "loan_policies", "max_units", "INTEGER NOT NULL DEFAULT 10")      # most units one request may ask for
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_bookings_fixed_session ON bookings(schedule_id, start_at) WHERE schedule_id IS NOT NULL")
     for category, days, approval, leave in DEFAULT_POLICIES:
@@ -664,13 +665,15 @@ def reserve(conn, *, data: dict, now: datetime, override: bool = False, override
 
 def decide(conn, *, booking_id: str, decision: str, by_id: str, by_name: str, now: datetime, units: Optional[int] = None,
            start_at: Optional[str] = None, end_at: Optional[str] = None, note: str = "",
-           unit_ids: Optional[list] = None) -> dict:
+           unit_ids: Optional[list] = None, before_photo: str = "") -> dict:
     """ICT decision: 'approved' | 'partially_approved' | 'rejected'. Partial approval may lower the units and/or move
     the time. Availability is re-checked under the write lock because the world may have changed since the request."""
     if decision not in ("approved", "partially_approved", "rejected"):
         raise BookingError("Keputusan tidak valid.", "decision")
     if decision != "approved" and not note.strip():
         raise BookingError("Alasan/catatan wajib diisi bila disetujui sebagian atau ditolak.", "note")
+    if before_photo and decision != "rejected" and not _photo_ok(conn, before_photo):
+        raise BookingError("Foto sebelum tidak ditemukan, unggah ulang.", "photo")
     if conn.in_transaction:
         conn.commit()
     conn.execute("BEGIN IMMEDIATE")
@@ -702,9 +705,10 @@ def decide(conn, *, booking_id: str, decision: str, by_id: str, by_name: str, no
                 if not avail["ok"]:
                     raise BookingError(f"Bentrok: hanya tersisa {avail['free']} unit pada waktu tersebut.", "conflict")
         conn.execute("""UPDATE bookings SET status = ?, units_approved = ?, start_at = ?, end_at = ?, decision_note = ?,
-                        decided_by = ?, decided_by_name = ?, decided_at = ?, updated_at = ? WHERE id = ?""",
+                        decided_by = ?, decided_by_name = ?, decided_at = ?, updated_at = ?, before_photo = ? WHERE id = ?""",
                      (decision, None if decision == "rejected" else approved_units, start.strftime(FMT), end.strftime(FMT),
-                      note.strip(), by_id, by_name, now.strftime(FMT), now.strftime(FMT), booking_id))
+                      note.strip(), by_id, by_name, now.strftime(FMT), now.strftime(FMT),
+                      before_photo if decision != "rejected" else "", booking_id))
         if b["kind"] == "pool":      # the chosen units are held for this request from now on
             conn.execute("DELETE FROM booking_units WHERE booking_id = ? AND status = 'reserved'", (booking_id,))
             if decision != "rejected":
@@ -899,7 +903,7 @@ def check_out(conn, *, booking_id: str, units: list, now: datetime, by_id: str, 
             missing = _check_accessories(conn, aid, u.get("accessories"))
             if (missing or u["physical"] != "baik" or u["function"] != "normal") and not (u.get("note") or "").strip():
                 raise BookingError("Catatan wajib diisi bila kondisi tidak sempurna atau kelengkapan kurang.", "note")
-            photo = u.get("photo") or group_photo
+            photo = u.get("photo") or group_photo or b["before_photo"]
             if not _photo_ok(conn, photo):
                 raise BookingError("Foto sebelum wajib diunggah.", "photo")
             u["_photo"], u["_missing"] = photo, missing

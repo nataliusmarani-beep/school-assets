@@ -5439,6 +5439,7 @@ class DecideIn(BaseModel):
     end_at: Optional[str] = None
     note: str = ""
     unit_ids: List[str] = []           # laptop / iPad requests: the exact units ICT lends out
+    before_photo: str = ""             # optional condition photo, reused as the "before" photo at check-out
 
 
 @api.put("/loans/{bid}/decide")
@@ -5450,7 +5451,7 @@ async def decide_loan(bid: str, body: DecideIn, user: dict = Depends(get_current
         raise HTTPException(403, "Hanya Admin ICT untuk kampus dan kategori ini yang dapat memutuskan")
     b = _engine_call(booking_engine.decide, conn, booking_id=bid, decision=body.decision, by_id=user["id"], by_name=user["name"],
                      now=_local_now(), units=body.units, start_at=body.start_at, end_at=body.end_at, note=body.note,
-                     unit_ids=body.unit_ids)
+                     unit_ids=body.unit_ids, before_photo=body.before_photo)
     _, a = _loan_context(conn, bid)
     req_user = conn.execute("SELECT email FROM users WHERE id = ?", (b["requester_id"],)).fetchone()
     if req_user:
