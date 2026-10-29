@@ -167,8 +167,8 @@ function PoolRequestDialog({ device, onClose, onDone, t }) {
       <DialogContent className="rounded-none max-w-xl max-h-[90vh] overflow-y-auto" data-testid="pool-request-dialog">
         <DialogHeader><DialogTitle>{t("pool_request_title")}: {label}</DialogTitle></DialogHeader>
         <p className="text-xs text-slate-500 border border-slate-200 bg-slate-50 px-3 py-2">{t("pool_hint")}</p>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div><Label className="label-mono">{t("pool_units")} *</Label>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="sm:col-span-2"><Label className="label-mono">{t("pool_units")} *</Label>
             <Input type="number" min="1" value={f.units} onChange={(e) => set({ units: e.target.value })} className="mt-2 rounded-none" data-testid="pool-units" /></div>
           <div><Label className="label-mono">{t("ln_start")} *</Label>
             <DateTimeField value={f.start_at} onChange={(v) => set({ start_at: v })} testId="pool-start" /></div>

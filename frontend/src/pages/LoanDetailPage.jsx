@@ -94,9 +94,12 @@ export default function LoanDetailPage() {
   const cartRows = dialog === "in"
     ? loan.units.filter((u) => u.status === "out").map((u) => ({ asset_id: u.asset_id, name: u.asset_name, tag: u.asset_tag, who: u.student_name ? `${u.student_name}${u.student_no ? ` (${u.student_no})` : ""}` : "" }))
     : (loan.cart_units || []).map((u) => ({ asset_id: u.id, name: u.name, tag: u.asset_tag, who: "" }));
+  // off-schedule cart / laptop / iPad loans: the devices that leave are scanned or ticked one by one
+  const pickCount = isCart && (isPool || loan.kind === "off_schedule") ? (loan.units_approved || loan.units_requested) : null;
   const openOut = () => {
     setUnit({ ...emptyUnit(loan.asset_id, loan.accessories), photo: loan.before_photo || "" });   // photo attached when approving
-    setCart({ ...emptyCart(), groupPhoto: loan.before_photo || "" });
+    setCart({ ...emptyCart(), groupPhoto: loan.before_photo || "",
+      excluded: pickCount != null ? new Set((loan.cart_units || []).map((u) => u.id)) : new Set() });
     setDialog("out");
   };
   const openIn = () => {
@@ -203,8 +206,8 @@ export default function LoanDetailPage() {
               <SelectContent>{["approved", "partially_approved", "rejected"].map((s) => <SelectItem key={s} value={s}>{t(`ln_st_${s}`)}</SelectItem>)}</SelectContent>
             </Select></div>
           {decision.decision !== "rejected" && (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div><Label className="label-mono">{t("ln_units")}</Label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="sm:col-span-2"><Label className="label-mono">{t("ln_units")}</Label>
                 <Input type="number" min="1" max={loan.units_requested} value={decision.units} onChange={(e) => setDecision({ ...decision, units: e.target.value })} className="mt-2 rounded-none" /></div>
               <div><Label className="label-mono">{t("ln_start")}</Label>
                 <DateTimeField value={decision.start_at} onChange={(v) => setDecision({ ...decision, start_at: v })} /></div>
@@ -260,9 +263,9 @@ export default function LoanDetailPage() {
           <DialogHeader><DialogTitle>{dialog === "in" ? t("ln_act_checkin") : t("ln_act_checkout")}</DialogTitle></DialogHeader>
           <div className="text-xs text-slate-500">{a.name} · <span className="font-mono">{a.asset_tag}</span> · {t("ln_borrower")}: {loan.requester_name}</div>
           {isCart
-            ? <CartCheck t={t} mode={dialog} units={cartRows} value={cart} onChange={setCart} />
+            ? <CartCheck t={t} mode={dialog} units={cartRows} value={cart} onChange={setCart} pick={pickCount} />
             : unit && <UnitCheck t={t} mode={dialog} accessories={loan.accessories} value={unit} onChange={setUnit} />}
-          <DialogFooter><Button className="rounded-none" disabled={busy} data-testid="loan-check-save"
+          <DialogFooter><Button className="rounded-none" disabled={busy || (dialog === "out" && pickCount != null && (cartRows.length - cart.excluded.size < 1 || cartRows.length - cart.excluded.size > pickCount))} data-testid="loan-check-save"
             onClick={() => act(() => api.post(`/loans/${id}/${dialog === "in" ? "check-in" : "check-out"}`, isCart ? cartBody(cart) : { units: [unit] }), t("ln_saved"))}>{t("save_changes")}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
