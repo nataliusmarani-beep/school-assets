@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import api, { formatErr } from "../lib/api";
+import { compressToMaxBytes, ASSET_PHOTO_MAX_BYTES } from "../lib/image";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
@@ -205,20 +206,18 @@ export default function AssetFormPage() {
     return res.data;
   };
 
-  const MAX_PHOTO_BYTES = 100 * 1024;       // 100 KB
   const MAX_DOC_BYTES   = 1024 * 1024;     // 1 MB
 
   const handlePhoto = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > MAX_PHOTO_BYTES) {
-      toast.error(t("photo_too_large"));
-      e.target.value = "";
-      return;
-    }
     setPhotoUploading(true);
     try {
-      const r = await uploadFile(file);
+      // any size may be picked: it is shrunk to at most 100 KB before it is stored
+      const small = file.size <= ASSET_PHOTO_MAX_BYTES && /^image\/(jpeg|png|webp)$/.test(file.type)
+        ? file : await compressToMaxBytes(file, ASSET_PHOTO_MAX_BYTES, [1280, 1024, 800, 640, 520, 420, 340]);
+      if (!small) { toast.error(t("photo_too_large")); return; }
+      const r = await uploadFile(small);
       update("photo_path", r.path);
       toast.success(t("photo_uploaded"));
     } catch (err) {
