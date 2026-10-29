@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import api, { formatErr } from "../lib/api";
 import { useLang } from "../context/LangContext";
 import { useAuth } from "../context/AuthContext";
+import { canWrite } from "../lib/roles";
 import { Button } from "../components/ui/button";
 import { toast } from "sonner";
 import QrScanner from "../components/loans/QrScanner";
@@ -57,6 +58,9 @@ export default function ScanPage() {
             {result.suggest && (
               <Link to={`/loans/${result.suggest.booking_id}`}>
                 <Button className="rounded-none" data-testid="scan-action">{t(result.suggest.action === "check_in" ? "ln_act_checkin" : "ln_act_checkout")}</Button></Link>)}
+            {canWrite(user?.role) && result.borrowable && result.state === "available" && (
+              <Link to={`/loans?asset=${a.id}`}><Button variant={result.suggest ? "outline" : "default"} className="rounded-none" data-testid="scan-borrow">{t("qr_borrow")}</Button></Link>)}
+            {!result.borrowable && !result.suggest && <span className="text-xs text-slate-500" data-testid="scan-not-borrowable">{t("qr_not_borrowable")}</span>}
             {manager && !result.suggest && result.borrowable && <span className="text-xs text-slate-500">{t("qr_no_action")}</span>}
             <Link to={`/assets/${a.id}`}><Button variant="outline" className="rounded-none">{t("qr_open_asset")}</Button></Link>
           </div>
