@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import api, { formatErr } from "../lib/api";
 import { useLang } from "../context/LangContext";
+import DateTimeField from "../components/loans/DateTimeField";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -202,13 +203,13 @@ export default function LoanDetailPage() {
               <SelectContent>{["approved", "partially_approved", "rejected"].map((s) => <SelectItem key={s} value={s}>{t(`ln_st_${s}`)}</SelectItem>)}</SelectContent>
             </Select></div>
           {decision.decision !== "rejected" && (
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div><Label className="label-mono">{t("ln_units")}</Label>
                 <Input type="number" min="1" max={loan.units_requested} value={decision.units} onChange={(e) => setDecision({ ...decision, units: e.target.value })} className="mt-2 rounded-none" /></div>
               <div><Label className="label-mono">{t("ln_start")}</Label>
-                <Input type="datetime-local" value={decision.start_at} onChange={(e) => setDecision({ ...decision, start_at: e.target.value })} className="mt-2 rounded-none" /></div>
+                <DateTimeField value={decision.start_at} onChange={(v) => setDecision({ ...decision, start_at: v })} /></div>
               <div><Label className="label-mono">{t("ln_end")}</Label>
-                <Input type="datetime-local" value={decision.end_at} onChange={(e) => setDecision({ ...decision, end_at: e.target.value })} className="mt-2 rounded-none" /></div>
+                <DateTimeField value={decision.end_at} onChange={(v) => setDecision({ ...decision, end_at: v })} /></div>
             </div>)}
           {isPool && decision.decision !== "rejected" && (
             <div data-testid="pool-picker">

@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import api, { formatErr } from "../lib/api";
 import { useLang } from "../context/LangContext";
 import { useAuth } from "../context/AuthContext";
+import DateTimeField from "../components/loans/DateTimeField";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -84,11 +85,11 @@ function RequestDialog({ asset, onClose, onDone, t, canOverride }) {
           {p.requires_approval ? t("ln_policy_approval") : t("ln_policy_auto")} ·{" "}
           {p.can_leave_campus ? t("ln_policy_takehome_ok") : t("ln_policy_takehome_no")}
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div><Label className="label-mono">{t("ln_start")} *</Label>
-            <Input type="datetime-local" value={f.start_at} onChange={(e) => set({ start_at: e.target.value })} className="mt-2 rounded-none" data-testid="loan-start" /></div>
+            <DateTimeField value={f.start_at} onChange={(v) => set({ start_at: v })} testId="loan-start" /></div>
           <div><Label className="label-mono">{t("ln_end")} *</Label>
-            <Input type="datetime-local" value={f.end_at} onChange={(e) => set({ end_at: e.target.value })} className="mt-2 rounded-none" data-testid="loan-end" /></div>
+            <DateTimeField value={f.end_at} onChange={(v) => set({ end_at: v })} testId="loan-end" /></div>
         </div>
         {avail && (
           <div className={`text-xs px-3 py-2 border ${avail.blocked ? "border-rose-200 bg-rose-50 text-rose-700" : avail.ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"}`} data-testid="loan-availability">
@@ -166,13 +167,13 @@ function PoolRequestDialog({ device, onClose, onDone, t }) {
       <DialogContent className="rounded-none max-w-xl max-h-[90vh] overflow-y-auto" data-testid="pool-request-dialog">
         <DialogHeader><DialogTitle>{t("pool_request_title")}: {label}</DialogTitle></DialogHeader>
         <p className="text-xs text-slate-500 border border-slate-200 bg-slate-50 px-3 py-2">{t("pool_hint")}</p>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div><Label className="label-mono">{t("pool_units")} *</Label>
             <Input type="number" min="1" value={f.units} onChange={(e) => set({ units: e.target.value })} className="mt-2 rounded-none" data-testid="pool-units" /></div>
           <div><Label className="label-mono">{t("ln_start")} *</Label>
-            <Input type="datetime-local" value={f.start_at} onChange={(e) => set({ start_at: e.target.value })} className="mt-2 rounded-none" data-testid="pool-start" /></div>
+            <DateTimeField value={f.start_at} onChange={(v) => set({ start_at: v })} testId="pool-start" /></div>
           <div><Label className="label-mono">{t("ln_end")} *</Label>
-            <Input type="datetime-local" value={f.end_at} onChange={(e) => set({ end_at: e.target.value })} className="mt-2 rounded-none" data-testid="pool-end" /></div>
+            <DateTimeField value={f.end_at} onChange={(v) => set({ end_at: v })} testId="pool-end" /></div>
         </div>
         {avail && (
           <div className={`text-xs px-3 py-2 border ${tooMany || avail.free === 0 ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`} data-testid="pool-availability">
