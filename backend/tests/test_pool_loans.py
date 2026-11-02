@@ -375,3 +375,14 @@ def test_counter_loan_turns_scanned_units_into_one_loan(client, make_user, db, m
     # the normal hand-over works on it
     out = client.post(f"/api/loans/{r.json()['id']}/check-out", headers=auth(ict), json={"units": [unit(a) for a in pick]})
     assert out.status_code == 200 and out.json()["status"] == "in_use"
+
+
+def test_counter_loan_handed_over_in_one_step_with_group_photo(client, make_user, db, monkeypatch):
+    monkeypatch.setattr(server, "_local_now", lambda: server.datetime(2026, 8, 5, 10, 0))
+    ids = seed(db)
+    teacher, ict = make_user("staff", KK), make_user("ict_admin", KK)
+    pick = ids["laptop"][:5 - 1]
+    r = client.post("/api/loans/counter", headers=auth(ict), json={"asset_ids": pick, "borrower_id": teacher["id"], "end_at": "2026-08-05T14:00"}).json()
+    out = client.post(f"/api/loans/{r['id']}/check-out", headers=auth(ict), json={"all_units": True, "group_photo": "loans/p.jpg", "units": []})
+    assert out.status_code == 200, out.text
+    assert out.json()["status"] == "in_use" and sorted(u["asset_id"] for u in out.json()["units"] if u["status"] == "out") == sorted(pick)

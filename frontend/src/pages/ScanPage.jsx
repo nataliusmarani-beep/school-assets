@@ -33,12 +33,26 @@ export default function ScanPage() {
   const [until, setUntil] = useState(() => { const d = new Date(Date.now() + 4 * 3600e3); d.setMinutes(0, 0, 0); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}T${String(d.getHours()).padStart(2, "0")}:00`; });
   useEffect(() => { if (multi && !users.length) api.get("/users").then((r) => setUsers(r.data)).catch(() => {}); }, [multi, users.length]);
   const [userQ, setUserQ] = useState("");
+  const [photo, setPhoto] = useState("");                // one group photo of all the units = hand them over right away
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const pickPhoto = async (file) => {
+    if (!file) return;
+    setPhotoBusy(true);
+    try {
+      const fd = new FormData(); fd.append("file", file);
+      const r = await api.post("/upload?purpose=loan", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      setPhoto(r.data.path);
+    } catch (e) { toast.error(formatErr(e)); } finally { setPhotoBusy(false); }
+  };
   const shownUsers = useMemo(() => users.filter((u) => `${u.name} ${u.email}`.toLowerCase().includes(userQ.toLowerCase())).slice(0, 50), [users, userQ]);
   const createCounterLoan = async () => {
     setBusy(true);
     try {
       const r = await api.post("/loans/counter", { asset_ids: basket.map((x) => x.id), borrower_id: borrower, end_at: until, purpose, class_name: className });
-      toast.success(t("qr_multi_created").replace("{n}", r.data.units));
+      if (photo) {                                   // all units fine + group photo = checked out in the same step
+        try { await api.post(`/loans/${r.data.id}/check-out`, { all_units: true, group_photo: photo, units: [] }); toast.success(t("qr_multi_handed").replace("{n}", r.data.units)); }
+        catch (e) { toast.error(formatErr(e)); }
+      } else toast.success(t("qr_multi_created").replace("{n}", r.data.units));
       navigate(`/loans/${r.data.id}`);
     } catch (e) { toast.error(formatErr(e)); } finally { setBusy(false); }
   };
@@ -93,8 +107,13 @@ export default function ScanPage() {
               <div><div className="label-mono mb-1">{t("qr_multi_until")}</div><input type="datetime-local" className="border border-slate-200 px-3 py-2 text-sm w-full" value={until} onChange={(e) => setUntil(e.target.value)} data-testid="scan-until" /></div>
               <div><div className="label-mono mb-1">{t("qr_multi_class")}</div><input className="border border-slate-200 px-3 py-2 text-sm w-full" value={className} onChange={(e) => setClassName(e.target.value)} /></div>
               <div className="sm:col-span-2"><div className="label-mono mb-1">{t("qr_multi_purpose")}</div><input className="border border-slate-200 px-3 py-2 text-sm w-full" value={purpose} onChange={(e) => setPurpose(e.target.value)} /></div>
+              <div className="sm:col-span-2"><div className="label-mono mb-1">{t("qr_multi_photo")}</div>
+                <input type="file" accept="image/*" capture="environment" onChange={(e) => pickPhoto(e.target.files[0])} className="text-sm" data-testid="scan-group-photo" />
+                {photoBusy && <span className="text-xs text-slate-400 ml-2">…</span>}
+                {photo && <span className="text-xs text-emerald-700 ml-2">✓ {t("qr_multi_photo_ok")}</span>}
+                <div className="text-xs text-slate-500 mt-1">{t("qr_multi_photo_hint")}</div></div>
               <div className="sm:col-span-2 text-xs text-slate-500">{t("qr_multi_terms")}</div>
-              <div className="sm:col-span-2"><Button className="rounded-none" disabled={busy || !borrower || !until} onClick={createCounterLoan} data-testid="scan-create-loan">{t("qr_multi_create").replace("{n}", basket.length)}</Button></div>
+              <div className="sm:col-span-2"><Button className="rounded-none" disabled={busy || !borrower || !until} onClick={createCounterLoan} data-testid="scan-create-loan">{t(photo ? "qr_multi_create_out" : "qr_multi_create").replace("{n}", basket.length)}</Button></div>
             </div>)}
         </div>)}
       {result && !multi && <Button variant="outline" className="rounded-none mt-3" onClick={() => setResult(null)} data-testid="scan-next">{t("qr_scan_next")}</Button>}
