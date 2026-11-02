@@ -18,10 +18,16 @@ function BarRow({ value }) {
   const ref = useRef(null);
   useEffect(() => {
     if (!ref.current) return;
-    try { JsBarcode(ref.current, value, { format: "CODE128", width: 3, height: 70, displayValue: false, margin: 16, background: "#ffffff" }); }
-    catch (e) { ref.current.innerHTML = ""; }
+    const svg = ref.current;
+    try {
+      JsBarcode(svg, value, { format: "CODE128", width: 3, height: 70, displayValue: false, margin: 16, background: "#ffffff" });
+      // every label gets the same box: the bars stretch to fill it, whatever the code length
+      const w = parseFloat(svg.getAttribute("width")); const h = parseFloat(svg.getAttribute("height"));
+      svg.removeAttribute("width"); svg.removeAttribute("height"); svg.removeAttribute("style");
+      svg.setAttribute("viewBox", `0 0 ${w} ${h}`); svg.setAttribute("preserveAspectRatio", "none");
+    } catch (e) { svg.innerHTML = ""; }
   }, [value]);
-  return <svg ref={ref} className="w-full h-auto" role="img" aria-label={value} />;
+  return <svg ref={ref} className="w-full h-32 block" role="img" aria-label={value} />;
 }
 
 export default function QrLabelsPage() {
