@@ -20,8 +20,15 @@ export default function QrScanner({ onScan, t, repeatMs = 2500, active = true })
   useEffect(() => {
     if (!active) return undefined;
     let stream; let raf; let stopped = false; let lastTry = 0; let busy = false;
-    const emit = (text) => {
+    // a code is accepted only after the same text was read in several frames in a row, so a single misread
+    // (or a neighbouring label sliding through the frame) never reaches the loan screens
+    const streak = { text: "", n: 0, at: 0 };
+    const emit = (text, need = 3) => {
       const now = Date.now();
+      if (!text) return;
+      if (text !== streak.text || now - streak.at > 1200) { streak.text = text; streak.n = 0; }
+      streak.n += 1; streak.at = now;
+      if (streak.n < need) return;
       if (text && (text !== last.current.text || now - last.current.at > repeatMs)) {
         last.current = { text, at: now };
         handler.current(text);
@@ -57,10 +64,10 @@ export default function QrScanner({ onScan, t, repeatMs = 2500, active = true })
         ctx.drawImage(v, 0, 0, c.width, c.height);
         const img = ctx.getImageData(0, 0, c.width, c.height);
         const code = jsQR(img.data, img.width, img.height, { inversionAttempts: "dontInvert" });
-        if (code && code.data) emit(code.data);
-        else if (!busy && Date.now() - lastTry > 250) {
+        if (code && code.data) emit(code.data, 2);
+        else if (!busy && Date.now() - lastTry > 150) {
           busy = true; lastTry = Date.now();
-          readBars(c).then((txt) => { if (!stopped) emit(txt); }).catch(() => {}).finally(() => { busy = false; });
+          readBars(c).then((txt) => { if (!stopped) emit(txt, 3); }).catch(() => {}).finally(() => { busy = false; });
         }
       }
       raf = requestAnimationFrame(tick);
