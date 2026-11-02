@@ -47,7 +47,7 @@ export default function QrLabelsPage() {
 
   return (
     <div className="p-6 lg:p-10 max-w-[1100px] mx-auto" data-testid="qr-labels-page">
-      <style>{`@media print { body * { visibility: hidden; } #qr-sheet, #qr-sheet * { visibility: visible; } #qr-sheet { position: absolute; left: 0; top: 0; width: 100%; grid-template-columns: repeat(2, 1fr) !important; } }`}</style>
+      <style>{`@media print { body * { visibility: hidden; } #qr-sheet, #qr-sheet * { visibility: visible; } #qr-sheet { position: absolute; left: 0; top: 0; width: 100%; grid-template-columns: repeat(2, 1fr) !important; column-gap: 2cm !important; } }`}</style>
       <Link to="/scan" className="text-sm text-slate-500 hover:text-slate-900 inline-flex items-center gap-1 mb-4"><ArrowLeft className="w-4 h-4" /> {t("qr_title")}</Link>
       <h1 className="font-display text-3xl font-semibold tracking-tight text-slate-900">{t("qr_print_labels")}</h1>
       <p className="text-sm text-slate-500 mt-2">{t("qr_labels_hint")}</p>
@@ -64,13 +64,11 @@ export default function QrLabelsPage() {
             <span className="truncate">{a.name}</span><span className="font-mono text-xs text-slate-400">{a.asset_tag}</span></label>))}
         {shown.length === 0 && <div className="text-slate-500 p-2">{t("ln_no_borrowable")}</div>}
       </div>
-      <div id="qr-sheet" className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div id="qr-sheet" className="grid grid-cols-1 sm:grid-cols-2 gap-y-3" style={{ columnGap: "2cm" }}>
         {chosen.map((a) => (
           <div key={a.id} className="border border-slate-300 p-2 text-center break-inside-avoid" data-testid={`qr-label-${a.asset_tag}`}>
             <BarRow value={a.asset_tag} />
-            <div className="font-mono text-sm font-semibold">{a.asset_tag}</div>
-            <div className="text-[11px] text-slate-600 leading-tight">{a.name}</div>
-            <div className="text-[10px] text-slate-400">YPJ School</div>
+            <div className="text-[11px] text-slate-700 leading-tight mt-0.5 truncate">{a.name} | {a.asset_tag} | YPJ School</div>
           </div>))}
       </div>
     </div>
