@@ -4,8 +4,13 @@ import { Input } from "../ui/input";
 import { Button } from "../ui/button";
 import { Camera } from "lucide-react";
 
+// the guide rectangle, as a fraction of the preview (left/right inset x, top/bottom inset y)
+const GUIDE = { x: 0.06, y: 0.22 };
+
 /* Camera QR reader. Calls onScan(text) for every new code (the same code is ignored for `repeatMs`).
    Falls back to typing the asset code when the camera is unavailable or the label is damaged. */
+const dist = (f, c) => { const b = f.boundingBox; return Math.hypot(b.x + b.width / 2 - c.width / 2, b.y + b.height / 2 - c.height / 2); };
+
 export default function QrScanner({ onScan, t, repeatMs = 2500, active = true, paused = false }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -59,7 +64,9 @@ export default function QrScanner({ onScan, t, repeatMs = 2500, active = true, p
           detector.current = new window.BarcodeDetector({ formats: want.filter((f) => have.includes(f)) });
         }
         const found = await detector.current.detect(c);
-        if (found[0]?.rawValue) return found[0].rawValue;
+        // several labels in view: take the one nearest the middle of the guide
+        const mid = found.filter((f) => f.rawValue).sort((a, b) => dist(a, c) - dist(b, c))[0];
+        if (mid) return mid.rawValue;
         // the phone's detector missed this frame: let zxing have every other frame
         if ((flip += 1) % 2) return "";
       }
@@ -69,9 +76,15 @@ export default function QrScanner({ onScan, t, repeatMs = 2500, active = true, p
       const v = videoRef.current; const c = canvasRef.current;
       if (stopped || !v || !c) return;
       if (v.readyState === v.HAVE_ENOUGH_DATA) {
-        c.width = v.videoWidth; c.height = v.videoHeight;
+        // read only what is inside the green guide, so the labels above / below / beside it can never be picked up
+        const cw = v.clientWidth || 1; const ch = v.clientHeight || 1;
+        const k = Math.max(cw / v.videoWidth, ch / v.videoHeight);          // object-cover scale
+        const ox = (v.videoWidth - cw / k) / 2; const oy = (v.videoHeight - ch / k) / 2;
+        const sx = Math.max(0, ox + GUIDE.x * cw / k); const sy = Math.max(0, oy + GUIDE.y * ch / k);
+        const sw = Math.min(v.videoWidth - sx, (1 - 2 * GUIDE.x) * cw / k); const sh = Math.min(v.videoHeight - sy, (1 - 2 * GUIDE.y) * ch / k);
+        c.width = Math.round(sw); c.height = Math.round(sh);
         const ctx = c.getContext("2d", { willReadFrequently: true });
-        ctx.drawImage(v, 0, 0, c.width, c.height);
+        ctx.drawImage(v, sx, sy, sw, sh, 0, 0, c.width, c.height);
         const img = ctx.getImageData(0, 0, c.width, c.height);
         const code = jsQR(img.data, img.width, img.height, { inversionAttempts: "dontInvert" });
         if (code && code.data) emit(code.data, 2);
@@ -103,7 +116,7 @@ export default function QrScanner({ onScan, t, repeatMs = 2500, active = true, p
       ) : (
         <div className="relative bg-black aspect-video overflow-hidden">
           <video ref={videoRef} className="w-full h-full object-cover" muted playsInline />
-          <div className={`absolute inset-8 border-2 pointer-events-none ${paused ? "border-emerald-400" : "border-white/70"}`} />
+          <div style={{ left: `${GUIDE.x * 100}%`, right: `${GUIDE.x * 100}%`, top: `${GUIDE.y * 100}%`, bottom: `${GUIDE.y * 100}%` }} className={`absolute border-2 pointer-events-none ${paused ? "border-emerald-400" : "border-white/70"}`} />
         </div>)}
       {!error && <div className="text-xs text-slate-500 font-mono truncate" data-testid="qr-seen">{seen ? `${t("qr_reading")}: ${seen}` : t("qr_searching")}</div>}
       <canvas ref={canvasRef} className="hidden" />
