@@ -279,3 +279,21 @@ def test_restore_asset_names_from_old_records(client, db):
     names = {r["id"]: r["name"] for r in db.execute("SELECT id, name FROM assets WHERE id IN ('r1','r2')")}
     assert names == {"r1": "Student's Desktop #15", "r2": "8880001"}
     assert server.restore_asset_names(db) == 0
+
+
+def test_bulk_unit_by_selection_and_by_name_rules(client, make_user, db):
+    seed(db, n_laptops=0, n_ipads=0)
+    rows = (("b1", "Student's Desktop #22", "Desktop"), ("b2", "Student's Laptop #3", "Laptop"), ("b3", "PAUD iPad 1", "iPad"),
+            ("b4", "SDBos's iPad 10", "iPad"), ("b5", "YPJ-FI's iPad43", "iPad"), ("b6", "Printer", "Printer"))
+    for aid, name, typ in rows:
+        db.execute("INSERT INTO assets (id,name,asset_tag,category,item_type,campus,location,serial_number,unit,purchase_price,purchase_date,created_at,updated_at) "
+                   "VALUES (?,?,?,?,?,?,'R','','',0,'2026-01-01','t','t')", (aid, name, aid, "IT Equipment", typ, KK))
+    db.commit()
+    admin = make_user("super_admin", "")
+    r = client.post("/api/assets/bulk-unit", headers=auth(admin), json={}).json()
+    assert r["updated"] == 4 and r["skipped"] == 2
+    units = {x["id"]: x["unit"] for x in db.execute("SELECT id, unit FROM assets")}
+    assert units["b1"] == "smp" and units["b2"] == "sd" and units["b3"] == "paud" and units["b4"] == "sd" and units["b5"] == "" and units["b6"] == ""
+    r = client.post("/api/assets/bulk-unit", headers=auth(admin), json={"unit": "sd", "asset_ids": ["b5", "b6"]}).json()
+    assert r["updated"] == 2
+    assert client.post("/api/assets/bulk-unit", headers=auth(admin), json={"unit": "xx", "asset_ids": ["b5"]}).status_code == 400

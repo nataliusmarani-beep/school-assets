@@ -2082,6 +2082,61 @@ def restore_asset_names(conn) -> int:
     return n
 
 
+UNIT_CODES = ("paud", "sd", "smp", "admin", "shared")
+
+
+def guess_unit(name: str, item_type: str = "") -> Optional[str]:
+    """The school unit an asset obviously belongs to, from its name: Student's Desktop = SMP computer lab, Student's Laptop = SD
+    computer lab, an iPad whose name says PAUD / SD. None when the name does not say."""
+    n = (name or "").lower()
+    if "student" in n and "desktop" in n:
+        return "smp"
+    if "student" in n and "laptop" in n:
+        return "sd"
+    if "ipad" in n or (item_type or "").lower() == "ipad":
+        if "paud" in n:
+            return "paud"
+        if re.search(r"(^|[^a-z])sd", n):
+            return "sd"
+    return None
+
+
+class BulkUnitIn(BaseModel):
+    unit: Optional[str] = None            # set this unit on asset_ids; omitted = fill empty units by name rules
+    asset_ids: Optional[List[str]] = None
+
+
+@api.post("/assets/bulk-unit")
+async def bulk_set_unit(body: BulkUnitIn, user: dict = Depends(asset_manager_required)):
+    """Set the owning school unit on many assets at once, or (no unit given) fill the empty ones from their names."""
+    if body.unit is not None and body.unit not in UNIT_CODES:
+        raise HTTPException(400, "Unit tidak dikenal")
+    conn = get_conn()
+    if body.unit is not None:
+        if not body.asset_ids:
+            conn.close(); raise HTTPException(400, "Pilih aset terlebih dahulu")
+        rows = [conn.execute("SELECT id, name, campus, category, item_type FROM assets WHERE id = ?", (i,)).fetchone() for i in body.asset_ids]
+    else:
+        rows = conn.execute("SELECT id, name, campus, category, item_type FROM assets WHERE COALESCE(unit, '') = ''").fetchall()
+    changed, skipped, counts = 0, 0, {}
+    for r in rows:
+        if not r:
+            continue
+        unit = body.unit if body.unit is not None else guess_unit(r["name"], r["item_type"])
+        if not unit:
+            skipped += 1
+            continue
+        try:
+            ensure_asset_manager(user, r["campus"], r["category"])
+        except HTTPException:
+            skipped += 1
+            continue
+        conn.execute("UPDATE assets SET unit = ?, updated_at = ? WHERE id = ?", (unit, now_iso(), r["id"]))
+        changed += 1; counts[unit] = counts.get(unit, 0) + 1
+    conn.commit(); conn.close()
+    return {"updated": changed, "skipped": skipped, "by_unit": counts}
+
+
 @api.post("/assets")
 async def create_asset(body: AssetIn, user: dict = Depends(asset_manager_required)):
     ensure_asset_manager(user, body.campus or "", body.category)

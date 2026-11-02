@@ -17,6 +17,7 @@ import { isManagerRole, isCampusBound } from "../lib/roles";
 import { ownerName } from "../lib/format";
 import BulkTransferDialog from "../components/assets/BulkTransferDialog";
 import { campusLabel } from "../lib/campus";
+import { toast } from "sonner";
 
 const CAMPUSES = ["YPJ Kuala Kencana", "YPJ TPRA"];
 
@@ -335,6 +336,16 @@ export default function AssetsListPage() {
   const [exporting, setExporting] = useState(false);
   const [selected, setSelected] = useState(new Set());
   const [showBulk, setShowBulk] = useState(false);
+  const [bulkUnit, setBulkUnit] = useState("");
+
+  const applyUnit = async (body) => {
+    try {
+      const r = await api.post("/assets/bulk-unit", body);
+      const by = Object.entries(r.data.by_unit).map(([u, n]) => `${t(`unit_${u}`)} ${n}`).join(", ");
+      toast.success(`${t("bu_done").replace("{n}", r.data.updated)}${by ? ` (${by})` : ""}${r.data.skipped ? ` · ${t("bu_skipped").replace("{n}", r.data.skipped)}` : ""}`);
+      setSelected(new Set()); setBulkUnit(""); load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+  };
 
   const doExport = async () => {
     setExporting(true);
@@ -498,7 +509,17 @@ export default function AssetsListPage() {
         <div className="mb-3 flex items-center gap-4 bg-blue-50 border border-blue-200 px-4 py-2.5 text-sm" data-testid="bulk-transfer-bar">
           <span className="font-medium text-blue-900">{t("bt_selected").replace("{n}", selected.size)}</span>
           <button onClick={() => setShowBulk(true)} className="bg-blue-800 hover:bg-blue-900 text-white px-3 py-1.5" data-testid="bulk-transfer-button">{t("bt_transfer")}</button>
+          <select value={bulkUnit} onChange={(e) => setBulkUnit(e.target.value)} className="border border-blue-200 bg-white px-2 py-1.5" data-testid="bulk-unit-select">
+            <option value="">{t("bu_pick")}</option>
+            {["paud", "sd", "smp", "admin", "shared"].map((u) => <option key={u} value={u}>{t(`unit_${u}`)}</option>)}
+          </select>
+          <button disabled={!bulkUnit} onClick={() => applyUnit({ unit: bulkUnit, asset_ids: [...selected] })} className="bg-blue-800 hover:bg-blue-900 disabled:opacity-40 text-white px-3 py-1.5" data-testid="bulk-unit-apply">{t("bu_apply")}</button>
           <button onClick={() => setSelected(new Set())} className="text-slate-600 hover:text-slate-900" data-testid="bulk-clear">{t("bt_clear")}</button>
+        </div>
+      )}
+      {isAdmin && (
+        <div className="mb-3 text-xs text-slate-500">
+          <button onClick={() => applyUnit({})} className="underline hover:text-slate-900" data-testid="auto-unit">{t("bu_auto")}</button> — {t("bu_auto_hint")}
         </div>
       )}
 
