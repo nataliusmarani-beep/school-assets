@@ -437,13 +437,17 @@ def test_share_photo_to_numbered_copies(client, make_user, db):
     assert client.post("/api/assets/p5/share-photo", headers=auth(admin), json={}).status_code == 400
 
 
-def test_fixed_asset_labels_exclude_borrowable(client, make_user, db):
+def test_label_list_splits_lent_from_fixed(client, make_user, db):
     seed(db, n_laptops=1, n_ipads=0)
-    db.execute("INSERT INTO assets (id,name,asset_tag,category,item_type,campus,location,serial_number,unit,purchase_price,purchase_date,created_at,updated_at) "
-               "VALUES ('fx1','Seiko wall clock #1','2042406','Furniture','',?,'B3 TRC Room','','',0,'2026-01-01','t','t')", (KK,))
+    for aid, name, typ in (("fx1", "Seiko wall clock #1", ""), ("fx2", "Lenovo 11th Gen", "Laptop"), ("fx3", "MSI 12th Gen", "Desktop"),
+                           ("fx4", "Dell 24", "Monitor"), ("fx5", "Canon", "Camera"), ("fx6", "SDBos's iPad 10", "iPad")):
+        db.execute("INSERT INTO assets (id,name,asset_tag,category,item_type,campus,location,serial_number,unit,purchase_price,purchase_date,created_at,updated_at) "
+                   "VALUES (?,?,?,?,?,?,'B3 TRC Room','','',0,'2026-01-01','t','t')", (aid, name, aid, "IT Equipment", typ, KK))
     db.commit()
     admin = make_user("super_admin", "")
-    r = client.get("/api/assets/fixed-labels", headers=auth(admin), params={"campus": KK})
-    assert r.status_code == 200, r.text
-    ids = {x["id"] for x in r.json()}
-    assert ids == {"fx1"}
+    def ids(g):
+        r = client.get("/api/assets/label-list", headers=auth(admin), params={"campus": KK, "group": g})
+        assert r.status_code == 200, r.text
+        return {x["id"] for x in r.json()}
+    assert ids("fixed") == {"fx1", "fx3", "fx4"}
+    assert ids("loan") == {"laptop0", "fx2", "fx5", "fx6"}

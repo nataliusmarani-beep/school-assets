@@ -2668,22 +2668,37 @@ async def bulk_import_assets(
             "pending_confirmation": len(new_assignments), "owner_ignored": owner_ignored}
 
 
-@api.get("/assets/fixed-labels")
-async def fixed_asset_labels(user: dict = Depends(get_current_user), campus: Optional[str] = None):
-    """Assets that are not lent out (furniture, wall clocks, assigned equipment...): the ones that get a sticker for asset checks only."""
+LENT_TYPE_RE = re.compile(r"laptop|notebook|chromebook|ipad|tablet|camera|kamera", re.I)
+FIXED_TYPE_RE = re.compile(r"desktop|monitor|\bpc\b", re.I)
+
+
+def is_lent_asset(item_type: str, name: str, borrowable) -> bool:
+    """Lent out: laptops, iPads / tablets and cameras (or anything marked borrowable) - but never desktops and monitors."""
+    text = f"{item_type or ''} {name or ''}"
+    if FIXED_TYPE_RE.search(item_type or "") or (not (item_type or "").strip() and FIXED_TYPE_RE.search(name or "")):
+        return False
+    return bool(borrowable) or bool(LENT_TYPE_RE.search(text))
+
+
+@api.get("/assets/label-list")
+async def label_list(group: str = "fixed", user: dict = Depends(get_current_user), campus: Optional[str] = None):
+    """Assets for the sticker sheet. group=loan: laptops, iPads, cameras (lent out); group=fixed: everything else (furniture, desktops, monitors...)."""
     conn = get_conn()
-    conds = ["COALESCE(s.borrowable, 0) = 0", "a.status != 'retired'"]
+    conds = ["a.status != 'retired'"]
     params = []
     own_campus = (user.get("campus") or "").strip()
     if user["role"] in ("staff",) + CAMPUS_BOUND and own_campus:
         conds.append("a.campus = ?"); params.append(own_campus)
     elif campus:
         conds.append("a.campus = ?"); params.append(campus)
-    rows = conn.execute(f"""SELECT a.id, a.name, a.asset_tag, a.category, a.campus, a.location, a.unit, a.assigned_to_name
+    rows = conn.execute(f"""SELECT a.id, a.name, a.asset_tag, a.category, a.campus, a.location, a.unit, a.item_type, a.assigned_to_name,
+                                   COALESCE(s.borrowable, 0) AS borrowable
                             FROM assets a LEFT JOIN asset_loan_settings s ON s.asset_id = a.id
                             WHERE {' AND '.join(conds)} ORDER BY a.category, a.name""", params).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    want_lent = group == "loan"
+    return [{k: v for k, v in dict(r).items() if k != "borrowable"} for r in rows
+            if is_lent_asset(r["item_type"], r["name"], r["borrowable"]) == want_lent]
 
 
 @api.get("/assets/{aid}")

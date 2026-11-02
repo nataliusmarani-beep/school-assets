@@ -43,7 +43,7 @@ export default function QrLabelsPage() {
 
   useEffect(() => {
     setQ(""); setCat("");
-    api.get(mode === "loan" ? "/loans/assets" : "/assets/fixed-labels", { params: { campus } })
+    api.get("/assets/label-list", { params: { campus, group: mode } })
       .then((r) => { setAssets(r.data); setSel(mode === "loan" ? new Set(r.data.map((a) => a.id)) : new Set()); })
       .catch((e) => toast.error(formatErr(e)));
   }, [campus, mode]);
