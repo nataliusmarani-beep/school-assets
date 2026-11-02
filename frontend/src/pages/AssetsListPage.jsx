@@ -354,7 +354,7 @@ export default function AssetsListPage() {
     try {
       const r = await api.post("/assets/bulk-unit", body);
       const by = Object.entries(r.data.by_unit).map(([u, n]) => `${t(`unit_${u}`)} ${n}`).join(", ");
-      toast.success(`${t("bu_done").replace("{n}", r.data.updated)}${by ? ` (${by})` : ""}${r.data.skipped ? ` · ${t("bu_skipped").replace("{n}", r.data.skipped)}` : ""}`);
+      toast.success(`${t("bu_done").replace("{n}", r.data.updated)}${by ? ` (${by})` : ""}${r.data.skipped ? ` · ${t("unit_skipped").replace("{n}", r.data.skipped)}` : ""}`);
       setSelected(new Set()); setBulkUnit(""); load();
     } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
@@ -531,7 +531,7 @@ export default function AssetsListPage() {
       )}
       {isAdmin && (
         <div className="mb-3 text-xs text-slate-500">
-          <button onClick={() => applyUnit({})} className="underline hover:text-slate-900" data-testid="auto-unit">{t("bu_auto")}</button> — {t("bu_auto_hint")}
+          <button onClick={() => applyUnit({})} className="underline hover:text-slate-900" data-testid="auto-unit">{t("unit_auto")}</button> — {t("bu_auto_hint")}
           <div className="mt-1">
             <button onClick={() => restoreRef.current?.click()} className="underline hover:text-slate-900" data-testid="restore-names">{t("rn_button")}</button> — {t("rn_hint")}
             <input ref={restoreRef} type="file" accept=".xlsx" className="hidden" onChange={(e) => restoreNames(e.target.files[0])} />
