@@ -55,13 +55,13 @@ const DEFAULT_USEFUL_LIFE = {
 
 const FIELD_CLS = "mt-2 rounded-none border-slate-300";
 
-function TextField({ label, value, onChange, testid, mono, required, placeholder, type = "text", span2, step, min, hint }) {
+function TextField({ label, value, onChange, testid, mono, required, placeholder, type = "text", span2, step, min, hint, locked }) {
   return (
     <div className={span2 ? "md:col-span-2" : ""}>
       <Label className="label-mono">{label}</Label>
       <Input type={type} step={step} min={min} value={value ?? ""} required={required}
-        placeholder={placeholder} onChange={(e) => onChange(e.target.value)}
-        className={`${FIELD_CLS} ${mono ? "font-mono" : ""}`} data-testid={testid} />
+        placeholder={placeholder} onChange={(e) => onChange(e.target.value)} readOnly={locked} disabled={locked}
+        className={`${FIELD_CLS} ${mono ? "font-mono" : ""} ${locked ? "bg-slate-50 text-slate-500" : ""}`} data-testid={testid} />
       {hint && <p className="mt-1.5 text-xs text-slate-400">{hint}</p>}
     </div>
   );
@@ -308,8 +308,8 @@ export default function AssetFormPage() {
         <Section title={t("section_basic")}>
           <TextField label={t("asset_code")} value={form.asset_code} onChange={(v)=>update("asset_code",v)}
             placeholder={t("asset_code_placeholder")} mono testid="asset-code-input"/>
-          <TextField label={t("asset_tag")} value={form.asset_tag} onChange={(v)=>update("asset_tag",v)}
-            required placeholder={t("asset_tag_placeholder")} mono testid="asset-tag-input"/>
+          <TextField label={t("asset_tag")} value={isEdit ? form.asset_tag : ""} onChange={() => {}} locked
+            placeholder={t("asset_tag_auto")} hint={t("asset_tag_auto_hint")} mono testid="asset-tag-input"/>
           <TextField label={t("asset_name")} value={form.name} onChange={(v)=>update("name",v)}
             required span2 testid="asset-name-input"/>
           <div>

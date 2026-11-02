@@ -243,3 +243,25 @@ def test_scan_finds_asset_by_numeric_name(client, make_user, db, monkeypatch):
     r = client.get("/api/loans/scan", headers=auth(ict), params={"code": "9661732"})
     assert r.status_code == 200 and r.json()["asset"]["id"] == "n1"
     assert client.get("/api/loans/scan", headers=auth(ict), params={"code": "5550001"}).status_code == 404
+
+
+def test_barcode_ids_are_generated_locked_and_backfilled(client, make_user, db):
+    seed(db, n_laptops=0, n_ipads=0)
+    admin = make_user("super_admin", "")
+    body = {"name": "Meja A", "asset_tag": "MANUAL-1", "category": "Furniture", "location": "R1", "purchase_price": 1, "purchase_date": "2026-01-01", "campus": KK}
+    a = client.post("/api/assets", headers=auth(admin), json=body).json()
+    b = client.post("/api/assets", headers=auth(admin), json={**body, "name": "Meja B"}).json()
+    assert a["asset_tag"].isdigit() and len(a["asset_tag"]) == 7 and b["asset_tag"].isdigit() and a["asset_tag"] != b["asset_tag"]
+    client.put(f"/api/assets/{a['id']}", headers=auth(admin), json={"asset_tag": "HACK", "location": "R2"})
+    got = client.get(f"/api/assets/{a['id']}", headers=auth(admin)).json()
+    assert got["asset_tag"] == a["asset_tag"] and got["location"] == "R2"
+    # backfill: text tags become numbers (numeric names are reused), numeric tags stay, duplicates are renumbered
+    for aid, name, tag in (("o1", "9661732", "Student's Desktop #15"), ("o2", "Kursi", "KURSI-1"), ("o3", "Kursi 2", a["asset_tag"])):
+        db.execute("INSERT INTO assets (id,name,asset_tag,category,item_type,campus,location,serial_number,purchase_price,purchase_date,created_at,updated_at) "
+                   "VALUES (?,?,?,?,?,?,'R','',0,'2026-01-01','t','t')", (aid, name, tag, "Furniture", "Chair", KK))
+    db.commit()
+    assert server.ensure_barcode_ids(db) == 3        # o1, o2 and one of the two assets sharing a tag
+    tags = {r["id"]: r["asset_tag"] for r in db.execute("SELECT id, asset_tag FROM assets")}
+    assert tags["o1"] == "9661732" and tags["o2"].isdigit() and tags["o3"].isdigit()
+    assert len(set(tags.values())) == len(tags)
+    assert server.ensure_barcode_ids(db) == 0

@@ -9,6 +9,7 @@ import hashlib
 import html as html_mod
 import secrets
 import re
+import random
 import uuid
 import sqlite3
 import json
@@ -722,7 +723,7 @@ class LoginIn(BaseModel):
 
 class AssetIn(BaseModel):
     name: str
-    asset_tag: str
+    asset_tag: Optional[str] = ""      # ignored: the barcode number is generated
     category: str
     asset_type: Optional[str] = "School Asset"
     description: Optional[str] = ""
@@ -2024,12 +2025,50 @@ async def list_assets(
     return assets
 
 
+def gen_barcode_id(conn) -> str:
+    """A fresh random 7-digit barcode number, unique among all asset tags (and numeric names / ID codes a scan could also match)."""
+    taken = set()
+    for r in conn.execute("SELECT asset_tag, name, asset_code FROM assets").fetchall():
+        taken.update(v for v in (r["asset_tag"], r["name"], r["asset_code"]) if v)
+    while True:
+        code = str(random.randint(1000000, 9999999))
+        if code not in taken:
+            return code
+
+
+def ensure_barcode_ids(conn) -> int:
+    """Give every asset a numeric, unique barcode tag. A numeric tag is kept; a text tag becomes the asset's numeric name when
+    that is free, else a new random number. Safe to run at every start (does nothing once all assets are numbered)."""
+    rows = conn.execute("SELECT id, name, asset_tag FROM assets ORDER BY created_at, id").fetchall()
+    used, todo = set(), []
+    names = {x["name"] for x in rows if x["name"]}
+    for r in rows:
+        tag = (r["asset_tag"] or "").strip()
+        if tag.isdigit() and tag not in used:
+            used.add(tag)
+        else:
+            todo.append(r)
+    for r in todo:
+        nm = (r["name"] or "").strip()
+        code = nm if nm.isdigit() and nm not in used else None
+        while not code:
+            c = str(random.randint(1000000, 9999999))
+            if c not in used and c not in names:
+                code = c
+        used.add(code)
+        conn.execute("UPDATE assets SET asset_tag = ?, updated_at = ? WHERE id = ?", (code, now_iso(), r["id"]))
+    if todo:
+        conn.commit()
+    return len(todo)
+
+
 @api.post("/assets")
 async def create_asset(body: AssetIn, user: dict = Depends(asset_manager_required)):
     ensure_asset_manager(user, body.campus or "", body.category)
     aid = str(uuid.uuid4())
     ts = now_iso()
     conn = get_conn()
+    body.asset_tag = gen_barcode_id(conn)
     # An owner that is a real user must confirm receipt first; the asset starts unassigned until then.
     to_user = (require_user(conn, body.assigned_to_user_id, body.assigned_to_name)
                if (body.assigned_to_name or body.assigned_to_user_id) else None)
@@ -2119,9 +2158,7 @@ def _validate_import_row(row: dict, row_num: int, seen_tags: set) -> list:
 
     if not name:
         errors.append("name is required")
-    if not tag:
-        errors.append("asset_tag is required")
-    elif tag in seen_tags:
+    if tag and tag in seen_tags:
         errors.append(f'duplicate asset_tag "{tag}" within file')
     if not cat:
         errors.append("category is required")
@@ -2382,6 +2419,8 @@ async def bulk_import_assets(
             serial    = (row.get("serial_number") or "").strip()
             supplier  = (row.get("supplier") or "").strip()
             owner     = (row.get("assigned_to_name") or "").strip()
+            if not tag:
+                tag = gen_barcode_id(conn)      # no barcode number in the file: generate one
 
             conn.execute("""
                 INSERT INTO assets
@@ -2460,6 +2499,7 @@ async def get_asset(aid: str, user: dict = Depends(get_current_user)):
 @api.put("/assets/{aid}")
 async def update_asset(aid: str, body: AssetUpdate, user: dict = Depends(asset_manager_required)):
     updates = {k: v for k, v in body.model_dump(exclude_none=True).items()}
+    updates.pop("asset_tag", None)       # the barcode number is generated and locked
     if not updates:
         raise HTTPException(400, "No fields to update")
     if user["role"] != "super_admin":
@@ -6823,6 +6863,13 @@ def seed_data():
 async def on_startup():
     init_db()
     seed_data()
+    _c = get_conn()
+    try:
+        n = ensure_barcode_ids(_c)
+        if n:
+            logger.info(f"Barcode numbers generated for {n} assets")
+    finally:
+        _c.close()
     # Start background scheduler for daily return reminders
     scheduler = BackgroundScheduler(timezone="Asia/Jayapura")
     scheduler.add_job(send_return_reminders, "cron", hour=8, minute=0)
