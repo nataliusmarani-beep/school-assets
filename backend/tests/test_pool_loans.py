@@ -189,3 +189,22 @@ def test_scan_cart_unit_scheduled_even_if_cart_not_full(client, make_user, db, m
     db.commit()
     r = client.get("/api/loans/scan", headers=auth(make_user("ict_admin", KK)), params={"code": "YPJ-IPAD-0"}).json()
     assert r["state"] == "scheduled" and r["cart"]["used"] == 2 and r["cart"]["capacity"] == 3
+
+
+def test_single_unit_loan_respects_cart_schedule_and_counts_in_cart(client, make_user, db, monkeypatch):
+    monkeypatch.setattr(server, "_local_now", lambda: server.datetime(2026, 8, 3, 9, 0))
+    ids = seed(db, n_laptops=0, n_ipads=3)
+    db.execute("INSERT INTO resources (id,campus,name,kind,capacity,category,created_at) VALUES ('c1',?,'Cart G','ipad_cart',3,'IT Equipment','t')", (KK,))
+    db.execute("UPDATE asset_loan_settings SET resource_id = 'c1'")
+    db.execute("INSERT INTO school_periods (id,campus,period_no,start_time,end_time,unit) VALUES ('p1',?,1,'08:00','09:00','')", (KK,))
+    db.execute("INSERT INTO fixed_schedules (id,campus,academic_year,semester,resource_id,class_name,weekday,period_from,period_to,units,valid_from,valid_to,created_at) "
+               "VALUES ('s1',?,'2026/2027','1','c1','7A',2,1,1,2,'2026-07-01','2026-12-31','t')", (KK,))
+    db.commit()
+    a, b = make_user("staff", KK), make_user("staff", KK)
+    body = lambda aid: {"asset_id": aid, "start_at": "2026-08-05T08:00", "end_at": "2026-08-05T09:00", "terms_accepted": True, "purpose": "x"}
+    first = client.post("/api/loans", headers=auth(a), json=body(ids["ipad"][0]))                         # the one spare unit
+    assert first.status_code == 200
+    if first.json()["status"] != "approved":
+        assert client.put(f"/api/loans/{first.json()['id']}/decide", headers=auth(make_user("ict_admin", KK)),
+                          json={"decision": "approved"}).status_code == 200
+    assert client.post("/api/loans", headers=auth(b), json=body(ids["ipad"][1])).status_code == 409     # cart now full

@@ -569,6 +569,14 @@ def check_availability(conn, *, resource_id: Optional[str] = None, asset_id: Opt
         conflicts.append({"type": "booking", "id": pb["id"], "number": pb["number"], "start": pb["start_at"], "end": pb["end_at"],
                           "requester": pb["requester_name"]})
     if resource_id:
+        # single units of the cart lent on their own (scan / pick one iPad) take a place in it too
+        for b in conn.execute(f"""SELECT b.* FROM bookings b JOIN asset_loan_settings s ON s.asset_id = b.asset_id
+                                 WHERE s.resource_id = ? AND b.status IN ({_committed_marks()}) AND b.start_at < ? AND b.end_at > ?""",
+                              [resource_id, *COMMITTED_STATUSES, end.strftime(FMT), start.strftime(FMT)]).fetchall():
+            if b["id"] != exclude_booking_id:
+                slots.append((parse_dt(b["start_at"]), parse_dt(b["end_at"]), 1))
+                conflicts.append({"type": "booking", "id": b["id"], "number": b["number"], "start": b["start_at"], "end": b["end_at"],
+                                  "requester": b["requester_name"]})
         for occ in fixed_occurrences(conn, resource_id, start.date(), end.date()):
             if occ["materialized"]:
                 continue            # already handed over: the booking above (if still active) holds the units instead

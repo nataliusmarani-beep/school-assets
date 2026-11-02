@@ -37,6 +37,7 @@ export function StatusBadge({ status, t }) {
 const STATE_STYLE = {
   available: "text-emerald-700 bg-emerald-50 border-emerald-200",
   on_loan: "text-amber-700 bg-amber-50 border-amber-200",
+  scheduled: "text-amber-700 bg-amber-50 border-amber-200",
   repair: "text-rose-700 bg-rose-50 border-rose-200",
   lost: "text-rose-700 bg-rose-50 border-rose-200",
   inactive: "text-slate-500 bg-slate-50 border-slate-200",
@@ -340,7 +341,7 @@ export default function LoansPage() {
                 </div>
                 {a.on_loan && <div className="text-xs text-slate-500 mt-2">{t("ln_with")} {a.on_loan.requester_name} · {t("ln_until")} {fmtDateTime(a.on_loan.end_at)}</div>}
                 <div className="text-xs text-slate-500 mt-2">{a.location}{a.storage_slot ? ` · ${a.storage_slot}` : ""}</div>
-                <Button className="rounded-none mt-4" variant="outline" disabled={!["available", "on_loan"].includes(a.state)}
+                <Button className="rounded-none mt-4" variant="outline" disabled={!["available", "on_loan", "scheduled"].includes(a.state)}
                   onClick={() => setTarget(a)} data-testid={`loan-request-${a.asset_tag}`}>
                   <Package className="w-4 h-4 mr-2" strokeWidth={1.75} /> {t("ln_request")}
                 </Button>
