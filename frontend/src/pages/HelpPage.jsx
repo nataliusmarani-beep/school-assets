@@ -276,7 +276,7 @@ export default function HelpPage() {
             <hr className="border-slate-200 mb-6" />
             <P>{t("help_s13_intro")}</P>
             <Figure caption={t("help_fig_schedule")}><Shot name="schedule" /></Figure>
-            <Ul items={[t("help_s13_tip1"), t("help_s13_tip2"), t("help_s13_tip3")]} />
+            <Ul items={[t("help_s13_tip1"), t("help_s13_tip2"), t("help_s13_tip3"), t("help_s13_tip4")]} />
           </section>
 
           <section>
@@ -284,7 +284,7 @@ export default function HelpPage() {
             <hr className="border-slate-200 mb-6" />
             <P>{t("help_s14_intro")}</P>
             <Figure caption={t("help_fig_scan")}><div className="max-w-[230px] mx-auto"><Shot name="scan" kind="phone" /></div></Figure>
-            <Ul items={[t("help_s14_tip1"), t("help_s14_tip2"), t("help_s14_tip3")]} />
+            <Ul items={[t("help_s14_tip1"), t("help_s14_tip2"), t("help_s14_tip3"), t("help_s14_tip4"), t("help_s14_tip5")]} />
           </section>
 
           <section>
