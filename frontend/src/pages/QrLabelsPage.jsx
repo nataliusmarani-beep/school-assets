@@ -67,7 +67,7 @@ export default function QrLabelsPage() {
       <div id="qr-sheet" className="grid grid-cols-1 sm:grid-cols-2 gap-y-3" style={{ columnGap: "2cm" }}>
         {chosen.map((a) => (
           <div key={a.id} className="border border-slate-300 p-2 text-center break-inside-avoid" data-testid={`qr-label-${a.asset_tag}`}>
-            <BarRow value={a.asset_tag} />
+            <BarRow value={/^\d+$/.test(String(a.name).trim()) ? String(a.name).trim() : a.asset_tag} />
             <div className="text-sm font-bold text-slate-900 leading-tight mt-0.5 truncate">{a.name} | {a.asset_tag} | YPJ School</div>
           </div>))}
       </div>

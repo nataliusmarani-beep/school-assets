@@ -229,3 +229,17 @@ def test_scan_finds_asset_by_encoded_link_serial_or_loose_spelling(client, make_
         r = client.get("/api/loans/scan", headers=auth(ict), params={"code": code})
         assert r.status_code == 200 and r.json()["asset"]["id"] == "x1", code
     assert client.get("/api/loans/scan", headers=auth(ict), params={"code": "NOPE-1"}).status_code == 404
+
+
+def test_scan_finds_asset_by_numeric_name(client, make_user, db, monkeypatch):
+    """Labels carry the numeric asset number (the asset's name); scanning it resolves the asset, unless it is ambiguous."""
+    monkeypatch.setattr(server, "_local_now", lambda: server.datetime(2026, 8, 5, 10, 0))
+    seed(db, n_laptops=0, n_ipads=0)
+    for i, (aid, name) in enumerate((("n1", "9661732"), ("n2", "5550001"), ("n3", "5550001"))):
+        db.execute("INSERT INTO assets (id,name,asset_tag,category,item_type,campus,location,serial_number,purchase_price,purchase_date,created_at,updated_at) "
+                   "VALUES (?,?,?,?,?,?,'ICT','',0,'2026-01-01','t','t')", (aid, name, f"Student's Desktop #{i}", "IT Equipment", "Desktop", KK))
+    db.commit()
+    ict = make_user("ict_admin", KK)
+    r = client.get("/api/loans/scan", headers=auth(ict), params={"code": "9661732"})
+    assert r.status_code == 200 and r.json()["asset"]["id"] == "n1"
+    assert client.get("/api/loans/scan", headers=auth(ict), params={"code": "5550001"}).status_code == 404

@@ -1272,6 +1272,10 @@ def resolve_scan(conn, code: str, now: datetime) -> Optional[dict]:
     c = scan_code(code)
     a = conn.execute("SELECT * FROM assets WHERE LOWER(asset_tag) = LOWER(?) OR (asset_code != '' AND LOWER(asset_code) = LOWER(?)) "
                      "ORDER BY LOWER(asset_tag) = LOWER(?) DESC LIMIT 1", (c, c, c)).fetchone()
+    if not a and c.isdigit():          # numeric asset number printed on the label (the asset's name); only when it is unambiguous
+        rows = conn.execute("SELECT * FROM assets WHERE name = ? LIMIT 2", (c,)).fetchall()
+        if len(rows) == 1:
+            a = rows[0]
     if not a and c:                    # serial number, or the same code typed with other spacing / dashes / case
         key = re.sub(r"[\s\-_]", "", c).lower()
         a = conn.execute("""SELECT * FROM assets WHERE (serial_number != '' AND LOWER(serial_number) = LOWER(?))
