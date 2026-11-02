@@ -146,3 +146,33 @@ def test_availability_counts_only_what_the_cart_can_still_give(client, make_user
     assert ask(client, teacher, 1, start=q["start_at"], end=q["end_at"]).status_code == 200
     q2 = {**q, "start_at": "2026-08-05T10:00", "end_at": "2026-08-05T11:00"}       # outside the scheduled period
     assert client.get("/api/loans/pool/availability", headers=auth(teacher), params=q2).json()["free"] == 5
+
+
+def test_scan_reports_unit_held_by_cart_schedule(client, make_user, db, monkeypatch):
+    """A unit of a cart whose fixed schedule holds every unit right now is not 'available'."""
+    monkeypatch.setattr(server, "_local_now", lambda: server.datetime(2026, 8, 5, 8, 30))
+    seed(db, n_laptops=0, n_ipads=2)
+    db.execute("INSERT INTO resources (id,campus,name,kind,capacity,category,created_at) VALUES ('c1',?,'iPad Cart','ipad_cart',2,'IT Equipment','t')", (KK,))
+    db.execute("UPDATE asset_loan_settings SET resource_id = 'c1'")
+    db.execute("INSERT INTO school_periods (id,campus,period_no,start_time,end_time,unit) VALUES ('p1',?,1,'08:00','09:00','')", (KK,))
+    db.execute("INSERT INTO fixed_schedules (id,campus,academic_year,semester,resource_id,class_name,weekday,period_from,period_to,units,valid_from,valid_to,created_at) "
+               "VALUES ('s1',?,'2026/2027','1','c1','7A',2,1,1,2,'2026-07-01','2026-12-31','t')", (KK,))
+    db.commit()
+    ict = make_user("ict_admin", KK)
+    assert client.get("/api/loans/scan", headers=auth(ict), params={"code": "YPJ-IPAD-0"}).json()["state"] == "scheduled"
+    monkeypatch.setattr(server, "_local_now", lambda: server.datetime(2026, 8, 5, 10, 0))
+    assert client.get("/api/loans/scan", headers=auth(ict), params={"code": "YPJ-IPAD-0"}).json()["state"] == "available"
+
+
+def test_unit_out_now_but_back_before_window_is_free(client, make_user, db, monkeypatch):
+    monkeypatch.setattr(server, "_local_now", lambda: server.datetime(2026, 8, 3, 9, 0))
+    ids = seed(db, n_laptops=0, n_ipads=2)
+    teacher, ict = make_user("staff", KK), make_user("ict_admin", KK)
+    loan = ask(client, teacher, 2, device="ipad", start="2026-08-05T08:00", end="2026-08-05T11:00").json()
+    client.put(f"/api/loans/{loan['id']}/decide", headers=auth(ict), json={"decision": "approved", "unit_ids": ids["ipad"]})
+    monkeypatch.setattr(server, "_local_now", lambda: server.datetime(2026, 8, 5, 8, 30))
+    assert client.post(f"/api/loans/{loan['id']}/check-out", headers=auth(ict), json={"units": [unit(i) for i in ids["ipad"]]}).status_code == 200
+    q = {"device_type": "ipad", "start_at": "2026-08-05T09:00", "end_at": "2026-08-05T10:00"}
+    assert client.get("/api/loans/pool/availability", headers=auth(teacher), params=q).json()["free"] == 0
+    q = {**q, "start_at": "2026-08-05T11:00", "end_at": "2026-08-05T12:00"}
+    assert client.get("/api/loans/pool/availability", headers=auth(teacher), params=q).json()["free"] == 2

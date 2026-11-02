@@ -4326,7 +4326,7 @@ async def pool_availability(device_type: str, start_at: str, end_at: str, campus
     conn = get_conn()
     try:
         start, end = booking_engine.parse_dt(start_at), booking_engine.parse_dt(end_at)
-        free = booking_engine.pool_free_units(conn, campus, device_type, start, end)
+        free = booking_engine.pool_free_units(conn, campus, device_type, start, end, now=_local_now())
         policy = booking_engine.get_policy(conn, campus, booking_engine.POOL_CATEGORY)
     except booking_engine.BookingError as e:
         conn.close()
@@ -4352,7 +4352,7 @@ async def pool_candidates(bid: str, start_at: Optional[str] = None, end_at: Opti
     except booking_engine.BookingError as e:
         conn.close()
         raise HTTPException(400, e.message)
-    free = booking_engine.pool_free_units(conn, b["campus"], b["device_type"], win[0], win[1], bid)
+    free = booking_engine.pool_free_units(conn, b["campus"], b["device_type"], win[0], win[1], bid, now=_local_now())
     reserved = [r["asset_id"] for r in conn.execute("SELECT asset_id FROM booking_units WHERE booking_id = ? AND status = 'reserved'", (bid,))]
     conn.close()
     return {"units": free, "reserved": reserved, "units_requested": b["units_requested"], "label": booking_engine.pool_label(b["device_type"])}

@@ -13,6 +13,7 @@ import { QrCode } from "lucide-react";
 
 const STATE_STYLE = {
   available: "text-emerald-700 bg-emerald-50 border-emerald-200", on_loan: "text-amber-700 bg-amber-50 border-amber-200",
+  scheduled: "text-amber-700 bg-amber-50 border-amber-200",
   repair: "text-rose-700 bg-rose-50 border-rose-200", lost: "text-rose-700 bg-rose-50 border-rose-200",
 };
 
@@ -53,6 +54,7 @@ export default function ScanPage() {
             <span className={`text-xs px-2 py-0.5 border ${STATE_STYLE[result.state]}`} data-testid="scan-state">{t(`ln_state_${result.state}`)}</span>
           </div>
           {result.out && <div className="text-sm text-slate-600 mt-3">{t("ln_with")} <b>{result.out.requester_name}</b> · {t("ln_until")} {fmtDateTime(result.out.end_at)}</div>}
+          {result.in_use && <div className="text-sm text-slate-600 mt-3">{t("ln_in_use_now")}{result.in_use.requester ? `: ${result.in_use.requester}` : ""}</div>}
           {result.pickup && <div className="text-sm text-slate-600 mt-3">{t("qr_pickup")}: {result.pickup.number} · {result.pickup.requester_name}</div>}
           <div className="flex gap-2 mt-4 flex-wrap">
             {result.suggest && (

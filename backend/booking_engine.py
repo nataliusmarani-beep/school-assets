@@ -436,7 +436,7 @@ def _committed_marks() -> str:
 
 
 def pool_free_units(conn, campus: str, device_type: str, start: datetime, end: datetime,
-                    exclude_booking_id: Optional[str] = None) -> list:
+                    exclude_booking_id: Optional[str] = None, now: Optional[datetime] = None) -> list:
     """Borrowable, active laptops / iPads of the campus that nobody holds during [start, end).
     A unit is busy when it is out on loan, reserved for another approved pool request, or booked as a single item.
     Units inside a cart also carry `cart_free`: how many more of that cart may be taken for this window."""
@@ -456,7 +456,11 @@ def pool_free_units(conn, campus: str, device_type: str, start: datetime, end: d
         return []
     ex, exp = (" AND b.id != ?", [exclude_booking_id]) if exclude_booking_id else ("", [])
     fs, fe = end.strftime(FMT), start.strftime(FMT)
-    busy = {r[0] for r in conn.execute(f"SELECT u.asset_id FROM booking_units u JOIN bookings b ON b.id = u.booking_id WHERE u.status = 'out'{ex}", exp)}
+    # A unit that is out is busy only if its loan overlaps the window, or it is overdue (nobody knows when it comes back).
+    now_s = (now or datetime.now()).strftime(FMT)
+    busy = {r[0] for r in conn.execute(
+        f"""SELECT u.asset_id FROM booking_units u JOIN bookings b ON b.id = u.booking_id
+            WHERE u.status = 'out' AND ((b.start_at < ? AND b.end_at > ?) OR b.end_at <= ?){ex}""", [fs, fe, now_s, *exp])}
     busy |= {r[0] for r in conn.execute(
         f"""SELECT u.asset_id FROM booking_units u JOIN bookings b ON b.id = u.booking_id
             WHERE u.status = 'reserved' AND b.status IN ({_committed_marks()}) AND b.start_at < ? AND b.end_at > ?{ex}""",
@@ -496,11 +500,11 @@ def pool_free_count(free: list) -> int:
     return loose + sum(min(cap, n) for cap, n in per_cart.values())
 
 
-def validate_pool_selection(conn, booking: dict, unit_ids: list, start: datetime, end: datetime) -> None:
+def validate_pool_selection(conn, booking: dict, unit_ids: list, start: datetime, end: datetime, now: Optional[datetime] = None) -> None:
     """ICT's pick must be free units of the right kind, within what each cart can still give for that window."""
     if len(set(unit_ids)) != len(unit_ids):
         raise BookingError("Unit terpilih terduplikasi.", "units")
-    free = {u["id"]: u for u in pool_free_units(conn, booking["campus"], booking["device_type"], start, end, booking["id"])}
+    free = {u["id"]: u for u in pool_free_units(conn, booking["campus"], booking["device_type"], start, end, booking["id"], now=now)}
     per_cart = {}
     for uid in unit_ids:
         u = free.get(uid)
@@ -565,6 +569,14 @@ def check_availability(conn, *, resource_id: Optional[str] = None, asset_id: Opt
                 conflicts.append({"type": "fixed", "id": occ["schedule_id"], "start": occ["start"].strftime(FMT),
                                   "end": occ["end"].strftime(FMT), "requester": f"{occ['class_name']} ({occ['teacher_name']})"})
     used = _peak_usage(slots, start, end)
+    if asset_id:
+        cart = conn.execute("SELECT s.resource_id FROM asset_loan_settings s JOIN resources r ON r.id = s.resource_id "
+                            "WHERE s.asset_id = ? AND r.active = 1", (asset_id,)).fetchone()
+        if cart and cart["resource_id"]:
+            c = check_availability(conn, resource_id=cart["resource_id"], units=1, start=start, end=end, exclude_booking_id=exclude_booking_id)
+            if c["free"] <= 0:          # the cart's fixed schedule / bookings hold every unit, this one included
+                used = capacity
+                conflicts += c["conflicts"] or [{"type": "cart", "start": start.strftime(FMT), "end": end.strftime(FMT), "requester": ""}]
     pending = sum(b["units_requested"] for b in _booking_rows(
         conn, resource_id=resource_id, asset_id=asset_id, statuses=PENDING_STATUSES, start=start, end=end,
         exclude_booking_id=exclude_booking_id))
@@ -638,7 +650,7 @@ def reserve(conn, *, data: dict, now: datetime, override: bool = False, override
             max_units = int(check["policy"].get("max_units") or 10)
             if units > max_units and not override:
                 raise BookingError(f"Satu permintaan maksimal {max_units} unit untuk kategori ini.", "max_units")
-            free_n = pool_free_count(pool_free_units(conn, data["campus"], device_type, start, end))
+            free_n = pool_free_count(pool_free_units(conn, data["campus"], device_type, start, end, now=now))
             if units > free_n:
                 raise BookingError(f"Tidak tersedia pada waktu tersebut. Tersisa {free_n} {pool_label(device_type)}.", "conflict")
         else:
@@ -709,7 +721,7 @@ def decide(conn, *, booking_id: str, decision: str, by_id: str, by_name: str, no
                 unit_ids = list(unit_ids or [])
                 if len(unit_ids) != approved_units:
                     raise BookingError(f"Pilih tepat {approved_units} unit {pool_label(b['device_type'])} yang akan dipinjamkan.", "units")
-                validate_pool_selection(conn, dict(b), unit_ids, start, end)
+                validate_pool_selection(conn, dict(b), unit_ids, start, end, now=now)
             else:
                 avail = check_availability(conn, resource_id=b["resource_id"], asset_id=b["asset_id"], units=approved_units,
                                            start=start, end=end, exclude_booking_id=b["id"])
@@ -890,7 +902,7 @@ def check_out(conn, *, booking_id: str, units: list, now: datetime, by_id: str, 
         if b["kind"] == "pool":
             reserved = {r["asset_id"]: r["id"] for r in conn.execute(
                 "SELECT id, asset_id FROM booking_units WHERE booking_id = ? AND status = 'reserved'", (booking_id,))}
-            free_ids = {x["id"] for x in pool_free_units(conn, b["campus"], b["device_type"], parse_dt(b["start_at"]), parse_dt(b["end_at"]), booking_id)}
+            free_ids = {x["id"] for x in pool_free_units(conn, b["campus"], b["device_type"], parse_dt(b["start_at"]), parse_dt(b["end_at"]), booking_id, now=now)}
         for u in units:
             aid = u.get("asset_id")
             if not aid or aid in seen:
@@ -1227,6 +1239,14 @@ def resolve_scan(conn, code: str, now: datetime) -> Optional[dict]:
                           FROM booking_units u JOIN bookings b ON b.id = u.booking_id
                           WHERE u.asset_id = ? AND u.status = 'out' LIMIT 1""", (a["id"],)).fetchone()
     s = conn.execute("SELECT borrowable, resource_id FROM asset_loan_settings WHERE asset_id = ?", (a["id"],)).fetchone()
+    busy_now = None
+    if not out and a["status"] == "active":
+        try:
+            chk = check_availability(conn, asset_id=a["id"], units=1, start=now, end=now + timedelta(minutes=1))
+            if not chk["ok"]:
+                busy_now = (chk["conflicts"] or [None])[0]
+        except BookingError:
+            pass
     today = now.date().isoformat()
     pickup = conn.execute("""SELECT id, number, requester_name, start_at, end_at FROM bookings
                              WHERE status IN ('approved','partially_approved') AND substr(start_at,1,10) <= ? AND substr(end_at,1,10) >= ?
@@ -1236,5 +1256,6 @@ def resolve_scan(conn, code: str, now: datetime) -> Optional[dict]:
                           (today, today, a["id"], s["resource_id"] if s else None, a["id"])).fetchone()
     return {"asset": {k: a[k] for k in ("id", "name", "asset_tag", "category", "campus", "location", "brand", "model", "serial_number", "status")},
             "borrowable": bool(s and s["borrowable"]), "resource_id": s["resource_id"] if s else None,
-            "out": dict(out) if out else None, "pickup": dict(pickup) if pickup else None,
-            "state": ("repair" if a["status"] == "in_repair" else "lost" if a["status"] == "lost" else "on_loan" if out else "available")}
+            "out": dict(out) if out else None, "pickup": dict(pickup) if pickup else None, "in_use": busy_now,
+            "state": ("repair" if a["status"] == "in_repair" else "lost" if a["status"] == "lost" else "on_loan" if out
+                      else "scheduled" if busy_now else "available")}
