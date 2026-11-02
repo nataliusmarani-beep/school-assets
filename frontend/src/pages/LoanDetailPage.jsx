@@ -199,7 +199,7 @@ export default function LoanDetailPage() {
 
       {/* decide */}
       <Dialog open={dialog === "decide"} onOpenChange={(o) => !o && setDialog(null)}>
-        <DialogContent className="rounded-none max-w-lg"><DialogHeader><DialogTitle>{t("ln_act_decide")}</DialogTitle></DialogHeader>
+        <DialogContent className="rounded-none max-w-lg max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle>{t("ln_act_decide")}</DialogTitle></DialogHeader>
           <div><Label className="label-mono">{t("ln_decision")}</Label>
             <Select value={decision.decision} onValueChange={(v) => setDecision({ ...decision, decision: v })}>
               <SelectTrigger className="mt-2 rounded-none" data-testid="loan-decision"><SelectValue /></SelectTrigger>
