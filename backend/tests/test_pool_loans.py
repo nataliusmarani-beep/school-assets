@@ -386,3 +386,13 @@ def test_counter_loan_handed_over_in_one_step_with_group_photo(client, make_user
     out = client.post(f"/api/loans/{r['id']}/check-out", headers=auth(ict), json={"all_units": True, "group_photo": "loans/p.jpg", "units": []})
     assert out.status_code == 200, out.text
     assert out.json()["status"] == "in_use" and sorted(u["asset_id"] for u in out.json()["units"] if u["status"] == "out") == sorted(pick)
+
+
+def test_import_template_excel_download(client, make_user):
+    import io, openpyxl
+    admin = make_user("super_admin", "")
+    r = client.get("/api/assets/import-template", headers=auth(admin), params={"format": "xlsx"})
+    assert r.status_code == 200 and "spreadsheetml" in r.headers["content-type"]
+    wb = openpyxl.load_workbook(io.BytesIO(r.content))
+    assert wb.sheetnames == ["Aset", "Petunjuk"] and wb["Aset"]["A1"].value == "name" and wb["Aset"]["B1"].value == "asset_tag"
+    assert client.get("/api/assets/import-template", headers=auth(admin)).headers["content-type"].startswith("text/csv")

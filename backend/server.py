@@ -2477,7 +2477,36 @@ async def export_assets(
 
 
 @api.get("/assets/import-template")
-async def download_import_template(_: dict = Depends(admin_required)):
+async def download_import_template(format: str = Query("csv"), _: dict = Depends(admin_required)):
+    if format == "xlsx":
+        import openpyxl
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Aset"
+        ws.append(IMPORT_COLUMNS)
+        ex = ["Dell Latitude 5430", "", "IT Equipment", "School Asset", "Laptop contoh", "YPJ Kuala Kencana", "Lab Komputer SD", "active",
+              19500000, "2023-08-15", 4, "2026-08-15", "DL5430X01", "Dell Technologies", "Maria Hernandez"]
+        ws.append(ex + [""] * (len(IMPORT_COLUMNS) - len(ex)))
+        _style_header(ws)
+        for col in ws.columns:
+            ws.column_dimensions[col[0].column_letter].width = max(14, len(str(col[0].value)) + 4)
+        g = wb.create_sheet("Petunjuk")
+        g.append(["Kolom", "Keterangan"])
+        for row in (
+            ("asset_tag", "Kosongkan: nomor barcode 7 digit dibuat otomatis dan tidak bisa diubah. Jika diisi, harus unik."),
+            ("name, category, location", "Wajib diisi."),
+            ("category", ", ".join(VALID_CATEGORIES)),
+            ("status", ", ".join(VALID_STATUSES)),
+            ("campus", "YPJ Kuala Kencana, YPJ TPRA (atau YPJ Tembagapura)"),
+            ("unit", ", ".join(UNIT_CODES) + " (unit sekolah pemilik aset)"),
+            ("purchase_date, warranty_end_date", "Format YYYY-MM-DD"),
+            ("purchase_price", "Rupiah penuh, tanpa titik/koma"),
+        ):
+            g.append(list(row))
+        _style_header(g)
+        g.column_dimensions["A"].width = 30
+        g.column_dimensions["B"].width = 110
+        return _xlsx_response(wb, "asset-import-template.xlsx")
     header = ",".join(IMPORT_COLUMNS)
     example = (
         'Dell Latitude 5430,IT-LAP-0001,IT Equipment,School Asset,'

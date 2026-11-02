@@ -97,13 +97,13 @@ function ImportModal({ onClose, onImported }) {
     }
   };
 
-  const downloadTemplate = async () => {
+  const downloadTemplate = async (format = "csv") => {
     try {
-      const res = await api.get("/assets/import-template", { responseType: "blob" });
+      const res = await api.get("/assets/import-template", { params: { format }, responseType: "blob" });
       const url = URL.createObjectURL(res.data);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "asset-import-template.csv";
+      a.download = `asset-import-template.${format}`;
       a.click();
       URL.revokeObjectURL(url);
     } catch {}
@@ -155,13 +155,14 @@ function ImportModal({ onClose, onImported }) {
           {/* ---- Step 1: Upload ---- */}
           {step === "upload" && (
             <div className="space-y-4">
-              <button
-                onClick={downloadTemplate}
-                className="inline-flex items-center gap-2 text-sm text-blue-700 hover:text-blue-900 border border-blue-200 bg-blue-50 px-3 py-1.5"
-              >
-                <Download className="w-3.5 h-3.5" strokeWidth={1.75} />
-                {t("import_download_template")}
-              </button>
+              <div className="flex flex-wrap gap-2">
+                {["csv", "xlsx"].map((f) => (
+                  <button key={f} onClick={() => downloadTemplate(f)} data-testid={`import-template-${f}`}
+                    className="inline-flex items-center gap-2 text-sm text-blue-700 hover:text-blue-900 border border-blue-200 bg-blue-50 px-3 py-1.5">
+                    <Download className="w-3.5 h-3.5" strokeWidth={1.75} />
+                    {t(f === "csv" ? "import_download_template" : "import_download_template_xlsx")}
+                  </button>))}
+              </div>
 
               {/* Drop zone */}
               <div
