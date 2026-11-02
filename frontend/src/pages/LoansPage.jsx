@@ -133,7 +133,8 @@ function RequestDialog({ asset, onClose, onDone, t, canOverride }) {
 
 /* Unscheduled laptop / iPad loan: the teacher only says how many; ICT picks the exact units when approving. */
 function PoolRequestDialog({ device, onClose, onDone, t }) {
-  const empty = { units: 1, start_at: "", end_at: "", purpose: "", class_name: "", subject: "", use_location: "", note: "", terms_accepted: false };
+  const { user } = useAuth();
+  const empty = { campus: "", units: 1, start_at: "", end_at: "", purpose: "", class_name: "", subject: "", use_location: "", note: "", terms_accepted: false };
   const [f, setF] = useState(empty);
   const [avail, setAvail] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -141,13 +142,13 @@ function PoolRequestDialog({ device, onClose, onDone, t }) {
   useEffect(() => { setF(empty); setAvail(null); }, [device]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!device || !f.start_at || !f.end_at || f.end_at <= f.start_at) { setAvail(null); return; }
+    if (!device || !f.start_at || !f.end_at || f.end_at <= f.start_at || (!user?.campus && !f.campus)) { setAvail(null); return; }
     const h = setTimeout(() => {
-      api.get("/loans/pool/availability", { params: { device_type: device, start_at: f.start_at, end_at: f.end_at } })
+      api.get("/loans/pool/availability", { params: { device_type: device, start_at: f.start_at, end_at: f.end_at, campus: f.campus || undefined } })
         .then((r) => setAvail(r.data)).catch(() => setAvail(null));
     }, 300);
     return () => clearTimeout(h);
-  }, [device, f.start_at, f.end_at]);
+  }, [device, f.start_at, f.end_at, f.campus]);
 
   if (!device) return null;
   const label = device === "ipad" ? "iPad" : "Laptop";
@@ -168,6 +169,12 @@ function PoolRequestDialog({ device, onClose, onDone, t }) {
         <DialogHeader><DialogTitle>{t("pool_request_title")}: {label}</DialogTitle></DialogHeader>
         <p className="text-xs text-slate-500 border border-slate-200 bg-slate-50 px-3 py-2">{t("pool_hint")}</p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {!user?.campus && (
+            <div className="sm:col-span-2"><Label className="label-mono">{t("pool_campus")} *</Label>
+              <select value={f.campus} onChange={(e) => set({ campus: e.target.value })} className="mt-2 w-full h-10 border border-slate-200 px-3 text-sm bg-white" data-testid="pool-campus">
+                <option value="">—</option>
+                {["YPJ Kuala Kencana", "YPJ TPRA"].map((x) => <option key={x} value={x}>{x}</option>)}
+              </select></div>)}
           <div className="sm:col-span-2"><Label className="label-mono">{t("pool_units")} *</Label>
             <Input type="number" min="1" value={f.units} onChange={(e) => set({ units: e.target.value })} className="mt-2 rounded-none" data-testid="pool-units" /></div>
           <div><Label className="label-mono">{t("ln_start")} *</Label>
@@ -200,7 +207,7 @@ function PoolRequestDialog({ device, onClose, onDone, t }) {
         </label>
         <DialogFooter>
           <Button variant="outline" className="rounded-none" onClick={onClose}>{t("cancel")}</Button>
-          <Button className="rounded-none" disabled={busy || units < 1 || tooMany || !f.start_at || !f.end_at || !f.purpose.trim() || !f.terms_accepted} onClick={submit} data-testid="pool-submit">{t("ln_submit")}</Button>
+          <Button className="rounded-none" disabled={busy || units < 1 || tooMany || (!user?.campus && !f.campus) || !f.start_at || !f.end_at || !f.purpose.trim() || !f.terms_accepted} onClick={submit} data-testid="pool-submit">{t("ln_submit")}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

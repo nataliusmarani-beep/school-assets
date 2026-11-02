@@ -4258,6 +4258,7 @@ class LoanIn(BaseModel):
     take_home: bool = False
     terms_accepted: bool = False
     override_reason: str = ""
+    campus: Optional[str] = None              # pool loans by an account without its own campus (admin)
 
 
 def _engine_call(fn, *args, **kwargs):
@@ -4374,10 +4375,10 @@ async def create_loan(body: LoanIn, user: dict = Depends(get_current_user)):
         if body.device_type not in booking_engine.POOL_TYPES:
             conn.close()
             raise HTTPException(400, "Jenis perangkat harus laptop atau ipad.")
-        campus = (user.get("campus") or "").strip()
+        campus = (user.get("campus") or "").strip() or (body.campus if body.campus in VALID_CAMPUSES else "") or ""
         if not campus:
             conn.close()
-            raise HTTPException(400, "Akun Anda belum memiliki kampus. Hubungi admin.")
+            raise HTTPException(400, "Pilih kampus untuk peminjaman ini.")
         target = {"campus": campus, "category": booking_engine.POOL_CATEGORY, "kind": "pool", "asset_id": None, "resource_id": None}
         info = {"name": f"{body.units} × {booking_engine.pool_label(body.device_type)}", "asset_tag": "pool",
                 "category": booking_engine.POOL_CATEGORY, "campus": campus}
