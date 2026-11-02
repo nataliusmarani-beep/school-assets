@@ -18,6 +18,7 @@ export default function QrScanner({ onScan, t, repeatMs = 2500, active = true, p
   pausedRef.current = paused;
   const [error, setError] = useState("");
   const [manual, setManual] = useState("");
+  const [seen, setSeen] = useState("");     // what the camera is reading right now, so a misread is visible
 
   useEffect(() => {
     if (!active) return undefined;
@@ -28,6 +29,7 @@ export default function QrScanner({ onScan, t, repeatMs = 2500, active = true, p
     const emit = (text, need = 3) => {
       const now = Date.now();
       if (!text || pausedRef.current) { streak.n = 0; return; }
+      setSeen(text);
       if (text !== streak.text || now - streak.at > 1200) { streak.text = text; streak.n = 0; }
       streak.n += 1; streak.at = now;
       if (streak.n < need) return;
@@ -37,16 +39,7 @@ export default function QrScanner({ onScan, t, repeatMs = 2500, active = true, p
       }
     };
     // 1D barcodes (Code 128 / 39, EAN ...): the phone's own detector when it has one, otherwise zxing loaded on demand
-    const readBars = async (c) => {
-      if (window.BarcodeDetector) {
-        if (!detector.current) {
-          const want = ["code_128", "code_39", "ean_13", "ean_8", "upc_a", "itf", "codabar"];
-          const have = (await window.BarcodeDetector.getSupportedFormats?.()) || want;
-          detector.current = new window.BarcodeDetector({ formats: want.filter((f) => have.includes(f)) });
-        }
-        const found = await detector.current.detect(c);
-        return found[0]?.rawValue || "";
-      }
+    const zxingRead = async (c) => {
       const Z = await import("@zxing/library");
       if (!zx.current) {
         const reader = new Z.MultiFormatReader();
@@ -56,6 +49,21 @@ export default function QrScanner({ onScan, t, repeatMs = 2500, active = true, p
       }
       try { return zx.current.decode(new Z.BinaryBitmap(new Z.HybridBinarizer(new Z.HTMLCanvasElementLuminanceSource(c)))).getText(); }
       catch (e) { return ""; }
+    };
+    let flip = 0;
+    const readBars = async (c) => {
+      if (window.BarcodeDetector) {
+        if (!detector.current) {
+          const want = ["code_128", "code_39", "ean_13", "ean_8", "upc_a", "itf", "codabar"];
+          const have = (await window.BarcodeDetector.getSupportedFormats?.()) || want;
+          detector.current = new window.BarcodeDetector({ formats: want.filter((f) => have.includes(f)) });
+        }
+        const found = await detector.current.detect(c);
+        if (found[0]?.rawValue) return found[0].rawValue;
+        // the phone's detector missed this frame: let zxing have every other frame
+        if ((flip += 1) % 2) return "";
+      }
+      return zxingRead(c);
     };
     const tick = () => {
       const v = videoRef.current; const c = canvasRef.current;
@@ -74,7 +82,7 @@ export default function QrScanner({ onScan, t, repeatMs = 2500, active = true, p
       }
       raf = requestAnimationFrame(tick);
     };
-    navigator.mediaDevices?.getUserMedia({ video: { facingMode: "environment" } })
+    navigator.mediaDevices?.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } } })
       .then((s) => {
         if (stopped) { s.getTracks().forEach((x) => x.stop()); return; }
         stream = s;
@@ -97,6 +105,7 @@ export default function QrScanner({ onScan, t, repeatMs = 2500, active = true, p
           <video ref={videoRef} className="w-full h-full object-cover" muted playsInline />
           <div className={`absolute inset-8 border-2 pointer-events-none ${paused ? "border-emerald-400" : "border-white/70"}`} />
         </div>)}
+      {!error && <div className="text-xs text-slate-500 font-mono truncate" data-testid="qr-seen">{seen ? `${t("qr_reading")}: ${seen}` : t("qr_searching")}</div>}
       <canvas ref={canvasRef} className="hidden" />
       <form onSubmit={submitManual} className="flex gap-2">
         <Input className="rounded-none" autoFocus value={manual} onChange={(e) => setManual(e.target.value)} placeholder={t("qr_manual")} data-testid="qr-manual-input" />
