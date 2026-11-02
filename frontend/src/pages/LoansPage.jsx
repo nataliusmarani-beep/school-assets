@@ -178,6 +178,11 @@ function PoolRequestDialog({ device, onClose, onDone, t }) {
         {avail && (
           <div className={`text-xs px-3 py-2 border ${tooMany || avail.free === 0 ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`} data-testid="pool-availability">
             {avail.free} {label} {t("pool_free_now")} · {t("pool_max_per_request")} {avail.max_units}
+            {avail.free === 0 && avail.why && (
+              <div className="mt-1 text-[11px] opacity-80" data-testid="pool-why">
+                {avail.why.registered === 0 ? t("pool_why_none") :
+                  `${t("pool_why_total")} ${avail.why.registered} · ${t("pool_why_busy")} ${avail.why.busy} · ${t("pool_why_cart")} ${avail.why.held_by_cart || 0}${(avail.why.carts || []).length ? ` (${avail.why.carts.join(", ")})` : ""}`}
+              </div>)}
           </div>)}
         <div><Label className="label-mono">{t("ln_purpose")} *</Label>
           <Textarea rows={2} value={f.purpose} onChange={(e) => set({ purpose: e.target.value })} className="mt-2 rounded-none" data-testid="pool-purpose" /></div>

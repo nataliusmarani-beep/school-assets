@@ -436,7 +436,7 @@ def _committed_marks() -> str:
 
 
 def pool_free_units(conn, campus: str, device_type: str, start: datetime, end: datetime,
-                    exclude_booking_id: Optional[str] = None, now: Optional[datetime] = None) -> list:
+                    exclude_booking_id: Optional[str] = None, now: Optional[datetime] = None, diag: Optional[dict] = None) -> list:
     """Borrowable, active laptops / iPads of the campus that nobody holds during [start, end).
     A unit is busy when it is out on loan, reserved for another approved pool request, or booked as a single item.
     Units inside a cart also carry `cart_free`: how many more of that cart may be taken for this window."""
@@ -452,6 +452,8 @@ def pool_free_units(conn, campus: str, device_type: str, start: datetime, end: d
         hay = f"{r['item_type']} {r['name']} {r['model']}".lower()
         if any(w in hay for w in words):
             cands.append(dict(r))
+    if diag is not None:
+        diag.update({"registered": len(cands), "busy": 0, "carts": []})
     if not cands:
         return []
     ex, exp = (" AND b.id != ?", [exclude_booking_id]) if exclude_booking_id else ("", [])
@@ -471,6 +473,8 @@ def pool_free_units(conn, campus: str, device_type: str, start: datetime, end: d
     free, cart_cache = [], {}
     for c in cands:
         if c["id"] in busy:
+            if diag is not None:
+                diag["busy"] += 1
             continue
         rid = c["resource_id"]
         if rid:
@@ -482,6 +486,10 @@ def pool_free_units(conn, campus: str, device_type: str, start: datetime, end: d
                     cart_cache[rid] = 0
             c["cart_free"] = cart_cache[rid]
             if c["cart_free"] <= 0:
+                if diag is not None:
+                    if c["resource_name"] not in diag["carts"]:
+                        diag["carts"].append(c["resource_name"])
+                    diag["held_by_cart"] = diag.get("held_by_cart", 0) + 1
                 continue
         else:
             c["cart_free"] = None

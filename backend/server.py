@@ -4326,14 +4326,15 @@ async def pool_availability(device_type: str, start_at: str, end_at: str, campus
     conn = get_conn()
     try:
         start, end = booking_engine.parse_dt(start_at), booking_engine.parse_dt(end_at)
-        free = booking_engine.pool_free_units(conn, campus, device_type, start, end, now=_local_now())
+        diag = {}
+        free = booking_engine.pool_free_units(conn, campus, device_type, start, end, now=_local_now(), diag=diag)
         policy = booking_engine.get_policy(conn, campus, booking_engine.POOL_CATEGORY)
     except booking_engine.BookingError as e:
         conn.close()
         raise HTTPException(400, e.message)
     conn.close()
     return {"device_type": device_type, "label": booking_engine.pool_label(device_type), "free": booking_engine.pool_free_count(free),
-            "max_units": int(policy.get("max_units") or 10)}
+            "max_units": int(policy.get("max_units") or 10), "why": diag}
 
 
 @api.get("/loans/{bid}/candidates")
