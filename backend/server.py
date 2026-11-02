@@ -2668,6 +2668,24 @@ async def bulk_import_assets(
             "pending_confirmation": len(new_assignments), "owner_ignored": owner_ignored}
 
 
+@api.get("/assets/fixed-labels")
+async def fixed_asset_labels(user: dict = Depends(get_current_user), campus: Optional[str] = None):
+    """Assets that are not lent out (furniture, wall clocks, assigned equipment...): the ones that get a sticker for asset checks only."""
+    conn = get_conn()
+    conds = ["COALESCE(s.borrowable, 0) = 0", "a.status != 'retired'"]
+    params = []
+    own_campus = (user.get("campus") or "").strip()
+    if user["role"] in ("staff",) + CAMPUS_BOUND and own_campus:
+        conds.append("a.campus = ?"); params.append(own_campus)
+    elif campus:
+        conds.append("a.campus = ?"); params.append(campus)
+    rows = conn.execute(f"""SELECT a.id, a.name, a.asset_tag, a.category, a.campus, a.location, a.unit, a.assigned_to_name
+                            FROM assets a LEFT JOIN asset_loan_settings s ON s.asset_id = a.id
+                            WHERE {' AND '.join(conds)} ORDER BY a.category, a.name""", params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 @api.get("/assets/{aid}")
 async def get_asset(aid: str, user: dict = Depends(get_current_user)):
     conn = get_conn()

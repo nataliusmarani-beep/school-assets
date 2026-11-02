@@ -37,12 +37,20 @@ export default function QrLabelsPage() {
   const [assets, setAssets] = useState([]);
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(new Set());
+  // "loan": IT devices that are lent out. "fixed": furniture, wall clocks and other assets that stay put (sticker for asset checks).
+  const [mode, setMode] = useState("loan");
+  const [cat, setCat] = useState("");
 
   useEffect(() => {
-    api.get("/loans/assets", { params: { campus } }).then((r) => { setAssets(r.data); setSel(new Set(r.data.map((a) => a.id))); }).catch((e) => toast.error(formatErr(e)));
-  }, [campus]);
+    setQ(""); setCat("");
+    api.get(mode === "loan" ? "/loans/assets" : "/assets/fixed-labels", { params: { campus } })
+      .then((r) => { setAssets(r.data); setSel(mode === "loan" ? new Set(r.data.map((a) => a.id)) : new Set()); })
+      .catch((e) => toast.error(formatErr(e)));
+  }, [campus, mode]);
 
-  const shown = useMemo(() => assets.filter((a) => `${a.name} ${a.asset_tag}`.toLowerCase().includes(q.toLowerCase())), [assets, q]);
+  const categories = useMemo(() => [...new Set(assets.map((a) => a.category).filter(Boolean))].sort(), [assets]);
+  const shown = useMemo(() => assets.filter((a) => (!cat || a.category === cat)
+    && `${a.name} ${a.asset_tag} ${a.location || ""}`.toLowerCase().includes(q.toLowerCase())), [assets, q, cat]);
   const chosen = shown.filter((a) => sel.has(a.id));
 
   return (
@@ -51,11 +59,20 @@ export default function QrLabelsPage() {
       <Link to="/scan" className="text-sm text-slate-500 hover:text-slate-900 inline-flex items-center gap-1 mb-4"><ArrowLeft className="w-4 h-4" /> {t("qr_title")}</Link>
       <h1 className="font-display text-3xl font-semibold tracking-tight text-slate-900">{t("qr_print_labels")}</h1>
       <p className="text-sm text-slate-500 mt-2">{t("qr_labels_hint")}</p>
+      <div className="flex mt-5" role="tablist">
+        {[["loan", "qr_mode_loan"], ["fixed", "qr_mode_fixed"]].map(([m, k]) => (
+          <button key={m} role="tab" aria-selected={mode === m} onClick={() => setMode(m)} data-testid={`qr-mode-${m}`}
+            className={`px-4 py-2 text-sm border border-slate-300 ${mode === m ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-700 hover:bg-slate-50"}`}>{t(k)}</button>))}
+      </div>
+      {mode === "fixed" && <p className="text-xs text-slate-500 mt-2">{t("qr_fixed_hint")}</p>}
       <div className="flex gap-3 flex-wrap items-center my-5">
         <select className="border border-slate-200 bg-white px-3 py-2 text-sm h-10" value={campus} disabled={isCampusBound(user?.role)} onChange={(e) => setCampus(e.target.value)}>
           {CAMPUSES.map((c) => <option key={c} value={c}>{campusLabel(c)}</option>)}</select>
+        {mode === "fixed" && <select className="border border-slate-200 bg-white px-3 py-2 text-sm h-10" value={cat} onChange={(e) => setCat(e.target.value)} data-testid="qr-category">
+          <option value="">{t("qr_all_categories")}</option>{categories.map((c) => <option key={c} value={c}>{c}</option>)}</select>}
         <Input className="w-64 rounded-none" value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("ln_search")} />
         <Button variant="outline" className="rounded-none" onClick={() => setSel(new Set(shown.map((a) => a.id)))}>{t("qr_select_all")}</Button>
+        {mode === "fixed" && <Button variant="outline" className="rounded-none" onClick={() => setSel(new Set())}>{t("qr_select_none")}</Button>}
         <Button className="rounded-none ml-auto" onClick={() => window.print()} data-testid="qr-print"><Printer className="w-4 h-4 mr-2" /> {t("qr_print")} ({chosen.length})</Button>
       </div>
       <div className="border border-slate-200 bg-white p-3 mb-6 max-h-48 overflow-y-auto grid sm:grid-cols-2 gap-1 text-sm">
@@ -68,7 +85,7 @@ export default function QrLabelsPage() {
         {chosen.map((a) => (
           <div key={a.id} className="border border-slate-300 p-2 text-center break-inside-avoid" data-testid={`qr-label-${a.asset_tag}`}>
             <BarRow value={a.asset_tag} />
-            <div className="text-sm font-bold text-slate-900 leading-tight mt-0.5 truncate">{[a.name !== a.asset_tag ? a.name : null, a.asset_tag, a.unit ? t(`unit_${a.unit}`) : campusLabel(a.campus)].filter(Boolean).join(" | ")}</div>
+            <div className="text-sm font-bold text-slate-900 leading-tight mt-0.5 truncate">{[a.name !== a.asset_tag ? a.name : null, a.asset_tag, mode === "fixed" ? (a.location || a.assigned_to_name || campusLabel(a.campus)) : (a.unit ? t(`unit_${a.unit}`) : campusLabel(a.campus))].filter(Boolean).join(" | ")}</div>
           </div>))}
       </div>
     </div>
