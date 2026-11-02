@@ -2669,15 +2669,21 @@ async def bulk_import_assets(
 
 
 LENT_TYPE_RE = re.compile(r"laptop|notebook|chromebook|ipad|tablet|camera|kamera", re.I)
+LENT_BRAND_RE = re.compile(r"\b(lenovo|msi|macbook|thinkpad)\b", re.I)   # student laptops are named by brand and generation
 FIXED_TYPE_RE = re.compile(r"desktop|monitor|\bpc\b", re.I)
 
 
-def is_lent_asset(item_type: str, name: str, borrowable) -> bool:
-    """Lent out: laptops, iPads / tablets and cameras (or anything marked borrowable) - but never desktops and monitors."""
-    text = f"{item_type or ''} {name or ''}"
-    if FIXED_TYPE_RE.search(item_type or "") or (not (item_type or "").strip() and FIXED_TYPE_RE.search(name or "")):
+def is_lent_asset(item_type: str, name: str, borrowable, category: str = "") -> bool:
+    """Lent out: every IT Equipment asset, laptops (also Lenovo / MSI student laptops), iPads / tablets and cameras, or anything
+    marked borrowable - but never monitors, nor desktops (unless the name is a student laptop's)."""
+    item_type, name = item_type or "", name or ""
+    if re.search(r"monitor", item_type, re.I):
         return False
-    return bool(borrowable) or bool(LENT_TYPE_RE.search(text))
+    if LENT_BRAND_RE.search(name):
+        return True
+    if FIXED_TYPE_RE.search(item_type) or (not item_type.strip() and FIXED_TYPE_RE.search(name)):
+        return False
+    return bool(borrowable) or (category or "") == "IT Equipment" or bool(LENT_TYPE_RE.search(f"{item_type} {name}"))
 
 
 @api.get("/assets/label-list")
@@ -2698,7 +2704,7 @@ async def label_list(group: str = "fixed", user: dict = Depends(get_current_user
     conn.close()
     want_lent = group == "loan"
     return [{k: v for k, v in dict(r).items() if k != "borrowable"} for r in rows
-            if is_lent_asset(r["item_type"], r["name"], r["borrowable"]) == want_lent]
+            if is_lent_asset(r["item_type"], r["name"], r["borrowable"], r["category"]) == want_lent]
 
 
 @api.get("/assets/{aid}")
