@@ -452,3 +452,20 @@ def test_label_list_splits_lent_from_fixed(client, make_user, db):
         return {x["id"] for x in r.json()}
     assert ids("fixed") == {"fx1", "fx3", "fx4"}
     assert ids("loan") == {"laptop0", "fx2", "fx5", "fx6", "fx7", "fx8", "fx9"}
+
+
+def test_bulk_loanable_keeps_other_settings(client, make_user, db):
+    seed(db, n_laptops=1, n_ipads=0)
+    for aid in ("m1", "m2"):
+        db.execute("INSERT INTO assets (id,name,asset_tag,category,item_type,campus,location,serial_number,unit,purchase_price,purchase_date,created_at,updated_at) "
+                   "VALUES (?,?,?,?,?,?,'R','','',0,'2026-01-01','t','t')", (aid, aid, aid, "IT Equipment", "Laptop", KK))
+    db.execute("INSERT INTO asset_loan_settings (asset_id, borrowable, loan_type, storage_slot) VALUES ('m2',0,'scheduled','A1')")
+    db.commit()
+    admin = make_user("super_admin", "")
+    r = client.post("/api/assets/bulk-loanable", headers=auth(admin), json={"asset_ids": ["m1", "m2", "zz"], "borrowable": True}).json()
+    assert r["updated"] == 2 and r["skipped"] == 1
+    rows = {x["asset_id"]: x for x in db.execute("SELECT * FROM asset_loan_settings WHERE asset_id IN ('m1','m2')")}
+    assert rows["m1"]["borrowable"] == 1 and rows["m2"]["borrowable"] == 1 and rows["m2"]["loan_type"] == "scheduled" and rows["m2"]["storage_slot"] == "A1"
+    client.post("/api/assets/bulk-loanable", headers=auth(admin), json={"asset_ids": ["m1"], "borrowable": False})
+    assert db.execute("SELECT borrowable FROM asset_loan_settings WHERE asset_id='m1'").fetchone()[0] == 0
+    assert client.post("/api/assets/bulk-loanable", headers=auth(admin), json={"asset_ids": [], "borrowable": True}).status_code == 400

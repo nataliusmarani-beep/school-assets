@@ -360,6 +360,14 @@ export default function AssetsListPage() {
     } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
 
+  const applyLoanable = async (borrowable) => {
+    try {
+      const r = await api.post("/assets/bulk-loanable", { asset_ids: [...selected], borrowable });
+      toast.success(`${t(borrowable ? "bl_done_on" : "bl_done_off").replace("{n}", r.data.updated)}${r.data.skipped ? ` · ${t("unit_skipped").replace("{n}", r.data.skipped)}` : ""}`);
+      setSelected(new Set()); load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+  };
+
   const doExport = async () => {
     setExporting(true);
     try {
@@ -519,7 +527,7 @@ export default function AssetsListPage() {
       </div>
 
       {isAdmin && selected.size > 0 && (
-        <div className="mb-3 flex items-center gap-4 bg-blue-50 border border-blue-200 px-4 py-2.5 text-sm" data-testid="bulk-transfer-bar">
+        <div className="mb-3 flex flex-wrap items-center gap-3 bg-blue-50 border border-blue-200 px-4 py-2.5 text-sm" data-testid="bulk-transfer-bar">
           <span className="font-medium text-blue-900">{t("bt_selected").replace("{n}", selected.size)}</span>
           <button onClick={() => setShowBulk(true)} className="bg-blue-800 hover:bg-blue-900 text-white px-3 py-1.5" data-testid="bulk-transfer-button">{t("bt_transfer")}</button>
           <select value={bulkUnit} onChange={(e) => setBulkUnit(e.target.value)} className="border border-blue-200 bg-white px-2 py-1.5" data-testid="bulk-unit-select">
@@ -527,6 +535,8 @@ export default function AssetsListPage() {
             {["paud", "sd", "smp", "admin", "shared"].map((u) => <option key={u} value={u}>{t(`unit_${u}`)}</option>)}
           </select>
           <button disabled={!bulkUnit} onClick={() => applyUnit({ unit: bulkUnit, asset_ids: [...selected] })} className="bg-blue-800 hover:bg-blue-900 disabled:opacity-40 text-white px-3 py-1.5" data-testid="bulk-unit-apply">{t("bu_apply")}</button>
+          <button onClick={() => applyLoanable(true)} className="bg-emerald-700 hover:bg-emerald-800 text-white px-3 py-1.5" data-testid="bulk-loanable-on">{t("bl_on")}</button>
+          <button onClick={() => applyLoanable(false)} className="border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 px-3 py-1.5" data-testid="bulk-loanable-off">{t("bl_off")}</button>
           <button onClick={() => setSelected(new Set())} className="text-slate-600 hover:text-slate-900" data-testid="bulk-clear">{t("bt_clear")}</button>
         </div>
       )}

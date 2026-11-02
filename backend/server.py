@@ -2213,6 +2213,30 @@ async def share_asset_photo(aid: str, body: SharePhotoIn, user: dict = Depends(a
     return {"count": len(targets), "applied": not body.dry_run}
 
 
+class BulkLoanableIn(BaseModel):
+    asset_ids: List[str]
+    borrowable: bool
+
+
+@api.post("/assets/bulk-loanable")
+async def bulk_set_loanable(body: BulkLoanableIn, user: dict = Depends(get_current_user)):
+    """Mark many assets as lendable (or not) at once. Other loan settings of an asset that already has them stay as they are."""
+    if not body.asset_ids:
+        raise HTTPException(400, "Pilih aset terlebih dahulu")
+    conn = get_conn()
+    changed, skipped = 0, 0
+    for aid in dict.fromkeys(body.asset_ids):
+        a = conn.execute("SELECT campus, category FROM assets WHERE id = ?", (aid,)).fetchone()
+        if not a or not (can_manage_loan(user, a["campus"], a["category"]) or user["role"] in ADMIN_ROLES):
+            skipped += 1
+            continue
+        conn.execute("""INSERT INTO asset_loan_settings (asset_id, borrowable, loan_type) VALUES (?,?,'item')
+                        ON CONFLICT(asset_id) DO UPDATE SET borrowable = excluded.borrowable""", (aid, int(body.borrowable)))
+        changed += 1
+    conn.commit(); conn.close()
+    return {"updated": changed, "skipped": skipped, "borrowable": body.borrowable}
+
+
 @api.post("/assets/bulk-unit")
 async def bulk_set_unit(body: BulkUnitIn, user: dict = Depends(asset_manager_required)):
     """Set the owning school unit on many assets at once, or (no unit given) fill the empty ones from their names."""
