@@ -333,7 +333,7 @@ export default function LoansPage() {
               <div key={a.id} className="bg-white border border-slate-200 p-5 flex flex-col" data-testid={`loan-asset-${a.asset_tag}`}>
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="font-semibold text-slate-900 truncate">{a.name}</div>
+                    <div className="font-semibold text-slate-900 truncate">{a.unit && <span className="text-[11px] font-semibold px-1.5 py-0.5 bg-blue-50 text-blue-800 border border-blue-200 mr-2">{t(`unit_${a.unit}`)}</span>}{a.name}</div>
                     <div className="text-xs text-slate-500">{[a.brand, a.model].filter(Boolean).join(" ") || a.category}</div>
                     <div className="font-mono text-xs text-slate-400 mt-1">{a.asset_tag}</div>
                   </div>

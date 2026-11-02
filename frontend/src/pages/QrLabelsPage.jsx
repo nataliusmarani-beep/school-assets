@@ -68,7 +68,7 @@ export default function QrLabelsPage() {
         {chosen.map((a) => (
           <div key={a.id} className="border border-slate-300 p-2 text-center break-inside-avoid" data-testid={`qr-label-${a.asset_tag}`}>
             <BarRow value={a.asset_tag} />
-            <div className="text-sm font-bold text-slate-900 leading-tight mt-0.5 truncate">{a.name} | {a.asset_tag} | YPJ School</div>
+            <div className="text-sm font-bold text-slate-900 leading-tight mt-0.5 truncate">{a.name} | {a.asset_tag} | {a.unit ? t(`unit_${a.unit}`) : "YPJ School"}</div>
           </div>))}
       </div>
     </div>

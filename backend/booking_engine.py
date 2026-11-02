@@ -1311,7 +1311,7 @@ def resolve_scan(conn, code: str, now: datetime) -> Optional[dict]:
                                   OR id IN (SELECT booking_id FROM booking_units WHERE asset_id = ? AND status = 'reserved'))
                              ORDER BY start_at LIMIT 1""",
                           (today, today, a["id"], s["resource_id"] if s else None, a["id"])).fetchone()
-    return {"asset": {k: a[k] for k in ("id", "name", "asset_tag", "category", "campus", "location", "brand", "model", "serial_number", "status")},
+    return {"asset": {k: a[k] for k in ("id", "name", "asset_tag", "category", "campus", "location", "unit", "brand", "model", "serial_number", "status")},
             "borrowable": bool(s and s["borrowable"]), "resource_id": s["resource_id"] if s else None,
             "out": dict(out) if out else None, "pickup": dict(pickup) if pickup else None, "in_use": busy_now, "cart": cart, "session": (cart_session_now(conn, s["resource_id"], now) if s and s["resource_id"] else None),
             "state": ("repair" if a["status"] == "in_repair" else "lost" if a["status"] == "lost" else "on_loan" if out

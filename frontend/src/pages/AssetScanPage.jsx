@@ -37,7 +37,7 @@ export default function AssetScanPage() {
 
       {a && (
         <div className="mt-6 bg-white border border-slate-200 p-5" data-testid="asset-scan-found">
-          <div className="font-semibold text-slate-900 text-lg">{a.name}</div>
+          <div className="font-semibold text-slate-900 text-lg">{a.unit && <span className="text-[11px] font-semibold px-1.5 py-0.5 bg-blue-50 text-blue-800 border border-blue-200 mr-2" data-testid="asset-unit">{t(`unit_${a.unit}`)}</span>}{a.name}</div>
           <div className="text-xs text-slate-500">{[a.brand, a.model].filter(Boolean).join(" ") || a.category} · {campusLabel(a.campus)}{a.location ? ` · ${a.location}` : ""}</div>
           <div className="font-mono text-xs text-slate-400 mt-1">{a.asset_tag}{a.serial_number ? ` · SN ${a.serial_number}` : ""}</div>
           <div className="flex gap-2 mt-4 flex-wrap">

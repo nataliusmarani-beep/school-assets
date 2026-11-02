@@ -4328,7 +4328,7 @@ async def loan_catalog(user: dict = Depends(get_current_user), search: Optional[
         conds.append("a.category = ?"); params.append(category)
     if search:
         conds.append("(a.name LIKE ? OR a.asset_tag LIKE ? OR a.brand LIKE ? OR a.model LIKE ?)"); params += [f"%{search}%"] * 4
-    rows = conn.execute(f"""SELECT a.id, a.name, a.asset_tag, a.category, a.campus, a.location, a.brand, a.model, a.status, a.photo_path,
+    rows = conn.execute(f"""SELECT a.id, a.name, a.asset_tag, a.category, a.campus, a.location, a.unit, a.brand, a.model, a.status, a.photo_path,
                                    s.loan_type, s.storage_slot FROM assets a JOIN asset_loan_settings s ON s.asset_id = a.id
                             WHERE {' AND '.join(conds)} ORDER BY a.category, a.name""", params).fetchall()
     now = _local_now()
