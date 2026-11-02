@@ -2062,6 +2062,26 @@ def ensure_barcode_ids(conn) -> int:
     return len(todo)
 
 
+def restore_asset_names(conn) -> int:
+    """Assets whose name is just their barcode number (name == tag, digits only) lost the descriptive text they carried as the tag
+    when barcode numbers were generated. Loan / transfer / assignment records kept a copy of that text: put it back as the name."""
+    n = 0
+    for a in conn.execute("SELECT id, name, asset_tag FROM assets WHERE name = asset_tag").fetchall():
+        if not (a["name"] or "").isdigit():
+            continue
+        text = None
+        for tbl in ("loan_requests", "transfer_requests", "assignments"):
+            r = conn.execute(f"SELECT asset_tag FROM {tbl} WHERE asset_id = ? AND asset_tag != '' AND asset_tag != ? ORDER BY rowid DESC", (a["id"], a["asset_tag"])).fetchall()
+            text = next((x["asset_tag"] for x in r if not x["asset_tag"].isdigit()), None)
+            if text:
+                break
+        if text:
+            conn.execute("UPDATE assets SET name = ?, updated_at = ? WHERE id = ?", (text, now_iso(), a["id"])); n += 1
+    if n:
+        conn.commit()
+    return n
+
+
 @api.post("/assets")
 async def create_asset(body: AssetIn, user: dict = Depends(asset_manager_required)):
     ensure_asset_manager(user, body.campus or "", body.category)
@@ -6868,6 +6888,9 @@ async def on_startup():
         n = ensure_barcode_ids(_c)
         if n:
             logger.info(f"Barcode numbers generated for {n} assets")
+        r = restore_asset_names(_c)
+        if r:
+            logger.info(f"Descriptive names restored for {r} assets")
     finally:
         _c.close()
     # Start background scheduler for daily return reminders

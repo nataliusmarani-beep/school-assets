@@ -265,3 +265,17 @@ def test_barcode_ids_are_generated_locked_and_backfilled(client, make_user, db):
     assert tags["o1"] == "9661732" and tags["o2"].isdigit() and tags["o3"].isdigit()
     assert len(set(tags.values())) == len(tags)
     assert server.ensure_barcode_ids(db) == 0
+
+
+def test_restore_asset_names_from_old_records(client, db):
+    seed(db, n_laptops=0, n_ipads=0)
+    for aid, name in (("r1", "9669707"), ("r2", "8880001")):
+        db.execute("INSERT INTO assets (id,name,asset_tag,category,item_type,campus,location,serial_number,purchase_price,purchase_date,created_at,updated_at) "
+                   "VALUES (?,?,?,?,?,?,'R','',0,'2026-01-01','t','t')", (aid, name, name, "IT Equipment", "Desktop", KK))
+    db.execute("INSERT INTO loan_requests (id,asset_id,asset_name,asset_tag,requested_by,requested_by_name,purpose,start_date,end_date,status,created_at) "
+               "VALUES ('l1','r1','9669707',?,'u','U','p','2026-01-01','2026-01-02','returned','t')", ("Student's Desktop #15",))
+    db.commit()
+    assert server.restore_asset_names(db) == 1
+    names = {r["id"]: r["name"] for r in db.execute("SELECT id, name FROM assets WHERE id IN ('r1','r2')")}
+    assert names == {"r1": "Student's Desktop #15", "r2": "8880001"}
+    assert server.restore_asset_names(db) == 0
