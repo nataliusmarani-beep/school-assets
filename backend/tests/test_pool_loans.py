@@ -352,3 +352,26 @@ def test_restore_names_keeps_descriptive_names_and_repairs_swap(client, make_use
     assert r["restored"] == 2 and r["unmatched"] == 2
     got = {x["id"]: (x["name"], x["asset_code"]) for x in db.execute("SELECT id, name, asset_code FROM assets")}
     assert got["d1"] == ("Lenovo 11th Gen", "SDYPJKK-LENOVO1") and got["d2"] == ("Lenovo 11th Gen", "SDYPJKK-LENOVO2")
+
+
+def test_counter_loan_turns_scanned_units_into_one_loan(client, make_user, db, monkeypatch):
+    monkeypatch.setattr(server, "_local_now", lambda: server.datetime(2026, 8, 5, 10, 0))
+    ids = seed(db)
+    teacher, ict, other = make_user("staff", KK), make_user("ict_admin", KK), make_user("staff", KK)
+    pick = ids["laptop"][:3]
+    body = {"asset_ids": pick, "borrower_id": teacher["id"], "end_at": "2026-08-05T14:00", "purpose": "Ujian", "class_name": "7A"}
+    assert client.post("/api/loans/counter", headers=auth(teacher), json=body).status_code == 403          # only ICT
+    r = client.post("/api/loans/counter", headers=auth(ict), json=body)
+    assert r.status_code == 200, r.text
+    assert r.json()["units"] == 3 and r.json()["status"] == "approved"
+    view = client.get(f"/api/loans/{r.json()['id']}", headers=auth(ict)).json()
+    assert view["requester_name"] == "staff user" and sorted(u["asset_id"] for u in view["units"]) == sorted(pick)
+    # the three laptops are taken; the same ones cannot be scanned into a second loan
+    again = client.post("/api/loans/counter", headers=auth(ict), json={**body, "asset_ids": pick[:1], "borrower_id": other["id"]})
+    assert again.status_code == 409
+    # mixed kinds are refused
+    mixed = client.post("/api/loans/counter", headers=auth(ict), json={**body, "asset_ids": [ids["laptop"][3], ids["ipad"][0]]})
+    assert mixed.status_code == 400
+    # the normal hand-over works on it
+    out = client.post(f"/api/loans/{r.json()['id']}/check-out", headers=auth(ict), json={"units": [unit(a) for a in pick]})
+    assert out.status_code == 200 and out.json()["status"] == "in_use"

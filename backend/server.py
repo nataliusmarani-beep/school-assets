@@ -4470,6 +4470,64 @@ def _local_now() -> datetime:
     return datetime.now(LOCAL_TZ).replace(tzinfo=None, second=0, microsecond=0)
 
 
+class CounterLoanIn(BaseModel):
+    asset_ids: List[str]                      # the exact units scanned at the counter
+    borrower_id: str                          # who takes them (a teacher / staff account)
+    end_at: str                               # return time, campus-local "YYYY-MM-DDTHH:MM"
+    purpose: str = ""
+    class_name: str = ""
+    use_location: str = ""
+
+
+@api.post("/loans/counter")
+async def create_counter_loan(body: CounterLoanIn, user: dict = Depends(get_current_user)):
+    """Loan at the ICT counter, outside the schedule: several scanned laptops / iPads become ONE loan for the borrower, approved on
+    the spot with exactly those units reserved. The hand-over (condition, photo) is then done on the loan page as usual."""
+    ids = list(dict.fromkeys(body.asset_ids))
+    if not ids:
+        raise HTTPException(400, "Scan minimal satu unit.")
+    conn = get_conn()
+    assets = [conn.execute("SELECT id, name, asset_tag, item_type, campus, category FROM assets WHERE id = ?", (i,)).fetchone() for i in ids]
+    if any(a is None for a in assets):
+        conn.close(); raise HTTPException(404, "Ada aset yang tidak ditemukan")
+    campus, category = assets[0]["campus"], assets[0]["category"]
+    if any(a["campus"] != campus or a["category"] != category for a in assets):
+        conn.close(); raise HTTPException(400, "Semua unit harus dari kampus dan kategori yang sama.")
+    if not can_manage_loan(user, campus, category):
+        conn.close(); raise HTTPException(403, "Hanya Admin ICT kampus ini yang dapat membuat peminjaman di loket")
+    kinds = set()
+    for a in assets:
+        it = (a["item_type"] or "").lower()
+        kinds.add(next((k for k, (_l, words) in booking_engine.POOL_TYPES.items() if any(w in it or w in (a["name"] or "").lower() for w in words)), None))
+    if None in kinds or len(kinds) != 1:
+        conn.close(); raise HTTPException(400, "Peminjaman banyak unit hanya untuk laptop atau iPad, dan tidak boleh dicampur.")
+    device_type = kinds.pop()
+    borrower = conn.execute("SELECT id, name, email, campus FROM users WHERE id = ?", (body.borrower_id,)).fetchone()
+    if not borrower:
+        conn.close(); raise HTTPException(404, "Peminjam tidak ditemukan")
+    now = _local_now()
+    try:
+        b = booking_engine.reserve(conn, now=now, data={
+            "campus": campus, "kind": "pool", "asset_id": None, "resource_id": None, "category": category, "device_type": device_type,
+            "requester_id": borrower["id"], "requester_name": borrower["name"], "start_at": now.strftime("%Y-%m-%dT%H:%M"), "end_at": body.end_at,
+            "units": len(ids), "class_name": body.class_name, "purpose": body.purpose, "use_location": body.use_location,
+            "note": f"Dibuat di loket oleh {user['name']}", "take_home": False, "supervisor_id": None, "terms_accepted": True})
+        if b["status"] == "pending_ict":
+            b = booking_engine.decide(conn, booking_id=b["id"], decision="approved", by_id=user["id"], by_name=user["name"], now=now, unit_ids=ids)
+        elif b["status"] == "approved":      # nothing to decide: hold the scanned units for this loan
+            booking_engine.validate_pool_selection(conn, b, ids, booking_engine.parse_dt(b["start_at"]), booking_engine.parse_dt(b["end_at"]), now=now)
+            for uid in ids:
+                conn.execute("INSERT INTO booking_units (id, booking_id, asset_id, user_label, status) VALUES (?,?,?,?, 'reserved')",
+                             (booking_engine.new_id(), b["id"], uid, b["requester_name"]))
+            conn.commit()
+    except booking_engine.BookingError as e:
+        conn.close()
+        raise HTTPException(409 if e.code in ("conflict", "overdue", "units") else 400, e.message)
+    out = {"id": b["id"], "number": b["number"], "status": b["status"], "units": len(ids)}
+    conn.close()
+    return out
+
+
 @api.get("/loans/assets")
 async def loan_catalog(user: dict = Depends(get_current_user), search: Optional[str] = None, category: Optional[str] = None,
                        campus: Optional[str] = None):

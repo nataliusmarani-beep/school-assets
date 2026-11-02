@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import api, { formatErr } from "../lib/api";
 import { useLang } from "../context/LangContext";
@@ -9,7 +9,7 @@ import { toast } from "sonner";
 import QrScanner from "../components/loans/QrScanner";
 import { fmtDateTime } from "../components/loans/LoanForms";
 import { campusLabel } from "../lib/campus";
-import { QrCode } from "lucide-react";
+import { QrCode, X } from "lucide-react";
 
 const STATE_STYLE = {
   available: "text-emerald-700 bg-emerald-50 border-emerald-200", on_loan: "text-amber-700 bg-amber-50 border-amber-200",
@@ -23,6 +23,25 @@ export default function ScanPage() {
   const manager = ["super_admin", "admin", "campus_admin", "ict_admin"].includes(user?.role);
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
+  // several units for one loan: scanned into a basket, then turned into a single loan for the borrower
+  const [multi, setMulti] = useState(false);
+  const [basket, setBasket] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [borrower, setBorrower] = useState("");
+  const [purpose, setPurpose] = useState("");
+  const [className, setClassName] = useState("");
+  const [until, setUntil] = useState(() => { const d = new Date(Date.now() + 4 * 3600e3); d.setMinutes(0, 0, 0); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}T${String(d.getHours()).padStart(2, "0")}:00`; });
+  useEffect(() => { if (multi && !users.length) api.get("/users").then((r) => setUsers(r.data)).catch(() => {}); }, [multi, users.length]);
+  const [userQ, setUserQ] = useState("");
+  const shownUsers = useMemo(() => users.filter((u) => `${u.name} ${u.email}`.toLowerCase().includes(userQ.toLowerCase())).slice(0, 50), [users, userQ]);
+  const createCounterLoan = async () => {
+    setBusy(true);
+    try {
+      const r = await api.post("/loans/counter", { asset_ids: basket.map((x) => x.id), borrower_id: borrower, end_at: until, purpose, class_name: className });
+      toast.success(t("qr_multi_created").replace("{n}", r.data.units));
+      navigate(`/loans/${r.data.id}`);
+    } catch (e) { toast.error(formatErr(e)); } finally { setBusy(false); }
+  };
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const openSession = async (sg) => {
@@ -33,10 +52,18 @@ export default function ScanPage() {
 
   const onScan = useCallback(async (code) => {
     setBusy(true);
-    try { const r = await api.get("/loans/scan", { params: { code } }); setResult(r.data); }
+    try {
+      const r = await api.get("/loans/scan", { params: { code } });
+      if (multi) {                                   // basket mode: add the unit, keep scanning
+        const a0 = r.data.asset;
+        if (r.data.state !== "available" || !r.data.borrowable) toast.error(`${a0.name}: ${t(`ln_state_${r.data.state}`)}`);
+        else if (basket.some((x) => x.id === a0.id)) toast.message(`${a0.name}: ${t("qr_multi_dup")}`);
+        else { setBasket((b) => [...b, { id: a0.id, name: a0.name, tag: a0.asset_tag, unit: a0.unit }]); toast.success(`+ ${a0.name}`); }
+      } else setResult(r.data);
+    }
     catch (e) { setResult(null); toast.error(formatErr(e)); }
     finally { setBusy(false); }
-  }, []);
+  }, [multi, basket, t]);
 
   // opened from a label with the phone's own camera: /scan?code=<asset tag>
   useEffect(() => { const c = params.get("code"); if (c) onScan(c); }, [params, onScan]);
@@ -47,10 +74,32 @@ export default function ScanPage() {
       <div className="label-mono mb-2">{t("ln_kicker")}</div>
       <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight text-slate-900">{t("qr_loan_title")}</h1>
       <p className="text-sm text-slate-500 mt-2">{t("qr_loan_subtitle")}</p>
-      <div className="mt-6"><QrScanner onScan={onScan} t={t} paused={!!result} /></div>
-      {result && <Button variant="outline" className="rounded-none mt-3" onClick={() => setResult(null)} data-testid="scan-next">{t("qr_scan_next")}</Button>}
+      <div className="mt-6"><QrScanner onScan={onScan} t={t} paused={!multi && !!result} /></div>
+      {manager && <label className="mt-3 flex items-center gap-2 text-sm text-slate-700 cursor-pointer"><input type="checkbox" checked={multi} onChange={(e) => { setMulti(e.target.checked); setResult(null); }} data-testid="scan-multi" /> {t("qr_multi_toggle")}</label>}
+      {manager && multi && (
+        <div className="mt-4 bg-white border border-slate-200 p-5" data-testid="scan-basket">
+          <div className="font-semibold text-slate-900">{t("qr_multi_basket")} ({basket.length})</div>
+          {basket.length === 0 && <div className="text-sm text-slate-500 mt-1">{t("qr_multi_empty")}</div>}
+          <ul className="mt-2 divide-y divide-slate-100">
+            {basket.map((x) => (<li key={x.id} className="py-1.5 flex items-center justify-between text-sm"><span>{x.unit ? <b className="text-blue-800 mr-2">{t(`unit_${x.unit}`)}</b> : null}{x.name} <span className="font-mono text-xs text-slate-400">{x.tag}</span></span>
+              <button onClick={() => setBasket((b) => b.filter((y) => y.id !== x.id))} className="text-slate-400 hover:text-rose-600" aria-label="remove"><X className="w-4 h-4" /></button></li>))}
+          </ul>
+          {basket.length > 0 && (
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="sm:col-span-2"><div className="label-mono mb-1">{t("qr_multi_borrower")}</div>
+                <input className="border border-slate-200 px-3 py-2 text-sm w-full mb-1" placeholder={t("qr_multi_search")} value={userQ} onChange={(e) => setUserQ(e.target.value)} />
+                <select className="border border-slate-200 bg-white px-3 py-2 text-sm w-full" value={borrower} onChange={(e) => setBorrower(e.target.value)} data-testid="scan-borrower">
+                  <option value="">—</option>{shownUsers.map((u) => <option key={u.id} value={u.id}>{u.name} — {u.email}</option>)}</select></div>
+              <div><div className="label-mono mb-1">{t("qr_multi_until")}</div><input type="datetime-local" className="border border-slate-200 px-3 py-2 text-sm w-full" value={until} onChange={(e) => setUntil(e.target.value)} data-testid="scan-until" /></div>
+              <div><div className="label-mono mb-1">{t("qr_multi_class")}</div><input className="border border-slate-200 px-3 py-2 text-sm w-full" value={className} onChange={(e) => setClassName(e.target.value)} /></div>
+              <div className="sm:col-span-2"><div className="label-mono mb-1">{t("qr_multi_purpose")}</div><input className="border border-slate-200 px-3 py-2 text-sm w-full" value={purpose} onChange={(e) => setPurpose(e.target.value)} /></div>
+              <div className="sm:col-span-2 text-xs text-slate-500">{t("qr_multi_terms")}</div>
+              <div className="sm:col-span-2"><Button className="rounded-none" disabled={busy || !borrower || !until} onClick={createCounterLoan} data-testid="scan-create-loan">{t("qr_multi_create").replace("{n}", basket.length)}</Button></div>
+            </div>)}
+        </div>)}
+      {result && !multi && <Button variant="outline" className="rounded-none mt-3" onClick={() => setResult(null)} data-testid="scan-next">{t("qr_scan_next")}</Button>}
 
-      {a && (
+      {a && !multi && (
         <div className="mt-6 bg-white border border-slate-200 p-5" data-testid="scan-result">
           <div className="flex items-start justify-between gap-3">
             <div>
