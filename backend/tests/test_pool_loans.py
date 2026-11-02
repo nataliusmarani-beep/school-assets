@@ -297,3 +297,18 @@ def test_bulk_unit_by_selection_and_by_name_rules(client, make_user, db):
     r = client.post("/api/assets/bulk-unit", headers=auth(admin), json={"unit": "sd", "asset_ids": ["b5", "b6"]}).json()
     assert r["updated"] == 2
     assert client.post("/api/assets/bulk-unit", headers=auth(admin), json={"unit": "xx", "asset_ids": ["b5"]}).status_code == 400
+
+
+def test_bulk_unit_follows_cart_or_lab_unit(client, make_user, db):
+    seed(db, n_laptops=0, n_ipads=0)
+    db.execute("INSERT INTO resources (id,campus,name,kind,capacity,category,location,active,created_at,unit) VALUES ('cx',?,'Laptop Cart SD','laptop_cart',2,'IT Equipment','',1,'t','SD')", (KK,))
+    for aid, name, cur in (("c1", "9661732", ""), ("c2", "Student's Desktop #1", "smp"), ("c3", "Student's Desktop #2", "")):
+        db.execute("INSERT INTO assets (id,name,asset_tag,category,item_type,campus,location,serial_number,unit,purchase_price,purchase_date,created_at,updated_at) "
+                   "VALUES (?,?,?,?,?,?,'R','',?,0,'2026-01-01','t','t')", (aid, name, aid, "IT Equipment", "Laptop", KK, cur))
+    for aid in ("c1", "c2"):
+        db.execute("INSERT INTO asset_loan_settings (asset_id, borrowable, loan_type, resource_id) VALUES (?,1,'scheduled','cx')", (aid,))
+    db.commit()
+    admin = make_user("super_admin", "")
+    assert client.post("/api/assets/bulk-unit", headers=auth(admin), json={}).json()["updated"] == 3
+    units = {x["id"]: x["unit"] for x in db.execute("SELECT id, unit FROM assets WHERE id LIKE 'c%'")}
+    assert units == {"c1": "sd", "c2": "sd", "c3": "smp"}

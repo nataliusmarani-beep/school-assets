@@ -2117,12 +2117,23 @@ async def bulk_set_unit(body: BulkUnitIn, user: dict = Depends(asset_manager_req
             conn.close(); raise HTTPException(400, "Pilih aset terlebih dahulu")
         rows = [conn.execute("SELECT id, name, campus, category, item_type FROM assets WHERE id = ?", (i,)).fetchone() for i in body.asset_ids]
     else:
-        rows = conn.execute("SELECT id, name, campus, category, item_type FROM assets WHERE COALESCE(unit, '') = ''").fetchall()
+        # automatic: a unit that belongs to a cart / lab follows that cart's / lab's school unit (the one its schedule uses);
+        # the others with no unit yet are guessed from their name
+        rows = conn.execute("""SELECT a.id, a.name, a.campus, a.category, a.item_type, LOWER(COALESCE(r.unit, '')) AS res_unit, COALESCE(a.unit, '') AS cur
+                               FROM assets a LEFT JOIN asset_loan_settings s ON s.asset_id = a.id LEFT JOIN resources r ON r.id = s.resource_id
+                               WHERE (r.unit IS NOT NULL AND r.unit != '') OR COALESCE(a.unit, '') = ''""").fetchall()
     changed, skipped, counts = 0, 0, {}
     for r in rows:
         if not r:
             continue
-        unit = body.unit if body.unit is not None else guess_unit(r["name"], r["item_type"])
+        if body.unit is not None:
+            unit = body.unit
+        elif r["res_unit"] in UNIT_CODES:
+            unit = r["res_unit"]
+            if unit == r["cur"]:
+                continue
+        else:
+            unit = guess_unit(r["name"], r["item_type"]) if not r["cur"] else None
         if not unit:
             skipped += 1
             continue
