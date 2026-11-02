@@ -10,6 +10,8 @@ export default function QrScanner({ onScan, t, repeatMs = 2500, active = true })
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const last = useRef({ text: "", at: 0 });
+  const detector = useRef(null);
+  const zx = useRef(null);
   const handler = useRef(onScan);        // latest callback, so a changing onScan never restarts the camera
   handler.current = onScan;
   const [error, setError] = useState("");
@@ -17,7 +19,35 @@ export default function QrScanner({ onScan, t, repeatMs = 2500, active = true })
 
   useEffect(() => {
     if (!active) return undefined;
-    let stream; let raf; let stopped = false;
+    let stream; let raf; let stopped = false; let lastTry = 0; let busy = false;
+    const emit = (text) => {
+      const now = Date.now();
+      if (text && (text !== last.current.text || now - last.current.at > repeatMs)) {
+        last.current = { text, at: now };
+        handler.current(text);
+      }
+    };
+    // 1D barcodes (Code 128 / 39, EAN ...): the phone's own detector when it has one, otherwise zxing loaded on demand
+    const readBars = async (c) => {
+      if (window.BarcodeDetector) {
+        if (!detector.current) {
+          const want = ["code_128", "code_39", "ean_13", "ean_8", "upc_a", "itf", "codabar"];
+          const have = (await window.BarcodeDetector.getSupportedFormats?.()) || want;
+          detector.current = new window.BarcodeDetector({ formats: want.filter((f) => have.includes(f)) });
+        }
+        const found = await detector.current.detect(c);
+        return found[0]?.rawValue || "";
+      }
+      const Z = await import("@zxing/library");
+      if (!zx.current) {
+        const reader = new Z.MultiFormatReader();
+        reader.setHints(new Map([[Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.CODE_128, Z.BarcodeFormat.CODE_39, Z.BarcodeFormat.EAN_13,
+          Z.BarcodeFormat.EAN_8, Z.BarcodeFormat.ITF, Z.BarcodeFormat.CODABAR]], [Z.DecodeHintType.TRY_HARDER, true]]));
+        zx.current = reader;
+      }
+      try { return zx.current.decode(new Z.BinaryBitmap(new Z.HybridBinarizer(new Z.HTMLCanvasElementLuminanceSource(c)))).getText(); }
+      catch (e) { return ""; }
+    };
     const tick = () => {
       const v = videoRef.current; const c = canvasRef.current;
       if (stopped || !v || !c) return;
@@ -27,10 +57,10 @@ export default function QrScanner({ onScan, t, repeatMs = 2500, active = true })
         ctx.drawImage(v, 0, 0, c.width, c.height);
         const img = ctx.getImageData(0, 0, c.width, c.height);
         const code = jsQR(img.data, img.width, img.height, { inversionAttempts: "dontInvert" });
-        const now = Date.now();
-        if (code && code.data && (code.data !== last.current.text || now - last.current.at > repeatMs)) {
-          last.current = { text: code.data, at: now };
-          handler.current(code.data);
+        if (code && code.data) emit(code.data);
+        else if (!busy && Date.now() - lastTry > 250) {
+          busy = true; lastTry = Date.now();
+          readBars(c).then((txt) => { if (!stopped) emit(txt); }).catch(() => {}).finally(() => { busy = false; });
         }
       }
       raf = requestAnimationFrame(tick);
@@ -60,7 +90,7 @@ export default function QrScanner({ onScan, t, repeatMs = 2500, active = true })
         </div>)}
       <canvas ref={canvasRef} className="hidden" />
       <form onSubmit={submitManual} className="flex gap-2">
-        <Input className="rounded-none" value={manual} onChange={(e) => setManual(e.target.value)} placeholder={t("qr_manual")} data-testid="qr-manual-input" />
+        <Input className="rounded-none" autoFocus value={manual} onChange={(e) => setManual(e.target.value)} placeholder={t("qr_manual")} data-testid="qr-manual-input" />
         <Button type="submit" variant="outline" className="rounded-none" data-testid="qr-manual-submit">{t("qr_find")}</Button>
       </form>
     </div>

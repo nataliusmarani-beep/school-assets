@@ -216,3 +216,16 @@ def test_single_unit_loan_respects_cart_schedule_and_counts_in_cart(client, make
         assert client.put(f"/api/loans/{first.json()['id']}/decide", headers=auth(make_user("ict_admin", KK)),
                           json={"decision": "approved"}).status_code == 200
     assert client.post("/api/loans", headers=auth(b), json=body(ids["ipad"][1])).status_code == 409     # cart now full
+
+
+def test_scan_finds_asset_by_encoded_link_serial_or_loose_spelling(client, make_user, db, monkeypatch):
+    monkeypatch.setattr(server, "_local_now", lambda: server.datetime(2026, 8, 5, 10, 0))
+    seed(db, n_laptops=0, n_ipads=0)
+    db.execute("INSERT INTO assets (id,name,asset_tag,category,item_type,campus,location,serial_number,purchase_price,purchase_date,created_at,updated_at) "
+               "VALUES ('x1',?,?,?,?,?,'ICT','HX1G26C5F6',0,'2026-01-01','t','t')", ("YPJ's iPad24", "YPJ's iPad24", "IT Equipment", "iPad", KK))
+    db.commit()
+    ict = make_user("ict_admin", KK)
+    for code in ("YPJ's iPad24", "https://x.example/scan?code=YPJ%27s%20iPad24", "ypj's-ipad24", "HX1G26C5F6", "hx1g26c5f6"):
+        r = client.get("/api/loans/scan", headers=auth(ict), params={"code": code})
+        assert r.status_code == 200 and r.json()["asset"]["id"] == "x1", code
+    assert client.get("/api/loans/scan", headers=auth(ict), params={"code": "NOPE-1"}).status_code == 404

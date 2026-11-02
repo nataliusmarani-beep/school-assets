@@ -7,6 +7,7 @@ import re
 import uuid
 from datetime import date, datetime, timedelta
 from typing import Optional
+from urllib.parse import parse_qs, unquote, urlparse
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS asset_loan_settings (
@@ -1252,14 +1253,31 @@ def cart_session_now(conn, resource_id: str, now: datetime, lead_minutes: int = 
     return None
 
 
+def scan_code(raw: str) -> str:
+    """The asset code inside what a scanner / camera / keyboard delivered: a bare code, or a link such as
+    https://host/scan?code=YPJ-KAM-005 (URL-encoded)."""
+    c = (raw or "").strip()
+    if "://" in c or c.startswith("/") or "code=" in c:
+        q = parse_qs(urlparse(c).query)
+        if q.get("code"):
+            return q["code"][0].strip()
+        if "code=" in c:
+            return unquote(c.rsplit("code=", 1)[1].split("&")[0]).strip()
+        return unquote(c.rstrip("/").rsplit("/", 1)[-1]).strip()
+    return c
+
+
 def resolve_scan(conn, code: str, now: datetime) -> Optional[dict]:
     """Find the asset behind a scanned QR / typed code and what can be done with it right now."""
-    c = (code or "").strip()
-    if "=" in c:                       # QR holds a link like https://host/scan?code=YPJ-KAM-005
-        c = c.rsplit("=", 1)[1]
-    c = c.split("/")[-1].strip()
+    c = scan_code(code)
     a = conn.execute("SELECT * FROM assets WHERE LOWER(asset_tag) = LOWER(?) OR (asset_code != '' AND LOWER(asset_code) = LOWER(?)) "
                      "ORDER BY LOWER(asset_tag) = LOWER(?) DESC LIMIT 1", (c, c, c)).fetchone()
+    if not a and c:                    # serial number, or the same code typed with other spacing / dashes / case
+        key = re.sub(r"[\s\-_]", "", c).lower()
+        a = conn.execute("""SELECT * FROM assets WHERE (serial_number != '' AND LOWER(serial_number) = LOWER(?))
+                            OR REPLACE(REPLACE(REPLACE(LOWER(asset_tag), ' ', ''), '-', ''), '_', '') = ?
+                            OR (asset_code != '' AND REPLACE(REPLACE(REPLACE(LOWER(asset_code), ' ', ''), '-', ''), '_', '') = ?) LIMIT 1""",
+                         (c, key, key)).fetchone()
     if not a:
         return None
     a = dict(a)

@@ -8,8 +8,6 @@ import QrScanner from "../components/loans/QrScanner";
 import { campusLabel } from "../lib/campus";
 
 /* Asset check / registration: scan a label to open the asset, or start a new asset when the code is not registered yet. */
-const codeOf = (text) => String(text || "").trim().split("=").pop().split("/").pop().trim();
-
 export default function AssetScanPage() {
   const { t } = useLang();
   const [found, setFound] = useState(null);       // { asset, state } of a registered asset
@@ -17,7 +15,7 @@ export default function AssetScanPage() {
   const [busy, setBusy] = useState(false);
 
   const onScan = useCallback(async (text) => {
-    const code = codeOf(text);
+    const code = String(text || "").trim();        // the server unpacks links, spacing and serial numbers
     if (!code) return;
     setBusy(true); setFound(null); setUnknown("");
     try { const r = await api.get("/loans/scan", { params: { code } }); setFound(r.data); }
