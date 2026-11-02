@@ -5138,8 +5138,13 @@ async def loan_scan(code: str, user: dict = Depends(get_current_user)):
     if not manage:
         info["out"] = {"requester_name": info["out"]["requester_name"], "end_at": info["out"]["end_at"]} if info["out"] else None
         info["pickup"] = None
+    sess = info.get("session")
+    if not manage:
+        info["session"] = None
     info["suggest"] = ({"action": "check_in", "booking_id": info["out"]["booking_id"]} if manage and info["out"]
-                       else {"action": "check_out", "booking_id": info["pickup"]["id"]} if manage and info["pickup"] else None)
+                       else {"action": "check_out", "booking_id": info["pickup"]["id"]} if manage and info["pickup"]
+                       else {"action": "check_out", "booking_id": sess["booking_id"]} if manage and sess and sess["booking_id"]
+                       else {"action": "open_session", "schedule_id": sess["schedule_id"], "date": sess["date"]} if manage and sess else None)
     return info
 
 

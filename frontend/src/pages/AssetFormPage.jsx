@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import api, { formatErr } from "../lib/api";
 import { compressToMaxBytes, ASSET_PHOTO_MAX_BYTES } from "../lib/image";
 import { Input } from "../components/ui/input";
@@ -138,6 +138,7 @@ export default function AssetFormPage() {
   const { id } = useParams();
   const isEdit = !!id;
   const navigate = useNavigate();
+  const [qs] = useSearchParams();
   const { t } = useLang();
   const { user } = useAuth();
   const [error, setError] = useState("");
@@ -149,7 +150,7 @@ export default function AssetFormPage() {
   const lifeTouched = useRef(false);
 
   const [form, setForm] = useState({
-    name: "", asset_tag: "", category: user?.role === "admin" ? "Furniture" : "IT Equipment", asset_type: "School Asset", description: "",
+    name: "", asset_tag: qs.get("tag") || "", category: user?.role === "admin" ? "Furniture" : "IT Equipment", asset_type: "School Asset", description: "",
     campus: "", location: "", status: "active", purchase_price: "",
     purchase_date: new Date().toISOString().split("T")[0],
     useful_life_years: DEFAULT_USEFUL_LIFE[user?.role === "admin" ? "Furniture" : "IT Equipment"], warranty_end_date: "", serial_number: "",

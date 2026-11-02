@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import api, { formatErr } from "../lib/api";
 import { useLang } from "../context/LangContext";
 import { useAuth } from "../context/AuthContext";
@@ -24,6 +24,12 @@ export default function ScanPage() {
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
   const [params] = useSearchParams();
+  const navigate = useNavigate();
+  const openSession = async (sg) => {
+    setBusy(true);
+    try { const r = await api.post(`/loans/schedules/${sg.schedule_id}/session`, { date: sg.date }); navigate(`/loans/${r.data.id}`); }
+    catch (e) { toast.error(formatErr(e)); } finally { setBusy(false); }
+  };
 
   const onScan = useCallback(async (code) => {
     setBusy(true);
@@ -39,8 +45,8 @@ export default function ScanPage() {
   return (
     <div className="p-6 lg:p-10 max-w-[760px] mx-auto" data-testid="scan-page">
       <div className="label-mono mb-2">{t("ln_kicker")}</div>
-      <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight text-slate-900">{t("qr_title")}</h1>
-      <p className="text-sm text-slate-500 mt-2">{t("qr_subtitle")}</p>
+      <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight text-slate-900">{t("qr_loan_title")}</h1>
+      <p className="text-sm text-slate-500 mt-2">{t("qr_loan_subtitle")}</p>
       <div className="mt-6"><QrScanner onScan={onScan} t={t} /></div>
 
       {a && (
@@ -55,10 +61,14 @@ export default function ScanPage() {
           </div>
           {result.out && <div className="text-sm text-slate-600 mt-3">{t("ln_with")} <b>{result.out.requester_name}</b> · {t("ln_until")} {fmtDateTime(result.out.end_at)}</div>}
           {result.in_use && <div className="text-sm text-slate-600 mt-3">{t("ln_in_use_now")}{result.in_use.requester ? `: ${result.in_use.requester}` : ""}</div>}
+          {result.session && <div className="text-sm text-slate-700 mt-3 border border-amber-200 bg-amber-50 px-3 py-2" data-testid="scan-session">
+            {t("qr_session")}: <b>{result.session.class_name}</b> · {result.session.teacher_name} · {fmtDateTime(result.session.start)}–{result.session.end.slice(11)} · {result.session.units} unit</div>}
           {result.cart && result.cart.used > 0 && <div className="text-xs text-slate-500 mt-1">{result.cart.name}: {result.cart.used} / {result.cart.capacity} {t("qr_cart_used")}</div>}
           {result.pickup && <div className="text-sm text-slate-600 mt-3">{t("qr_pickup")}: {result.pickup.number} · {result.pickup.requester_name}</div>}
           <div className="flex gap-2 mt-4 flex-wrap">
-            {result.suggest && (
+            {result.suggest?.action === "open_session" && (
+              <Button className="rounded-none" disabled={busy} onClick={() => openSession(result.suggest)} data-testid="scan-open-session">{t("qr_handover_session")}</Button>)}
+            {result.suggest && result.suggest.action !== "open_session" && (
               <Link to={`/loans/${result.suggest.booking_id}`}>
                 <Button className="rounded-none" data-testid="scan-action">{t(result.suggest.action === "check_in" ? "ln_act_checkin" : "ln_act_checkout")}</Button></Link>)}
             {canWrite(user?.role) && result.borrowable && result.state === "available" && (

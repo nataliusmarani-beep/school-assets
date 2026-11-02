@@ -189,6 +189,14 @@ def test_scan_cart_unit_scheduled_even_if_cart_not_full(client, make_user, db, m
     db.commit()
     r = client.get("/api/loans/scan", headers=auth(make_user("ict_admin", KK)), params={"code": "YPJ-IPAD-0"}).json()
     assert r["state"] == "scheduled" and r["cart"]["used"] == 2 and r["cart"]["capacity"] == 3
+    assert r["suggest"]["action"] == "open_session" and r["session"]["class_name"] == "7A"
+    sid, day = r["suggest"]["schedule_id"], r["suggest"]["date"]
+    ict = make_user("ict_admin", KK)
+    b = client.post(f"/api/loans/schedules/{sid}/session", headers=auth(ict), json={"date": day})
+    assert b.status_code == 200, b.text
+    r = client.get("/api/loans/scan", headers=auth(ict), params={"code": "YPJ-IPAD-0"}).json()
+    assert r["suggest"] == {"action": "check_out", "booking_id": b.json()["id"]}
+    assert client.get("/api/loans/scan", headers=auth(make_user("staff", KK)), params={"code": "YPJ-IPAD-0"}).json()["suggest"] is None
 
 
 def test_single_unit_loan_respects_cart_schedule_and_counts_in_cart(client, make_user, db, monkeypatch):

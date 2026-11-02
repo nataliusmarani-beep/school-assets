@@ -1240,6 +1240,18 @@ def reminder_targets(conn, now: datetime) -> dict:
 
 
 # ---- Scan resolution ----
+def cart_session_now(conn, resource_id: str, now: datetime, lead_minutes: int = 15) -> Optional[dict]:
+    """The fixed-schedule session of a cart that is running now (or starts within `lead_minutes`), for hand-over by ICT."""
+    soon = now + timedelta(minutes=lead_minutes)
+    for o in sorted(fixed_occurrences(conn, resource_id, now.date(), now.date()), key=lambda x: x["start"]):
+        if o["start"] <= soon and o["end"] > now and o["booking_status"] not in ("completed", "returned", "cancelled", "rejected"):
+            return {"schedule_id": o["schedule_id"], "date": o["start"].date().isoformat(), "class_name": o["class_name"],
+                    "teacher_name": o["teacher_name"], "subject": o["subject"], "units": o["units"],
+                    "start": o["start"].strftime(FMT), "end": o["end"].strftime(FMT),
+                    "booking_id": o["booking_id"], "booking_status": o["booking_status"]}
+    return None
+
+
 def resolve_scan(conn, code: str, now: datetime) -> Optional[dict]:
     """Find the asset behind a scanned QR / typed code and what can be done with it right now."""
     c = (code or "").strip()
@@ -1279,6 +1291,6 @@ def resolve_scan(conn, code: str, now: datetime) -> Optional[dict]:
                           (today, today, a["id"], s["resource_id"] if s else None, a["id"])).fetchone()
     return {"asset": {k: a[k] for k in ("id", "name", "asset_tag", "category", "campus", "location", "brand", "model", "serial_number", "status")},
             "borrowable": bool(s and s["borrowable"]), "resource_id": s["resource_id"] if s else None,
-            "out": dict(out) if out else None, "pickup": dict(pickup) if pickup else None, "in_use": busy_now, "cart": cart,
+            "out": dict(out) if out else None, "pickup": dict(pickup) if pickup else None, "in_use": busy_now, "cart": cart, "session": (cart_session_now(conn, s["resource_id"], now) if s and s["resource_id"] else None),
             "state": ("repair" if a["status"] == "in_repair" else "lost" if a["status"] == "lost" else "on_loan" if out
                       else "scheduled" if busy_now else "available")}

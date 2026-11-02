@@ -22,6 +22,7 @@ import LoanDetailPage from "./pages/LoanDetailPage";
 import SchedulePage from "./pages/SchedulePage";
 import LoanSetupPage from "./pages/LoanSetupPage";
 import ScanPage from "./pages/ScanPage";
+import AssetScanPage from "./pages/AssetScanPage";
 import ByodPage from "./pages/ByodPage";
 import ByodDetailPage from "./pages/ByodDetailPage";
 import ByodSignPage from "./pages/ByodSignPage";
@@ -102,6 +103,9 @@ function App() {
             }/>
             <Route path="/scan" element={
               <ProtectedRoute><Layout><ScanPage /></Layout></ProtectedRoute>
+            }/>
+            <Route path="/scan/asset" element={
+              <ProtectedRoute><Layout><AssetScanPage /></Layout></ProtectedRoute>
             }/>
             <Route path="/loans/labels" element={
               <ProtectedRoute><Layout><QrLabelsPage /></Layout></ProtectedRoute>

@@ -41,6 +41,7 @@ const NAV_LINKS = [
   { to: "/schedule", labelKey: "nav_schedule", icon: CalendarDays, testid: "nav-schedule" },
   { to: "/byod", labelKey: "nav_byod", icon: Laptop, testid: "nav-byod" },
   { to: "/scan", labelKey: "nav_scan", icon: ScanLine, testid: "nav-scan", roles: ["super_admin", "admin", "campus_admin", "ict_admin"] },
+  { to: "/scan/asset", labelKey: "nav_scan_asset", icon: ScanLine, testid: "nav-scan-asset", roles: ["super_admin", "admin", "campus_admin", "ict_admin"] },
   { to: "/users", labelKey: "nav_users", icon: Users, testid: "nav-users", roles: ["super_admin", "admin", "campus_admin"] },
   { to: "/reports", labelKey: "nav_reports", icon: BarChart3, testid: "nav-reports", roles: ["super_admin", "admin", "campus_admin", "leader", "ict_admin"] },
   { to: "/activity-logs", labelKey: "nav_activity", icon: History, testid: "nav-activity", adminOnly: true },
