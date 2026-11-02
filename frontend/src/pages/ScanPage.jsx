@@ -33,6 +33,8 @@ export default function ScanPage() {
   const [until, setUntil] = useState(() => { const d = new Date(Date.now() + 4 * 3600e3); d.setMinutes(0, 0, 0); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}T${String(d.getHours()).padStart(2, "0")}:00`; });
   useEffect(() => { if (multi && !users.length) api.get("/users").then((r) => setUsers(r.data)).catch(() => {}); }, [multi, users.length]);
   const [userQ, setUserQ] = useState("");
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const pickUser = (u) => { setBorrower(u.id); setUserQ(`${u.name} — ${u.email}`); setSuggestOpen(false); };
   const [photo, setPhoto] = useState("");                // one group photo of all the units = hand them over right away
   const [photoBusy, setPhotoBusy] = useState(false);
   const pickPhoto = async (file) => {
@@ -44,7 +46,7 @@ export default function ScanPage() {
       setPhoto(r.data.path);
     } catch (e) { toast.error(formatErr(e)); } finally { setPhotoBusy(false); }
   };
-  const shownUsers = useMemo(() => users.filter((u) => `${u.name} ${u.email}`.toLowerCase().includes(userQ.toLowerCase())).slice(0, 50), [users, userQ]);
+  const shownUsers = useMemo(() => { const q = userQ.trim().toLowerCase(); return q ? users.filter((u) => `${u.name} ${u.email}`.toLowerCase().includes(q)) : []; }, [users, userQ]);
   const createCounterLoan = async () => {
     setBusy(true);
     try {
@@ -100,10 +102,18 @@ export default function ScanPage() {
           </ul>
           {basket.length > 0 && (
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <div className="sm:col-span-2"><div className="label-mono mb-1">{t("qr_multi_borrower")}</div>
-                <input className="border border-slate-200 px-3 py-2 text-sm w-full mb-1" placeholder={t("qr_multi_search")} value={userQ} onChange={(e) => setUserQ(e.target.value)} />
-                <select className="border border-slate-200 bg-white px-3 py-2 text-sm w-full" value={borrower} onChange={(e) => setBorrower(e.target.value)} data-testid="scan-borrower">
-                  <option value="">—</option>{shownUsers.map((u) => <option key={u.id} value={u.id}>{u.name} — {u.email}</option>)}</select></div>
+              <div className="sm:col-span-2 relative"><div className="label-mono mb-1">{t("qr_multi_borrower")}</div>
+                <input className="border border-slate-200 px-3 py-2 text-sm w-full" placeholder={t("qr_multi_search")} value={userQ} autoComplete="off" data-testid="scan-borrower"
+                  onChange={(e) => { setUserQ(e.target.value); setBorrower(""); setSuggestOpen(true); }} onFocus={() => setSuggestOpen(true)} onBlur={() => setTimeout(() => setSuggestOpen(false), 150)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && suggestOpen && shownUsers[0]) { e.preventDefault(); pickUser(shownUsers[0]); } }} />
+                {borrower && <span className="absolute right-3 top-8 text-emerald-600 text-sm">✓</span>}
+                {suggestOpen && !borrower && userQ.trim() && (
+                  <ul className="absolute z-20 left-0 right-0 mt-1 bg-white border border-slate-200 shadow-lg max-h-60 overflow-y-auto" data-testid="scan-borrower-suggestions">
+                    {shownUsers.length === 0 && <li className="px-3 py-2 text-sm text-slate-500">{t("qr_multi_no_user")}</li>}
+                    {shownUsers.slice(0, 8).map((u) => (
+                      <li key={u.id}><button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => pickUser(u)} className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50">
+                        <span className="font-medium text-slate-900">{u.name}</span> <span className="text-slate-500">{u.email}</span></button></li>))}
+                  </ul>)}</div>
               <div><div className="label-mono mb-1">{t("qr_multi_until")}</div><input type="datetime-local" className="border border-slate-200 px-3 py-2 text-sm w-full" value={until} onChange={(e) => setUntil(e.target.value)} data-testid="scan-until" /></div>
               <div><div className="label-mono mb-1">{t("qr_multi_class")}</div><input className="border border-slate-200 px-3 py-2 text-sm w-full" value={className} onChange={(e) => setClassName(e.target.value)} /></div>
               <div className="sm:col-span-2"><div className="label-mono mb-1">{t("qr_multi_purpose")}</div><input className="border border-slate-200 px-3 py-2 text-sm w-full" value={purpose} onChange={(e) => setPurpose(e.target.value)} /></div>
