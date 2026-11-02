@@ -2141,24 +2141,37 @@ async def restore_names_from_export(file: UploadFile = File(...), user: dict = D
         if not old_name or not text or text.isdigit():
             continue
         ser = str(r[i_ser] or "").strip().lower() if i_ser is not None else ""
-        cands = by_name.get(old_name, [])
-        if len(cands) != 1 and ser:
-            cands = by_serial.get(ser, [])
+        cands = by_serial.get(ser, []) if ser else []        # the serial number is the surest match; the name only when there is none
+        if len(cands) != 1:
+            cands = by_name.get(old_name, [])
+            if ser and cands and (cands[0]["serial_number"] or "").strip().lower() not in ("", ser):
+                cands = []
         if len(cands) != 1:
             unmatched += 1
             continue
         a = cands[0]
-        if a["name"] == text or not (a["name"] == old_name or (a["name"] or "").isdigit()):
-            skipped += 1                      # already restored, or someone gave it a different name since
-            continue
+        descriptive = " " in old_name              # "Lenovo 11th Gen" says what it is; "1002880_GRS" / "9661732" is only a number
         try:
             ensure_asset_manager(user, a["campus"], a["category"])
         except HTTPException:
             skipped += 1
             continue
-        code = a["asset_code"] or (old_name if old_name != a["asset_tag"] else "")
-        conn.execute("UPDATE assets SET name = ?, asset_code = ?, updated_at = ? WHERE id = ?", (text, code, now_iso(), a["id"]))
-        a["name"] = text
+        if descriptive:
+            # keep the descriptive name; the old tag text goes into the empty ID Aset field (an earlier run may have swapped them)
+            if a["name"] == text and a["asset_code"] == old_name:
+                new_name, code = old_name, text
+            elif a["name"] == old_name and not a["asset_code"]:
+                new_name, code = old_name, text
+            else:
+                skipped += 1
+                continue
+        elif a["name"] == old_name or (a["name"] or "").isdigit():
+            new_name, code = text, a["asset_code"] or (old_name if old_name != a["asset_tag"] else "")
+        else:
+            skipped += 1                      # already restored, or someone gave it a different name since
+            continue
+        conn.execute("UPDATE assets SET name = ?, asset_code = ?, updated_at = ? WHERE id = ?", (new_name, code, now_iso(), a["id"]))
+        a["name"], a["asset_code"] = new_name, code
         restored += 1
     conn.commit(); conn.close()
     return {"restored": restored, "unmatched": unmatched, "skipped": skipped}

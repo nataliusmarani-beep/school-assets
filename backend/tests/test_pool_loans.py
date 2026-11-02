@@ -333,3 +333,22 @@ def test_restore_names_from_asset_export_file(client, make_user, db):
     assert got["e1"] == ("Student's Desktop #15", "", "9661732") and got["e2"] == ("Student's Monitor #9", "1002880_GRS", "5550123") and got["e3"][0] == "7770001"
     # lab room decides the unit even when the name says nothing
     assert client.post("/api/assets/bulk-unit", headers=auth(admin), json={}).json()["by_unit"] == {"smp": 3}
+
+
+def test_restore_names_keeps_descriptive_names_and_repairs_swap(client, make_user, db):
+    import io, openpyxl
+    seed(db, n_laptops=0, n_ipads=0)
+    for aid, name, code, ser in (("d1", "Lenovo 11th Gen", "", "S1"), ("d2", "SDYPJKK-LENOVO2", "Lenovo 11th Gen", "S2"), ("d3", "MSI Modern", "", ""), ("d4", "MSI Modern", "", "")):
+        db.execute("INSERT INTO assets (id,name,asset_tag,asset_code,category,item_type,campus,location,serial_number,unit,purchase_price,purchase_date,created_at,updated_at) "
+                   "VALUES (?,?,?,?,?,?,?,'R',?,'',0,'2026-01-01','t','t')", (aid, name, "55500" + aid[1], code, "IT Equipment", "Laptop", KK, ser))
+    db.commit()
+    wb = openpyxl.Workbook(); ws = wb.active
+    ws.append(["Asset Name", "Tag", "Serial Number"])
+    ws.append(["Lenovo 11th Gen", "SDYPJKK-LENOVO1", "S1"]); ws.append(["Lenovo 11th Gen", "SDYPJKK-LENOVO2", "S2"])
+    ws.append(["MSI Modern", "SMP-1", ""]); ws.append(["MSI Modern", "SMP-2", ""])
+    buf = io.BytesIO(); wb.save(buf)
+    admin = make_user("super_admin", "")
+    r = client.post("/api/assets/restore-names", headers=auth(admin), files={"file": ("x.xlsx", buf.getvalue())}).json()
+    assert r["restored"] == 2 and r["unmatched"] == 2
+    got = {x["id"]: (x["name"], x["asset_code"]) for x in db.execute("SELECT id, name, asset_code FROM assets")}
+    assert got["d1"] == ("Lenovo 11th Gen", "SDYPJKK-LENOVO1") and got["d2"] == ("Lenovo 11th Gen", "SDYPJKK-LENOVO2")
