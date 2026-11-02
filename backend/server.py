@@ -2697,11 +2697,13 @@ LENT_BRAND_RE = re.compile(r"\b(lenovo|msi|dell|macbook|thinkpad)\b", re.I)   # 
 FIXED_TYPE_RE = re.compile(r"desktop|monitor|\bpc\b", re.I)
 
 
-def is_lent_asset(item_type: str, name: str, borrowable, category: str = "", brand: str = "", decided: bool = False) -> bool:
+def is_lent_asset(item_type: str, name: str, borrowable, category: str = "", brand: str = "", decided: bool = False, assigned: bool = False) -> bool:
     """Lent out: every IT Equipment asset, laptops (anything Dell / MSI / Lenovo is a student laptop), iPads / tablets and cameras,
-    or anything marked borrowable - but never monitors and desktops of other brands."""
+    or anything marked borrowable - but never monitors and desktops of other brands, nor anything assigned to a person."""
     if decided:    # someone set lendable / not lendable for this asset: that choice wins over any guess from type or brand
         return bool(borrowable)
+    if assigned:    # handed to a teacher or admin: a personal asset, not a shared loan device
+        return False
     item_type, name = item_type or "", name or ""
     if LENT_BRAND_RE.search(f"{name} {brand or ''}"):    # Dell / MSI / Lenovo are all student laptops here, whatever the type says
         return True
@@ -2724,13 +2726,14 @@ async def label_list(group: str = "fixed", user: dict = Depends(get_current_user
     elif campus:
         conds.append("a.campus = ?"); params.append(campus)
     rows = conn.execute(f"""SELECT a.id, a.name, a.asset_tag, a.category, a.campus, a.location, a.unit, a.item_type, a.brand, a.assigned_to_name,
-                                   COALESCE(s.borrowable, 0) AS borrowable, s.asset_id IS NOT NULL AS decided
+                                   COALESCE(s.borrowable, 0) AS borrowable, s.asset_id IS NOT NULL AS decided,
+                                   (COALESCE(a.assigned_to_user_id, '') != '' OR TRIM(COALESCE(a.assigned_to_name, '')) != '') AS assigned
                             FROM assets a LEFT JOIN asset_loan_settings s ON s.asset_id = a.id
                             WHERE {' AND '.join(conds)} ORDER BY a.category, a.name""", params).fetchall()
     conn.close()
     want_lent = group == "loan"
-    return [{k: v for k, v in dict(r).items() if k not in ("borrowable", "brand", "decided")} for r in rows
-            if is_lent_asset(r["item_type"], r["name"], r["borrowable"], r["category"], r["brand"], bool(r["decided"])) == want_lent]
+    return [{k: v for k, v in dict(r).items() if k not in ("borrowable", "brand", "decided", "assigned")} for r in rows
+            if is_lent_asset(r["item_type"], r["name"], r["borrowable"], r["category"], r["brand"], bool(r["decided"]), bool(r["assigned"])) == want_lent]
 
 
 @api.get("/assets/{aid}")
