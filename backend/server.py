@@ -2085,11 +2085,14 @@ def restore_asset_names(conn) -> int:
 UNIT_CODES = ("paud", "sd", "smp", "admin", "shared")
 
 
-def guess_unit(name: str, item_type: str = "") -> Optional[str]:
-    """The school unit an asset obviously belongs to, from its name: Student's Desktop = SMP computer lab, Student's Laptop = SD
-    computer lab, an iPad whose name says PAUD / SD. None when the name does not say."""
-    n = (name or "").lower()
-    if "student" in n and "desktop" in n:
+def guess_unit(name: str, item_type: str = "", location: str = "") -> Optional[str]:
+    """The school unit an asset obviously belongs to: from its room ("Lab Komputer SMP"), else from its name: Student's Desktop /
+    Monitor = SMP computer lab, Student's Laptop = SD computer lab, an iPad whose name says PAUD / SD. None when nothing says."""
+    loc, n = (location or "").lower(), (name or "").lower()
+    m = re.search(r"lab\w*\s+komputer\s+(paud|sd|smp)\b", loc)
+    if m:
+        return m.group(1)
+    if "student" in n and ("desktop" in n or "monitor" in n):
         return "smp"
     if "student" in n and "laptop" in n:
         return "sd"
@@ -2106,6 +2109,61 @@ class BulkUnitIn(BaseModel):
     asset_ids: Optional[List[str]] = None
 
 
+@api.post("/assets/restore-names")
+async def restore_names_from_export(file: UploadFile = File(...), user: dict = Depends(asset_manager_required)):
+    """Put descriptive asset names back from an earlier asset export (columns Asset Name, Tag, Serial Number). An asset is matched by
+    its old name or serial number and renamed to the old Tag text only if it still carries the old name or a bare number. The old
+    name (an inventory number) moves to the empty ID Aset field so nothing is lost."""
+    import openpyxl
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(await file.read()), read_only=True, data_only=True)
+        rows = list(wb.worksheets[0].iter_rows(values_only=True))
+    except Exception:
+        raise HTTPException(400, "File tidak bisa dibaca (gunakan ekspor aset .xlsx)")
+    if not rows:
+        raise HTTPException(400, "File kosong")
+    head = [str(c or "").strip().lower() for c in rows[0]]
+    try:
+        i_name, i_tag = head.index("asset name"), head.index("tag")
+    except ValueError:
+        raise HTTPException(400, "Kolom 'Asset Name' dan 'Tag' tidak ditemukan")
+    i_ser = head.index("serial number") if "serial number" in head else None
+    conn = get_conn()
+    cur = [dict(r) for r in conn.execute("SELECT id, name, asset_tag, asset_code, serial_number, campus, category FROM assets").fetchall()]
+    by_name, by_serial = {}, {}
+    for a in cur:
+        by_name.setdefault((a["name"] or "").strip(), []).append(a)
+        if (a["serial_number"] or "").strip():
+            by_serial.setdefault(a["serial_number"].strip().lower(), []).append(a)
+    restored = unmatched = skipped = 0
+    for r in rows[1:]:
+        old_name = str(r[i_name] or "").strip(); text = str(r[i_tag] or "").strip()
+        if not old_name or not text or text.isdigit():
+            continue
+        ser = str(r[i_ser] or "").strip().lower() if i_ser is not None else ""
+        cands = by_name.get(old_name, [])
+        if len(cands) != 1 and ser:
+            cands = by_serial.get(ser, [])
+        if len(cands) != 1:
+            unmatched += 1
+            continue
+        a = cands[0]
+        if a["name"] == text or not (a["name"] == old_name or (a["name"] or "").isdigit()):
+            skipped += 1                      # already restored, or someone gave it a different name since
+            continue
+        try:
+            ensure_asset_manager(user, a["campus"], a["category"])
+        except HTTPException:
+            skipped += 1
+            continue
+        code = a["asset_code"] or (old_name if old_name != a["asset_tag"] else "")
+        conn.execute("UPDATE assets SET name = ?, asset_code = ?, updated_at = ? WHERE id = ?", (text, code, now_iso(), a["id"]))
+        a["name"] = text
+        restored += 1
+    conn.commit(); conn.close()
+    return {"restored": restored, "unmatched": unmatched, "skipped": skipped}
+
+
 @api.post("/assets/bulk-unit")
 async def bulk_set_unit(body: BulkUnitIn, user: dict = Depends(asset_manager_required)):
     """Set the owning school unit on many assets at once, or (no unit given) fill the empty ones from their names."""
@@ -2115,11 +2173,11 @@ async def bulk_set_unit(body: BulkUnitIn, user: dict = Depends(asset_manager_req
     if body.unit is not None:
         if not body.asset_ids:
             conn.close(); raise HTTPException(400, "Pilih aset terlebih dahulu")
-        rows = [conn.execute("SELECT id, name, campus, category, item_type FROM assets WHERE id = ?", (i,)).fetchone() for i in body.asset_ids]
+        rows = [conn.execute("SELECT id, name, campus, category, item_type, location FROM assets WHERE id = ?", (i,)).fetchone() for i in body.asset_ids]
     else:
         # automatic: a unit that belongs to a cart / lab follows that cart's / lab's school unit (the one its schedule uses);
         # the others with no unit yet are guessed from their name
-        rows = conn.execute("""SELECT a.id, a.name, a.campus, a.category, a.item_type, LOWER(COALESCE(r.unit, '')) AS res_unit, COALESCE(a.unit, '') AS cur
+        rows = conn.execute("""SELECT a.id, a.name, a.campus, a.category, a.item_type, a.location, LOWER(COALESCE(r.unit, '')) AS res_unit, COALESCE(a.unit, '') AS cur
                                FROM assets a LEFT JOIN asset_loan_settings s ON s.asset_id = a.id LEFT JOIN resources r ON r.id = s.resource_id
                                WHERE (r.unit IS NOT NULL AND r.unit != '') OR COALESCE(a.unit, '') = ''""").fetchall()
     changed, skipped, counts = 0, 0, {}
@@ -2133,7 +2191,7 @@ async def bulk_set_unit(body: BulkUnitIn, user: dict = Depends(asset_manager_req
             if unit == r["cur"]:
                 continue
         else:
-            unit = guess_unit(r["name"], r["item_type"]) if not r["cur"] else None
+            unit = guess_unit(r["name"], r["item_type"], r["location"]) if not r["cur"] else None
         if not unit:
             skipped += 1
             continue

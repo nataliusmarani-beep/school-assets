@@ -338,6 +338,18 @@ export default function AssetsListPage() {
   const [showBulk, setShowBulk] = useState(false);
   const [bulkUnit, setBulkUnit] = useState("");
 
+  const restoreRef = useRef(null);
+  const restoreNames = async (file) => {
+    if (!file) return;
+    try {
+      const fd = new FormData(); fd.append("file", file);
+      const r = await api.post("/assets/restore-names", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      toast.success(t("rn_done").replace("{n}", r.data.restored).replace("{m}", r.data.unmatched));
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+    if (restoreRef.current) restoreRef.current.value = "";
+  };
+
   const applyUnit = async (body) => {
     try {
       const r = await api.post("/assets/bulk-unit", body);
@@ -520,6 +532,10 @@ export default function AssetsListPage() {
       {isAdmin && (
         <div className="mb-3 text-xs text-slate-500">
           <button onClick={() => applyUnit({})} className="underline hover:text-slate-900" data-testid="auto-unit">{t("bu_auto")}</button> — {t("bu_auto_hint")}
+          <div className="mt-1">
+            <button onClick={() => restoreRef.current?.click()} className="underline hover:text-slate-900" data-testid="restore-names">{t("rn_button")}</button> — {t("rn_hint")}
+            <input ref={restoreRef} type="file" accept=".xlsx" className="hidden" onChange={(e) => restoreNames(e.target.files[0])} />
+          </div>
         </div>
       )}
 

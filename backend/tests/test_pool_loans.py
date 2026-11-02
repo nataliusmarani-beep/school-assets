@@ -312,3 +312,24 @@ def test_bulk_unit_follows_cart_or_lab_unit(client, make_user, db):
     assert client.post("/api/assets/bulk-unit", headers=auth(admin), json={}).json()["updated"] == 3
     units = {x["id"]: x["unit"] for x in db.execute("SELECT id, unit FROM assets WHERE id LIKE 'c%'")}
     assert units == {"c1": "sd", "c2": "sd", "c3": "smp"}
+
+
+def test_restore_names_from_asset_export_file(client, make_user, db):
+    import io, openpyxl
+    seed(db, n_laptops=0, n_ipads=0)
+    for aid, name, tag, ser, loc in (("e1", "9661732", "9661732", "SER1", "Lab Komputer SMP"), ("e2", "1002880_GRS", "5550123", "SER2", "Lab Komputer SMP"),
+                                     ("e3", "7770001", "7770001", "SER3", "Lab Komputer SMP")):
+        db.execute("INSERT INTO assets (id,name,asset_tag,category,item_type,campus,location,serial_number,unit,purchase_price,purchase_date,created_at,updated_at) "
+                   "VALUES (?,?,?,?,?,?,?,?,'',0,'2026-01-01','t','t')", (aid, name, tag, "IT Equipment", "Monitor", KK, loc, ser))
+    db.commit()
+    wb = openpyxl.Workbook(); ws = wb.active
+    ws.append(["Asset Name", "Tag", "Serial Number"])
+    ws.append(["9661732", "Student's Desktop #15", "SER1"]); ws.append(["1002880_GRS", "Student's Monitor #9", "SER2"]); ws.append(["ghost", "Nope", "ZZZ"])
+    buf = io.BytesIO(); wb.save(buf)
+    admin = make_user("super_admin", "")
+    r = client.post("/api/assets/restore-names", headers=auth(admin), files={"file": ("x.xlsx", buf.getvalue())}).json()
+    assert r == {"restored": 2, "unmatched": 1, "skipped": 0}
+    got = {x["id"]: (x["name"], x["asset_code"], x["asset_tag"]) for x in db.execute("SELECT id, name, asset_code, asset_tag FROM assets")}
+    assert got["e1"] == ("Student's Desktop #15", "", "9661732") and got["e2"] == ("Student's Monitor #9", "1002880_GRS", "5550123") and got["e3"][0] == "7770001"
+    # lab room decides the unit even when the name says nothing
+    assert client.post("/api/assets/bulk-unit", headers=auth(admin), json={}).json()["by_unit"] == {"smp": 3}
