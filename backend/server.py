@@ -2177,6 +2177,42 @@ async def restore_names_from_export(file: UploadFile = File(...), user: dict = D
     return {"restored": restored, "unmatched": unmatched, "skipped": skipped}
 
 
+class SharePhotoIn(BaseModel):
+    dry_run: bool = False
+    only_empty: bool = False
+
+
+def _base_name(name: str) -> str:
+    """'Seiko wall clock #12' -> 'seiko wall clock' (numbered copies of one model share a base name)."""
+    return re.sub(r"\s*#\s*\d+\s*$", "", (name or "").strip()).strip().lower()
+
+
+@api.post("/assets/{aid}/share-photo")
+async def share_asset_photo(aid: str, body: SharePhotoIn, user: dict = Depends(asset_manager_required)):
+    """Use this asset's photo for every numbered copy of it (same name without the '#N', same category)."""
+    conn = get_conn()
+    src = conn.execute("SELECT id, name, category, photo_path FROM assets WHERE id = ?", (aid,)).fetchone()
+    if not src:
+        conn.close(); raise HTTPException(404, "Aset tidak ditemukan")
+    if not src["photo_path"]:
+        conn.close(); raise HTTPException(400, "Aset ini belum punya foto")
+    base = _base_name(src["name"])
+    targets = []
+    for r in conn.execute("SELECT id, name, campus, category, photo_path FROM assets WHERE category = ? AND id != ?", (src["category"], aid)).fetchall():
+        if base and _base_name(r["name"]) == base and (not body.only_empty or not r["photo_path"]) and r["photo_path"] != src["photo_path"]:
+            try:
+                ensure_asset_manager(user, r["campus"], r["category"])
+            except HTTPException:
+                continue
+            targets.append(r["id"])
+    if not body.dry_run:
+        for tid in targets:
+            conn.execute("UPDATE assets SET photo_path = ?, updated_at = ? WHERE id = ?", (src["photo_path"], now_iso(), tid))
+        conn.commit()
+    conn.close()
+    return {"count": len(targets), "applied": not body.dry_run}
+
+
 @api.post("/assets/bulk-unit")
 async def bulk_set_unit(body: BulkUnitIn, user: dict = Depends(asset_manager_required)):
     """Set the owning school unit on many assets at once, or (no unit given) fill the empty ones from their names."""

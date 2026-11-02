@@ -17,7 +17,7 @@ import PhotoZoomDialog from "../components/assets/PhotoZoomDialog";
 import LoanSettingsCard from "../components/loans/LoanSettingsCard";
 import {
   ArrowLeft, ArrowRightLeft, Wrench, Edit, Trash2, Download,
-  FileText, Calendar, ShieldCheck, Building2, User as UserIcon, Tag,
+  FileText, Calendar, ShieldCheck, Building2, User as UserIcon, Tag, Copy,
 } from "lucide-react";
 import { campusLabel } from "../lib/campus";
 
@@ -80,6 +80,16 @@ export default function AssetDetailPage() {
   };
 
   const isAdmin = canManageAsset(user, asset);
+  // one photo for all numbered copies of a model (e.g. Seiko wall clock #1 … #30)
+  const sharePhoto = async () => {
+    try {
+      const p = await api.post(`/assets/${id}/share-photo`, { dry_run: true });
+      if (!p.data.count) { toast.info(t("sp_none")); return; }
+      if (!window.confirm(t("sp_confirm").replace("{n}", p.data.count))) return;
+      const r = await api.post(`/assets/${id}/share-photo`, {});
+      toast.success(t("sp_done").replace("{n}", r.data.count));
+    } catch (e) { toast.error(formatErr(e)); }
+  };
   // What this user may do with the asset is decided by the server (asset.permissions): staff may report / transfer
   // only assets assigned to them (or on loan to them) and borrow only free "shared" assets.
   const perms = asset?.permissions || {};
@@ -361,6 +371,11 @@ export default function AssetDetailPage() {
             </DialogContent>
           </Dialog>}
 
+          {isAdmin && asset.photo_path && (
+            <Button variant="outline" onClick={sharePhoto} className="rounded-none" data-testid="share-photo-button">
+              <Copy className="w-4 h-4 mr-2" strokeWidth={1.75}/> {t("sp_button")}
+            </Button>
+          )}
           {isAdmin && (
             <Link to={`/assets/${id}/edit`}>
               <Button variant="outline" className="rounded-none" data-testid="edit-asset-button">

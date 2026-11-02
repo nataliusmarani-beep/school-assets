@@ -415,3 +415,23 @@ def test_export_and_import_template_share_columns_and_order(client, make_user, d
     ws.append([row[k] for k in h_tpl]); wb.save(buf)
     r = client.post("/api/assets/import?dry_run=true", headers=auth(admin), files={"file": ("a.xlsx", buf.getvalue())}).json()
     assert r["valid"] == 1 and r["invalid"] == 0, r
+
+
+def test_share_photo_to_numbered_copies(client, make_user, db):
+    seed(db, n_laptops=0, n_ipads=0)
+    rows = (("p1", "Seiko wall clock #1", "photos/a.jpg"), ("p2", "Seiko wall clock #2", ""), ("p3", "Seiko wall clock #30", "photos/old.jpg"),
+            ("p4", "Seiko wall clock", ""), ("p5", "Casio wall clock #1", ""))
+    for aid, name, ph in rows:
+        db.execute("INSERT INTO assets (id,name,asset_tag,category,item_type,campus,location,serial_number,unit,photo_path,purchase_price,purchase_date,created_at,updated_at) "
+                   "VALUES (?,?,?,?,?,?,'R','','',?,0,'2026-01-01','t','t')", (aid, name, aid, "Furniture", "", KK, ph))
+    db.commit()
+    admin = make_user("super_admin", "")
+    r = client.post("/api/assets/p1/share-photo", headers=auth(admin), json={"dry_run": True}).json()
+    assert r["count"] == 3 and not r["applied"]
+    assert db.execute("SELECT photo_path FROM assets WHERE id='p2'").fetchone()[0] == ""
+    assert client.post("/api/assets/p1/share-photo", headers=auth(admin), json={"only_empty": True}).json()["count"] == 2
+    assert db.execute("SELECT photo_path FROM assets WHERE id='p3'").fetchone()[0] == "photos/old.jpg"
+    assert client.post("/api/assets/p1/share-photo", headers=auth(admin), json={}).json()["count"] == 1
+    got = {x[0]: x[1] for x in db.execute("SELECT id, photo_path FROM assets")}
+    assert got["p3"] == "photos/a.jpg" and got["p4"] == "photos/a.jpg" and got["p5"] == ""
+    assert client.post("/api/assets/p5/share-photo", headers=auth(admin), json={}).status_code == 400
