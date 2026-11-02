@@ -1247,12 +1247,19 @@ def resolve_scan(conn, code: str, now: datetime) -> Optional[dict]:
                           FROM booking_units u JOIN bookings b ON b.id = u.booking_id
                           WHERE u.asset_id = ? AND u.status = 'out' LIMIT 1""", (a["id"],)).fetchone()
     s = conn.execute("SELECT borrowable, resource_id FROM asset_loan_settings WHERE asset_id = ?", (a["id"],)).fetchone()
-    busy_now = None
+    busy_now, cart = None, None
     if not out and a["status"] == "active":
         try:
             chk = check_availability(conn, asset_id=a["id"], units=1, start=now, end=now + timedelta(minutes=1))
             if not chk["ok"]:
                 busy_now = (chk["conflicts"] or [None])[0]
+            if s and s["resource_id"]:
+                # Which unit of a cart a class takes is not recorded, so while any session holds the cart, its units count as in use.
+                cc = check_availability(conn, resource_id=s["resource_id"], units=10 ** 6, start=now, end=now + timedelta(minutes=1))
+                name = conn.execute("SELECT name FROM resources WHERE id = ?", (s["resource_id"],)).fetchone()
+                cart = {"name": name["name"] if name else "", "capacity": cc["capacity"], "used": cc["used"], "free": cc["free"]}
+                if not busy_now and cc["used"] > 0 and cc["conflicts"]:
+                    busy_now = cc["conflicts"][0]
         except BookingError:
             pass
     today = now.date().isoformat()
@@ -1264,6 +1271,6 @@ def resolve_scan(conn, code: str, now: datetime) -> Optional[dict]:
                           (today, today, a["id"], s["resource_id"] if s else None, a["id"])).fetchone()
     return {"asset": {k: a[k] for k in ("id", "name", "asset_tag", "category", "campus", "location", "brand", "model", "serial_number", "status")},
             "borrowable": bool(s and s["borrowable"]), "resource_id": s["resource_id"] if s else None,
-            "out": dict(out) if out else None, "pickup": dict(pickup) if pickup else None, "in_use": busy_now,
+            "out": dict(out) if out else None, "pickup": dict(pickup) if pickup else None, "in_use": busy_now, "cart": cart,
             "state": ("repair" if a["status"] == "in_repair" else "lost" if a["status"] == "lost" else "on_loan" if out
                       else "scheduled" if busy_now else "available")}

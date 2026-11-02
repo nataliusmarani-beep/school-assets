@@ -55,6 +55,7 @@ export default function ScanPage() {
           </div>
           {result.out && <div className="text-sm text-slate-600 mt-3">{t("ln_with")} <b>{result.out.requester_name}</b> · {t("ln_until")} {fmtDateTime(result.out.end_at)}</div>}
           {result.in_use && <div className="text-sm text-slate-600 mt-3">{t("ln_in_use_now")}{result.in_use.requester ? `: ${result.in_use.requester}` : ""}</div>}
+          {result.cart && result.cart.used > 0 && <div className="text-xs text-slate-500 mt-1">{result.cart.name}: {result.cart.used} / {result.cart.capacity} {t("qr_cart_used")}</div>}
           {result.pickup && <div className="text-sm text-slate-600 mt-3">{t("qr_pickup")}: {result.pickup.number} · {result.pickup.requester_name}</div>}
           <div className="flex gap-2 mt-4 flex-wrap">
             {result.suggest && (

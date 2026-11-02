@@ -176,3 +176,16 @@ def test_unit_out_now_but_back_before_window_is_free(client, make_user, db, monk
     assert client.get("/api/loans/pool/availability", headers=auth(teacher), params=q).json()["free"] == 0
     q = {**q, "start_at": "2026-08-05T11:00", "end_at": "2026-08-05T12:00"}
     assert client.get("/api/loans/pool/availability", headers=auth(teacher), params=q).json()["free"] == 2
+
+
+def test_scan_cart_unit_scheduled_even_if_cart_not_full(client, make_user, db, monkeypatch):
+    monkeypatch.setattr(server, "_local_now", lambda: server.datetime(2026, 8, 5, 8, 30))
+    seed(db, n_laptops=0, n_ipads=3)
+    db.execute("INSERT INTO resources (id,campus,name,kind,capacity,category,created_at) VALUES ('c1',?,'Cart G','ipad_cart',3,'IT Equipment','t')", (KK,))
+    db.execute("UPDATE asset_loan_settings SET resource_id = 'c1'")
+    db.execute("INSERT INTO school_periods (id,campus,period_no,start_time,end_time,unit) VALUES ('p1',?,1,'08:00','09:00','')", (KK,))
+    db.execute("INSERT INTO fixed_schedules (id,campus,academic_year,semester,resource_id,class_name,weekday,period_from,period_to,units,valid_from,valid_to,created_at) "
+               "VALUES ('s1',?,'2026/2027','1','c1','7A',2,1,1,2,'2026-07-01','2026-12-31','t')", (KK,))
+    db.commit()
+    r = client.get("/api/loans/scan", headers=auth(make_user("ict_admin", KK)), params={"code": "YPJ-IPAD-0"}).json()
+    assert r["state"] == "scheduled" and r["cart"]["used"] == 2 and r["cart"]["capacity"] == 3
