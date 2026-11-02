@@ -6,7 +6,7 @@ import { Camera } from "lucide-react";
 
 /* Camera QR reader. Calls onScan(text) for every new code (the same code is ignored for `repeatMs`).
    Falls back to typing the asset code when the camera is unavailable or the label is damaged. */
-export default function QrScanner({ onScan, t, repeatMs = 2500, active = true }) {
+export default function QrScanner({ onScan, t, repeatMs = 2500, active = true, paused = false }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const last = useRef({ text: "", at: 0 });
@@ -14,6 +14,8 @@ export default function QrScanner({ onScan, t, repeatMs = 2500, active = true })
   const zx = useRef(null);
   const handler = useRef(onScan);        // latest callback, so a changing onScan never restarts the camera
   handler.current = onScan;
+  const pausedRef = useRef(paused);      // while a result is on screen the camera keeps running but reads are ignored
+  pausedRef.current = paused;
   const [error, setError] = useState("");
   const [manual, setManual] = useState("");
 
@@ -25,7 +27,7 @@ export default function QrScanner({ onScan, t, repeatMs = 2500, active = true })
     const streak = { text: "", n: 0, at: 0 };
     const emit = (text, need = 3) => {
       const now = Date.now();
-      if (!text) return;
+      if (!text || pausedRef.current) { streak.n = 0; return; }
       if (text !== streak.text || now - streak.at > 1200) { streak.text = text; streak.n = 0; }
       streak.n += 1; streak.at = now;
       if (streak.n < need) return;
@@ -93,7 +95,7 @@ export default function QrScanner({ onScan, t, repeatMs = 2500, active = true })
       ) : (
         <div className="relative bg-black aspect-video overflow-hidden">
           <video ref={videoRef} className="w-full h-full object-cover" muted playsInline />
-          <div className="absolute inset-8 border-2 border-white/70 pointer-events-none" />
+          <div className={`absolute inset-8 border-2 pointer-events-none ${paused ? "border-emerald-400" : "border-white/70"}`} />
         </div>)}
       <canvas ref={canvasRef} className="hidden" />
       <form onSubmit={submitManual} className="flex gap-2">

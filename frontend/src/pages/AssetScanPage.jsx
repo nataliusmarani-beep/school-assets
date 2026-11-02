@@ -31,7 +31,8 @@ export default function AssetScanPage() {
       <div className="label-mono mb-2">{t("qr_asset_kicker")}</div>
       <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight text-slate-900">{t("qr_asset_title")}</h1>
       <p className="text-sm text-slate-500 mt-2">{t("qr_asset_subtitle")}</p>
-      <div className="mt-6"><QrScanner onScan={onScan} t={t} /></div>
+      <div className="mt-6"><QrScanner onScan={onScan} t={t} paused={!!(found || unknown)} /></div>
+      {(found || unknown) && <Button variant="outline" className="rounded-none mt-3" onClick={() => { setFound(null); setUnknown(""); }} data-testid="scan-next">{t("qr_scan_next")}</Button>}
       {busy && <div className="text-xs text-slate-400 mt-2">…</div>}
 
       {a && (

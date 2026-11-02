@@ -47,7 +47,8 @@ export default function ScanPage() {
       <div className="label-mono mb-2">{t("ln_kicker")}</div>
       <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight text-slate-900">{t("qr_loan_title")}</h1>
       <p className="text-sm text-slate-500 mt-2">{t("qr_loan_subtitle")}</p>
-      <div className="mt-6"><QrScanner onScan={onScan} t={t} /></div>
+      <div className="mt-6"><QrScanner onScan={onScan} t={t} paused={!!result} /></div>
+      {result && <Button variant="outline" className="rounded-none mt-3" onClick={() => setResult(null)} data-testid="scan-next">{t("qr_scan_next")}</Button>}
 
       {a && (
         <div className="mt-6 bg-white border border-slate-200 p-5" data-testid="scan-result">
