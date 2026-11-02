@@ -2123,11 +2123,11 @@ async def restore_names_from_export(file: UploadFile = File(...), user: dict = D
     if not rows:
         raise HTTPException(400, "File kosong")
     head = [str(c or "").strip().lower() for c in rows[0]]
-    try:
-        i_name, i_tag = head.index("asset name"), head.index("tag")
-    except ValueError:
-        raise HTTPException(400, "Kolom 'Asset Name' dan 'Tag' tidak ditemukan")
-    i_ser = head.index("serial number") if "serial number" in head else None
+    def _col(*names):
+        return next((head.index(n) for n in names if n in head), None)
+    i_name, i_tag, i_ser = _col("asset name", "name"), _col("tag", "asset_tag"), _col("serial number", "serial_number")
+    if i_name is None or i_tag is None:
+        raise HTTPException(400, "Kolom nama dan tag (name / asset_tag) tidak ditemukan")
     conn = get_conn()
     cur = [dict(r) for r in conn.execute("SELECT id, name, asset_tag, asset_code, serial_number, campus, category FROM assets").fetchall()]
     by_name, by_serial = {}, {}
@@ -2376,7 +2376,8 @@ def _parse_import_file(content: bytes, filename: str) -> list:
             header = [str(c).strip() if c else "" for c in next(rows_iter, [])]
             rows = []
             for r in rows_iter:
-                rows.append({header[i]: (str(r[i]).strip() if r[i] is not None else "") for i in range(len(header))})
+                rows.append({header[i]: ((r[i].strftime("%Y-%m-%d") if hasattr(r[i], "strftime") else str(r[i]).strip()) if r[i] is not None else "")
+                             for i in range(len(header))})
         except Exception as exc:
             raise HTTPException(400, f"Could not parse Excel file: {exc}")
     else:
@@ -2422,50 +2423,25 @@ async def export_assets(
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Assets"
-    headers = [
-        "Tag", "Asset Name", "Serial Number", "Category", "Asset Type",
-        "Campus", "Room / Location", "Status", "Assigned To",
-        "Purchase Price (IDR)", "Purchase Date", "Useful Life (yrs)",
-        "Warranty End", "Supplier", "Description", "Created At",
-        "Asset ID", "Item Type", "Brand", "Model", "Unit", "Building", "Department", "User Type",
-        "Acquisition Type", "PO / Contract No.", "Funding Source", "Condition", "Condition Notes",
-        "Last Inspection", "Next Inspection", "Maintenance Required", "Last Maintenance",
-        "Next Maintenance", "Maintenance Provider", "Maintenance Cost", "Warranty Start",
-        "Warranty Provider", "Residual Value",
-    ]
-    ws.append(headers)
+    # the same columns, names and order as the import template, so an export can be edited and imported again (then created_at, info only)
+    ws.append(IMPORT_COLUMNS + ["created_at"])
     _style_header(ws)
+
+    def _cell(d: dict, k: str):
+        v = d.get(k)
+        if k in ("purchase_date", "warranty_end_date", "created_at"):
+            return v[:10] if v else ""
+        if k == "maintenance_required":
+            return "Yes" if v else "No"
+        if k == "assigned_to_name":
+            return v or ""
+        if k in ("purchase_price", "maintenance_cost", "residual_value"):
+            return v or 0
+        return v if v is not None else ""
 
     for r in rows:
         d = dict(r)
-        ws.append([
-            d.get("asset_tag") or "",
-            d.get("name") or "",
-            d.get("serial_number") or "",
-            d.get("category") or "",
-            d.get("asset_type") or "",
-            d.get("campus") or "",
-            d.get("location") or "",
-            d.get("status") or "",
-            d.get("assigned_to_name") or "",
-            d.get("purchase_price") or 0,
-            d["purchase_date"][:10] if d.get("purchase_date") else "",
-            d.get("useful_life_years") or "",
-            d["warranty_end_date"][:10] if d.get("warranty_end_date") else "",
-            d.get("supplier") or "",
-            d.get("description") or "",
-            d["created_at"][:10] if d.get("created_at") else "",
-            d.get("asset_code") or "", d.get("item_type") or "", d.get("brand") or "", d.get("model") or "",
-            d.get("unit") or "", d.get("building") or "", d.get("department") or "", d.get("user_type") or "",
-            d.get("acquisition_type") or "", d.get("po_number") or "", d.get("funding_source") or "",
-            d.get("asset_condition") or "", d.get("condition_notes") or "",
-            d.get("last_inspection_date") or "", d.get("next_inspection_date") or "",
-            "Yes" if d.get("maintenance_required") else "No",
-            d.get("last_maintenance_date") or "", d.get("next_maintenance_date") or "",
-            d.get("maintenance_provider") or "", d.get("maintenance_cost") or 0,
-            d.get("warranty_start_date") or "", d.get("warranty_provider") or "",
-            d.get("residual_value") or 0,
-        ])
+        ws.append([_cell(d, k) for k in IMPORT_COLUMNS + ["created_at"]])
 
     # Auto-size columns
     for col in ws.columns:
@@ -2493,6 +2469,7 @@ async def download_import_template(format: str = Query("csv"), _: dict = Depends
         g = wb.create_sheet("Petunjuk")
         g.append(["Kolom", "Keterangan"])
         for row in (
+            ("Urutan kolom", "Sama persis dengan file Ekspor ke Excel (nama kolom dan urutannya), sehingga data bisa disalin langsung. Kolom created_at di ekspor hanya informasi."),
             ("asset_tag", "Kosongkan: nomor barcode 7 digit dibuat otomatis dan tidak bisa diubah. Jika diisi, harus unik."),
             ("name, category, location", "Wajib diisi."),
             ("category", ", ".join(VALID_CATEGORIES)),

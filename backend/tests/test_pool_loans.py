@@ -396,3 +396,22 @@ def test_import_template_excel_download(client, make_user):
     wb = openpyxl.load_workbook(io.BytesIO(r.content))
     assert wb.sheetnames == ["Aset", "Petunjuk"] and wb["Aset"]["A1"].value == "name" and wb["Aset"]["B1"].value == "asset_tag"
     assert client.get("/api/assets/import-template", headers=auth(admin)).headers["content-type"].startswith("text/csv")
+
+
+def test_export_and_import_template_share_columns_and_order(client, make_user, db):
+    import io, openpyxl
+    seed(db, n_laptops=1, n_ipads=0)
+    admin = make_user("super_admin", "")
+    exp = openpyxl.load_workbook(io.BytesIO(client.get("/api/assets/export", headers=auth(admin)).content)).active
+    tpl = openpyxl.load_workbook(io.BytesIO(client.get("/api/assets/import-template", headers=auth(admin), params={"format": "xlsx"}).content))["Aset"]
+    h_exp = [c.value for c in exp[1]]
+    h_tpl = [c.value for c in tpl[1]]
+    assert h_exp[:len(h_tpl)] == h_tpl and h_exp[-1] == "created_at"
+    csv_head = client.get("/api/assets/import-template", headers=auth(admin)).text.splitlines()[0].split(",")
+    assert csv_head == h_tpl
+    # an exported file can be fed back to the import (dry run): the row is read with its real column names
+    buf = io.BytesIO(); wb = openpyxl.Workbook(); ws = wb.active; ws.append(h_tpl)
+    row = {k: "" for k in h_tpl}; row.update(name="Meja", category="Furniture", location="R1", status="active", campus=KK)
+    ws.append([row[k] for k in h_tpl]); wb.save(buf)
+    r = client.post("/api/assets/import?dry_run=true", headers=auth(admin), files={"file": ("a.xlsx", buf.getvalue())}).json()
+    assert r["valid"] == 1 and r["invalid"] == 0, r
