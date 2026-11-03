@@ -1634,9 +1634,19 @@ async def users_import(file: UploadFile = File(...), dry_run: bool = Query(True)
     conn.close()
     invited = 0
     if send_invite and email_configured():
+        # everyone makes their own password: the generated one is discarded and the e-mail carries a set-password link
+        conn = get_conn()
         for u in created:
-            if send_email(u["email"], "[YPJ Assets] Akun Anda sudah dibuat",
-                          _welcome_email_html(u["name"], u["email"], u["password"], u["generated"])):
+            if not u["generated"]:
+                continue
+            conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(_gen_password(24)), u["id"]))
+            u["password"] = ""
+            if _send_password_link(conn, {"id": u["id"], "name": u["name"], "email": u["email"]}, "invite", INVITE_HOURS)["sent"]:
+                invited += 1
+        conn.close()
+        for u in created:       # rows that came with a password in the file keep the old welcome e-mail
+            if u["password"] and send_email(u["email"], "[YPJ Assets] Akun Anda sudah dibuat",
+                                            _welcome_email_html(u["name"], u["email"], u["password"], u["generated"])):
                 invited += 1
     logger.info("Bulk user import by %s: %d created, %d skipped, %d invited", admin.get("email"), len(created), invalid, invited)
     return {"dry_run": False, "created": len(created), "skipped": invalid, "invited": invited,
@@ -1712,6 +1722,8 @@ async def invite_user(uid: str, admin: dict = Depends(user_manager_required)):
         conn.close()
         raise HTTPException(404, "User not found")
     _guard_campus_admin_conn(admin, u, conn)
+    # an invitation means "make your own password": the old / initial password stops working until the link is used
+    conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(_gen_password(24)), uid))
     res = _send_password_link(conn, dict(u), "invite", INVITE_HOURS)
     conn.close()
     logger.info("Invitation for %s created by %s (sent=%s)", u["email"], admin.get("email"), res["sent"])

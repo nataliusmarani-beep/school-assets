@@ -557,3 +557,16 @@ def test_approval_level_two_copies_admins_but_not_leaders(client, make_user, db,
     assert "petrick@example.com" not in cc
     # the asset form can pick the level directly
     assert client.put("/api/assets/mu2", headers=auth(admin), json={"requires_assign_approval": 2}).json()["requires_assign_approval"] == 2
+
+
+def test_invite_discards_old_password(client, make_user, db, monkeypatch):
+    monkeypatch.setattr(server, "email_configured", lambda: True)
+    monkeypatch.setattr(server, "send_email", lambda *a, **k: True)
+    admin = make_user("super_admin", "")
+    u = make_user("staff", KK, email="baru@example.com")
+    before = db.execute("SELECT password_hash FROM users WHERE id=?", (u["id"],)).fetchone()[0]
+    r = client.post(f"/api/users/{u['id']}/invite", headers=auth(admin)).json()
+    assert r["sent"] and "/set-password?token=" in r["link"]
+    assert db.execute("SELECT password_hash FROM users WHERE id=?", (u["id"],)).fetchone()[0] != before
+    tok = r["link"].split("token=")[1]
+    assert client.post("/api/auth/set-password", json={"token": tok, "password": "KataSandiBaru1!"}).status_code == 200
