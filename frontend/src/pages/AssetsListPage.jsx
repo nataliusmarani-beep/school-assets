@@ -364,7 +364,7 @@ export default function AssetsListPage() {
     try {
       const r = await api.post("/assets/bulk-loanable", { asset_ids: [...selected], borrowable });
       toast.success(`${t(borrowable ? "bl_done_on" : "bl_done_off").replace("{n}", r.data.updated)}${r.data.skipped ? ` · ${t("unit_skipped").replace("{n}", r.data.skipped)}` : ""}`);
-      setSelected(new Set()); load();
+      load();
     } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
 
@@ -372,7 +372,7 @@ export default function AssetsListPage() {
     try {
       const r = await api.post("/assets/bulk-assign-approval", { asset_ids: [...selected], enabled: level > 0, level });
       toast.success(`${t(level > 0 ? "aa_done_on" : "aa_done_off").replace("{n}", r.data.updated)}${r.data.skipped ? ` · ${t("unit_skipped").replace("{n}", r.data.skipped)}` : ""}`);
-      setSelected(new Set()); load();
+      load();      // the selection stays, so the highlighted button and the row badges show what was just set
     } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
 
@@ -400,6 +400,10 @@ export default function AssetsListPage() {
   };
 
   const selectable = assets.filter((a) => !a.pending_assignment);
+  // approval level shared by every ticked asset (null when they differ), so the matching button can be shown as the active one
+  const selLevels = assets.filter((a) => selected.has(a.id)).map((a) => Number(a.requires_assign_approval) || 0);
+  const commonLevel = selLevels.length && selLevels.every((l) => l === selLevels[0]) ? selLevels[0] : null;
+  const levelBtn = (lvl, base) => `${commonLevel === lvl ? "ring-2 ring-offset-1 ring-amber-600 font-semibold bg-amber-200 border-amber-600 text-amber-950" : base} px-3 py-1.5`;
 
   // Accordion: assets grouped by category, each group collapsible with its asset count.
   // Groups stay collapsed by default; searching or filtering opens them so the matches are visible.
@@ -545,9 +549,12 @@ export default function AssetsListPage() {
           <button disabled={!bulkUnit} onClick={() => applyUnit({ unit: bulkUnit, asset_ids: [...selected] })} className="bg-blue-800 hover:bg-blue-900 disabled:opacity-40 text-white px-3 py-1.5" data-testid="bulk-unit-apply">{t("bu_apply")}</button>
           <button onClick={() => applyLoanable(true)} className="bg-emerald-700 hover:bg-emerald-800 text-white px-3 py-1.5" data-testid="bulk-loanable-on">{t("bl_on")}</button>
           <button onClick={() => applyLoanable(false)} className="border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 px-3 py-1.5" data-testid="bulk-loanable-off">{t("bl_off")}</button>
-          <button onClick={() => applyApproval(2)} className="border border-amber-400 bg-amber-50 hover:bg-amber-100 text-amber-900 px-3 py-1.5" data-testid="bulk-approval-on2">{t("aa_on2")}</button>
-          <button onClick={() => applyApproval(1)} className="border border-amber-400 bg-amber-50 hover:bg-amber-100 text-amber-900 px-3 py-1.5" data-testid="bulk-approval-on">{t("aa_on")}</button>
-          <button onClick={() => applyApproval(0)} className="border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 px-3 py-1.5" data-testid="bulk-approval-off">{t("aa_off")}</button>
+          <button onClick={() => applyApproval(2)} className={levelBtn(2, "border border-amber-400 bg-amber-50 hover:bg-amber-100 text-amber-900")} data-testid="bulk-approval-on2">{commonLevel === 2 ? "✓ " : ""}{t("aa_on2")}</button>
+          <button onClick={() => applyApproval(1)} className={levelBtn(1, "border border-amber-400 bg-amber-50 hover:bg-amber-100 text-amber-900")} data-testid="bulk-approval-on">{commonLevel === 1 ? "✓ " : ""}{t("aa_on")}</button>
+          <button onClick={() => applyApproval(0)} className={levelBtn(0, "border border-slate-300 bg-white hover:bg-slate-50 text-slate-800")} data-testid="bulk-approval-off">{commonLevel === 0 ? "✓ " : ""}{t("aa_off")}</button>
+          <span className="basis-full text-xs text-blue-900" data-testid="bulk-approval-status">
+            {t("aa_status")}: {commonLevel === null ? t("aa_state_mixed") : t(`aa_state_${commonLevel}`)}
+          </span>
           <button onClick={() => setSelected(new Set())} className="text-slate-600 hover:text-slate-900" data-testid="bulk-clear">{t("bt_clear")}</button>
         </div>
       )}
@@ -657,6 +664,13 @@ export default function AssetsListPage() {
                           {ownerName(a.assigned_to_name) || "—"}
                           {a.handover_flag === "discrepancy" && (
                             <div className="mt-1"><span className="inline-flex items-center px-2 py-0.5 text-xs border bg-rose-50 text-rose-700 border-rose-200">{t("cr_discrepancy")}</span></div>
+                          )}
+                          {Number(a.requires_assign_approval) > 0 && (
+                            <div className="mt-1" data-testid={`approval-badge-${a.id}`}>
+                              <span className="inline-flex items-center px-2 py-0.5 text-xs border bg-amber-50 text-amber-800 border-amber-300">
+                                {t(`aa_badge_${Number(a.requires_assign_approval)}`)}
+                              </span>
+                            </div>
                           )}
                           {a.pending_assignment && (
                             <div className="mt-1" data-testid={`awaiting-${a.id}`}>
