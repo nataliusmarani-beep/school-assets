@@ -661,8 +661,12 @@ export default function AssetsListPage() {
                           {a.pending_assignment && (
                             <div className="mt-1" data-testid={`awaiting-${a.id}`}>
                               <span className="inline-flex items-center px-2 py-0.5 text-xs border bg-amber-50 text-amber-800 border-amber-300"
-                                title={t("pending_banner").replace("{name}", a.pending_assignment.to_name)}>
-                                {t("awaiting_confirmation")} · {ownerName(a.pending_assignment.to_name)}
+                                title={a.pending_assignment.status === "awaiting_approval"
+                                  ? t("pending_banner_approval").replace("{approver}", a.pending_assignment.approver_name || "").replace("{name}", a.pending_assignment.to_name)
+                                  : t("pending_banner").replace("{name}", a.pending_assignment.to_name)}>
+                                {a.pending_assignment.status === "awaiting_approval"
+                                  ? <>{t("awaiting_approval")} · {a.pending_assignment.approver_name} → {ownerName(a.pending_assignment.to_name)}</>
+                                  : <>{t("awaiting_confirmation")} · {ownerName(a.pending_assignment.to_name)}</>}
                               </span>
                             </div>
                           )}

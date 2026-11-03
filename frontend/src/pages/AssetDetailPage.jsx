@@ -215,7 +215,9 @@ export default function AssetDetailPage() {
 
       {asset.pending_assignment && (
         <div className="mb-6 border-l-4 border-amber-400 bg-amber-50 px-4 py-3 text-sm text-amber-900" data-testid="pending-assignment-banner">
-          {t("pending_banner").replace("{name}", asset.pending_assignment.to_name)}
+          {asset.pending_assignment.status === "awaiting_approval"
+            ? t("pending_banner_approval").replace("{approver}", asset.pending_assignment.approver_name || "").replace("{name}", asset.pending_assignment.to_name)
+            : t("pending_banner").replace("{name}", asset.pending_assignment.to_name)}
         </div>
       )}
 
