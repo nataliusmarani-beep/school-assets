@@ -3499,42 +3499,58 @@ def _approval_level(v) -> int:
 ASSIGN_CC_EXTRA = [e.strip() for e in os.environ.get("ASSIGN_APPROVAL_CC", "").split(",") if e.strip()]
 
 
-def assign_cc(conn, campus: str, level: int = 1):
+# Admins who only look after one school unit are copied on hand-overs of that unit's assets only (matched by name tokens).
+ASSIGN_CC_UNIT_SCOPE = {"Tomas Sutejo": {"paud"}}
+
+
+def asset_units(unit, *texts) -> set:
+    """The school units an asset counts for: its unit field, plus PAUD when its name, room or category says so."""
+    out = {(unit or "").lower()} - {""}
+    if "paud" in " ".join(t or "" for t in texts).lower():
+        out.add("paud")
+    return out
+
+
+def assign_cc(conn, campus: str, level: int = 1, units=None):
     """(e-mail addresses, names that are not registered users) for the CC list of an approval-controlled hand-over."""
+    units = set(units or ())
     names = ASSIGN_CC_NAMES.get("*", []) + ASSIGN_CC_NAMES.get(campus or "", [])
     if level != 2:
         names += ASSIGN_CC_LEADERS.get(campus or "", [])
-    users = [dict(r) for r in conn.execute("SELECT name, email FROM users").fetchall()]
-    emails, missing = [], []
+    users = [dict(r) for r in conn.execute("SELECT name, email, role, campus FROM users").fetchall() if "@" in (r["email"] or "")]
+    chosen, missing = {}, []
     # roles decide who is copied, so a differently spelled name never drops anyone: super admins and admins (admin resources)
     # everywhere, the campus admins of the asset's campus, and (level 1 only) that campus's leaders
-    roles = ["super_admin", "admin"]
-    rows = conn.execute("SELECT email FROM users WHERE role IN (%s)" % ",".join("?" * len(roles)), roles).fetchall()
-    if campus:
-        rows += conn.execute("SELECT email FROM users WHERE role = 'campus_admin' AND campus = ?", (campus,)).fetchall()
-        if level != 2:
-            rows += conn.execute("SELECT email FROM users WHERE role = 'leader' AND campus = ?", (campus,)).fetchall()
-    emails += [r["email"] for r in rows if "@" in (r["email"] or "")]
+    for u in users:
+        if u["role"] in ("super_admin", "admin") or (campus and u["role"] == "campus_admin" and u["campus"] == campus) \
+                or (campus and level != 2 and u["role"] == "leader" and u["campus"] == campus):
+            chosen[u["email"].strip()] = u["name"]
     for n in names:
-        hits = [u["email"] for u in users if _name_key(u["name"]) == _name_key(n) and "@" in (u["email"] or "")]
+        hits = [u for u in users if _name_key(u["name"]) == _name_key(n)]
         if not hits:    # a middle name or initial in the registered name is fine ("Maria Gabriella Jacadewa" for "Maria Jacadewa")
             want = _name_tokens(n)
-            loose = [u["email"] for u in users if want and want <= _name_tokens(u["name"]) and "@" in (u["email"] or "")]
-            hits = loose if len(set(loose)) == 1 else []
+            loose = [u for u in users if want and want <= _name_tokens(u["name"])]
+            hits = loose if len({u["email"] for u in loose}) == 1 else []
         if hits:
-            emails += hits
+            for u in hits:
+                chosen[u["email"].strip()] = u["name"]
         else:
             missing.append(n)
-    emails += ASSIGN_CC_EXTRA
+    for email, name in list(chosen.items()):    # unit-scoped admins only for their own unit's assets
+        for scoped, scope_units in ASSIGN_CC_UNIT_SCOPE.items():
+            if _name_tokens(scoped) <= _name_tokens(name) and not (units & scope_units):
+                chosen.pop(email, None)
+    emails = list(chosen) + ASSIGN_CC_EXTRA
     return list(dict.fromkeys(e.strip() for e in emails if e)), missing
 
 
 def _approval_cc(conn, asset_id: str) -> list:
     """CC list for e-mails about an asset that needs approval; empty for every other asset."""
-    a = conn.execute("SELECT campus, requires_assign_approval FROM assets WHERE id = ?", (asset_id,)).fetchone()
+    a = conn.execute("SELECT campus, requires_assign_approval, unit, name, location, category FROM assets WHERE id = ?", (asset_id,)).fetchone()
     if not a or not a["requires_assign_approval"]:
         return []
-    emails, missing = assign_cc(conn, a["campus"], _approval_level(a["requires_assign_approval"]))
+    emails, missing = assign_cc(conn, a["campus"], _approval_level(a["requires_assign_approval"]),
+                                asset_units(a["unit"], a["name"], a["location"], a["category"]))
     if missing:
         logger.warning("Assignment CC: no registered user named %s", ", ".join(missing))
     return emails
@@ -3944,10 +3960,11 @@ async def bulk_assign(body: BulkAssignIn, user: dict = Depends(admin_required)):
     missing = []
     if waiting:    # tell the admin when someone on the CC list is not a registered user yet
         conn = get_conn()
-        camp = {(r["campus"], _approval_level(r["requires_assign_approval"])) for r in
-                (conn.execute("SELECT campus, requires_assign_approval FROM assets WHERE id = ?", (c["asset_id"],)).fetchone() for c in waiting) if r}
-        for cp, lv in camp:
-            missing += assign_cc(conn, cp, lv)[1]
+        for c in waiting:
+            r = conn.execute("SELECT campus, requires_assign_approval, unit, name, location, category FROM assets WHERE id = ?", (c["asset_id"],)).fetchone()
+            if r:
+                missing += assign_cc(conn, r["campus"], _approval_level(r["requires_assign_approval"]),
+                                     asset_units(r["unit"], r["name"], r["location"], r["category"]))[1]
         conn.close()
     return {"created": len(created), "skipped": skipped, "batch_id": batch, "awaiting_approval": len(waiting),
             "approver": waiting[0]["approver_name"] if waiting else "", "cc_missing": sorted(set(missing))}

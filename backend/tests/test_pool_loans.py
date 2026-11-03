@@ -590,3 +590,13 @@ def test_cc_follows_roles_not_only_names(client, make_user, db, monkeypatch):
     admins_only, _ = server.assign_cc(db, KK, 2)
     assert {"resources@example.com", "lead@example.com"} <= set(full) and "otherlead@example.com" not in full
     assert "resources@example.com" in admins_only and "lead@example.com" not in admins_only
+
+
+def test_paud_scoped_admin_only_copied_on_paud_assets(client, make_user, db, monkeypatch):
+    _approval_setup(db, make_user, monkeypatch)
+    db.execute("INSERT INTO users (id,email,name,role,campus,password_hash,created_at) VALUES (?,?,?,?,?,?,?)",
+               (server.uuid.uuid4().hex, "tsutejo@example.com", "Tomas Tresno Sutejo", "admin", KK, "x", "t"))
+    db.commit()
+    assert "tsutejo@example.com" not in server.assign_cc(db, KK, 2, server.asset_units("smp", "Keyboard", "Ruang Musik", "Music"))[0]
+    assert "tsutejo@example.com" in server.assign_cc(db, KK, 2, server.asset_units("paud", "Meja", "", ""))[0]
+    assert "tsutejo@example.com" in server.assign_cc(db, KK, 2, server.asset_units("", "Balok PAUD", "", ""))[0]
