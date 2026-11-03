@@ -35,6 +35,7 @@ export default function AssetDetailPage() {
   const [transferTo, setTransferTo] = useState("");
   const [transferUserId, setTransferUserId] = useState(null);
   const [transferNote, setTransferNote] = useState("");
+  const [transferKind, setTransferKind] = useState("");
 
   const [transferCampus, setTransferCampus] = useState("");
   const [transferRoom, setTransferRoom] = useState("");
@@ -167,7 +168,7 @@ export default function AssetDetailPage() {
     if (!transferUserId) return toast.error(t("transfer_user_required"));
     try {
       if (isAdmin) {
-        const r = await api.post(`/assets/${id}/transfer`, { new_owner_name: ownerLabel, new_owner_user_id: transferUserId, note: transferNote });
+        const r = await api.post(`/assets/${id}/transfer`, { new_owner_name: ownerLabel, new_owner_user_id: transferUserId, note: transferNote, ...(transferKind ? { kind: transferKind } : {}) });
         toast.success(r.data?.pending ? t("transfer_pending_toast").replace("{name}", r.data.to_name) : t("asset_transferred"));
       } else {
         await api.post(`/transfer-requests`, { new_owner_name: ownerLabel, new_owner_user_id: transferUserId, note: transferNote }, {
@@ -357,6 +358,24 @@ export default function AssetDetailPage() {
                     </div>
                   )}
                 </div>
+
+                {isAdmin && (
+                  <div data-testid="transfer-kind-field">
+                    <Label className="label-mono">{t("assign_kind")}</Label>
+                    <div className="mt-2 flex gap-2">
+                      {[["personal", "ma_kind_personal"], ["class", "ma_kind_class"]].map(([k, key]) => {
+                        const cur = transferKind || asset?.assignment_kind || "personal";
+                        return (
+                          <button key={k} type="button" onClick={() => setTransferKind(k)} data-testid={`transfer-kind-${k}`}
+                            className={`px-3 py-1.5 text-sm border ${cur === k ? "bg-slate-900 text-white border-slate-900" : "border-slate-300 text-slate-700 hover:bg-slate-50"}`}>
+                            {t(key)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="mt-1.5 text-xs text-slate-400">{t("assign_kind_hint")}</p>
+                  </div>
+                )}
 
                 {/* Note */}
                 <div>

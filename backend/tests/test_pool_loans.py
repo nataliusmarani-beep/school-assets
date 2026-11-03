@@ -627,3 +627,14 @@ def test_leaders_sign_policy_and_answer_handovers(client, make_user, db, monkeyp
     rid = db.execute("SELECT id FROM assignments WHERE to_user_id=?", (lead["id"],)).fetchone()[0]
     assert client.post("/api/assignments/respond", headers=auth(lead), json={"ids": [rid], "action": "accept"}).json()["done"] == 1
     assert client.post("/api/assets", headers=auth(lead), json={"name": "x"}).status_code == 403   # still view-only elsewhere
+
+
+def test_transfer_and_new_asset_can_be_class_assets(client, make_user, db, monkeypatch):
+    sent, boss, teacher = _approval_setup(db, make_user, monkeypatch)
+    admin = make_user("super_admin", "")
+    assert client.post("/api/assets/mu2/transfer", headers=auth(admin), json={"new_owner_user_id": teacher["id"], "new_owner_name": "x", "kind": "class"}).status_code == 200
+    assert db.execute("SELECT kind FROM assignments WHERE asset_id='mu2'").fetchone()[0] == "class"
+    body = {"name": "Cajon", "category": "Music Equipment", "campus": KK, "location": "Room H1", "purchase_price": 1, "purchase_date": "2026-01-01",
+            "assigned_to_user_id": teacher["id"], "assigned_to_name": "Guru", "assignment_kind": "class"}
+    r = client.post("/api/assets", headers=auth(admin), json=body)
+    assert r.status_code == 200 and r.json()["pending_assignment"]["kind"] == "class"

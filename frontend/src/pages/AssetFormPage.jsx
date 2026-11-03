@@ -154,7 +154,7 @@ export default function AssetFormPage() {
     campus: "", location: "", status: "active", purchase_price: "",
     purchase_date: new Date().toISOString().split("T")[0],
     useful_life_years: DEFAULT_USEFUL_LIFE[user?.role === "admin" ? "Furniture" : "IT Equipment"], warranty_end_date: "", serial_number: "",
-    supplier: "", assigned_to_name: "", assigned_to_user_id: null, photo_path: null, documents: [],
+    supplier: "", assigned_to_name: "", assigned_to_user_id: null, assignment_kind: "personal", photo_path: null, documents: [],
     ...extrasFromAsset({}),
   });
 
@@ -395,6 +395,20 @@ export default function AssetFormPage() {
                   {owners.map((u) => <option key={u.id} value={u.id}>{u.name}{u.department ? ` — ${u.department}` : ""}</option>)}
                 </select>
                 <p className="mt-1.5 text-xs text-slate-400">{t("owner_confirm_hint")}</p>
+                {form.assigned_to_user_id && (
+                  <div className="mt-3" data-testid="asset-kind-field">
+                    <Label className="label-mono">{t("assign_kind")}</Label>
+                    <div className="mt-2 flex gap-2">
+                      {[["personal", "ma_kind_personal"], ["class", "ma_kind_class"]].map(([k, key]) => (
+                        <button key={k} type="button" onClick={() => setForm((f) => ({ ...f, assignment_kind: k }))} data-testid={`asset-kind-${k}`}
+                          className={`px-3 py-1.5 text-sm border ${form.assignment_kind === k ? "bg-slate-900 text-white border-slate-900" : "border-slate-300 text-slate-700 hover:bg-slate-50"}`}>
+                          {t(key)}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="mt-1.5 text-xs text-slate-400">{t("assign_kind_hint")}</p>
+                  </div>
+                )}
               </>
             )}
           </div>

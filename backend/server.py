@@ -738,6 +738,7 @@ class LoginIn(BaseModel):
 
 class AssetIn(BaseModel):
     name: str
+    assignment_kind: Optional[str] = "personal"    # how the first owner holds it: "personal" or "class" (stays in the room)
     asset_tag: Optional[str] = ""      # ignored: the barcode number is generated
     category: str
     asset_type: Optional[str] = "School Asset"
@@ -829,6 +830,7 @@ class TransferIn(BaseModel):
     new_owner_user_id: Optional[str] = None
     new_owner_name: str
     note: Optional[str] = ""
+    kind: Optional[str] = None      # "personal" | "class"; default keeps the asset's current kind
 
 
 class FaultIn(BaseModel):
@@ -2385,7 +2387,8 @@ async def create_asset(body: AssetIn, user: dict = Depends(asset_manager_require
     pending = None
     if to_user:
         pending = create_assignment(conn, row_to_dict(conn.execute("SELECT * FROM assets WHERE id = ?", (aid,)).fetchone()),
-                                    to_user, "personal", "new", user, to_label=body.assigned_to_name or to_user["name"])
+                                    to_user, body.assignment_kind if body.assignment_kind in ASSIGN_KINDS else "personal", "new", user,
+                                    to_label=body.assigned_to_name or to_user["name"])
     if body.requires_assign_approval:
         conn.execute("UPDATE assets SET requires_assign_approval = ? WHERE id = ?", (_approval_level(body.requires_assign_approval), aid))
     conn.commit()
@@ -2898,8 +2901,8 @@ async def transfer_asset(aid: str, body: TransferIn, user: dict = Depends(asset_
     to_user = require_user(conn, body.new_owner_user_id, body.new_owner_name)
     if to_user:  # the recipient has to confirm before ownership changes
         try:
-            a = create_assignment(conn, asset, to_user, asset.get("assignment_kind") or "personal", "transfer", user,
-                                  note=body.note or "", to_label=body.new_owner_name)
+            a = create_assignment(conn, asset, to_user, body.kind if body.kind in ASSIGN_KINDS else (asset.get("assignment_kind") or "personal"),
+                                  "transfer", user, note=body.note or "", to_label=body.new_owner_name)
         except ValueError as e:
             conn.close()
             raise HTTPException(409, assignment_error_message(e, user))
