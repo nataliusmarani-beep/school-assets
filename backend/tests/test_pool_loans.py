@@ -570,3 +570,11 @@ def test_invite_discards_old_password(client, make_user, db, monkeypatch):
     assert db.execute("SELECT password_hash FROM users WHERE id=?", (u["id"],)).fetchone()[0] != before
     tok = r["link"].split("token=")[1]
     assert client.post("/api/auth/set-password", json={"token": tok, "password": "KataSandiBaru1!"}).status_code == 200
+
+
+def test_cc_name_match_ignores_middle_names(client, make_user, db, monkeypatch):
+    sent, boss, teacher = _approval_setup(db, make_user, monkeypatch)
+    db.execute("UPDATE users SET name = 'Maria Gabriella Jacadewa' WHERE name = 'Maria Jacadewa'")
+    db.commit()
+    emails, missing = server.assign_cc(db, KK, 2)
+    assert "maria@example.com" in emails and "Maria Jacadewa" not in missing

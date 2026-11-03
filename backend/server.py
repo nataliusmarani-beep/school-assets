@@ -3435,6 +3435,10 @@ def _name_key(s) -> str:
     return " ".join((s or "").split()).casefold()
 
 
+def _name_tokens(s) -> set:
+    return set(re.sub(r"[^\w\s]", " ", (s or "").casefold()).split())
+
+
 def resolve_user(conn, user_id=None, label=None):
     """Find the app user a hand-over is addressed to: by id, else by unique name/email in the label."""
     cols = "id,email,name,role,department,campus"
@@ -3506,6 +3510,10 @@ def assign_cc(conn, campus: str, level: int = 1):
         emails += [r["email"] for r in conn.execute("SELECT email FROM users WHERE role = 'campus_admin' AND campus = ?", (campus,)).fetchall() if "@" in (r["email"] or "")]
     for n in names:
         hits = [u["email"] for u in users if _name_key(u["name"]) == _name_key(n) and "@" in (u["email"] or "")]
+        if not hits:    # a middle name or initial in the registered name is fine ("Maria Gabriella Jacadewa" for "Maria Jacadewa")
+            want = _name_tokens(n)
+            loose = [u["email"] for u in users if want and want <= _name_tokens(u["name"]) and "@" in (u["email"] or "")]
+            hits = loose if len(set(loose)) == 1 else []
         if hits:
             emails += hits
         else:
