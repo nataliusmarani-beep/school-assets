@@ -745,7 +745,7 @@ class AssetIn(BaseModel):
     assigned_to_name: Optional[str] = None
     photo_path: Optional[str] = None
     documents: List[dict] = []
-    requires_assign_approval: Optional[bool] = False
+    requires_assign_approval: Optional[int] = 0     # 0 none, 1 supervisor approves + CC admins and leaders, 2 supervisor approves + CC admins only
     # Extended register fields
     asset_code: Optional[str] = ""
     item_type: Optional[str] = ""
@@ -788,7 +788,7 @@ class AssetUpdate(BaseModel):
     serial_number: Optional[str] = None
     supplier: Optional[str] = None
     photo_path: Optional[str] = None
-    requires_assign_approval: Optional[bool] = None
+    requires_assign_approval: Optional[int] = None
     documents: Optional[List[dict]] = None
     asset_code: Optional[str] = None
     item_type: Optional[str] = None
@@ -2246,7 +2246,8 @@ async def bulk_set_loanable(body: BulkLoanableIn, user: dict = Depends(get_curre
 
 class BulkApprovalIn(BaseModel):
     asset_ids: List[str]
-    enabled: bool
+    enabled: bool = True
+    level: Optional[int] = None     # 1 = CC admins + leaders, 2 = CC admins only; default follows `enabled`
 
 
 @api.post("/assets/bulk-assign-approval")
@@ -2254,6 +2255,7 @@ async def bulk_assign_approval(body: BulkApprovalIn, user: dict = Depends(asset_
     """Turn "assigning needs the supervisor's approval" on or off for many assets at once."""
     if not body.asset_ids:
         raise HTTPException(400, "Pilih aset terlebih dahulu")
+    level = _approval_level(body.level if body.level is not None else (1 if body.enabled else 0))
     conn = get_conn()
     changed, skipped = 0, 0
     for aid in dict.fromkeys(body.asset_ids):
@@ -2265,10 +2267,10 @@ async def bulk_assign_approval(body: BulkApprovalIn, user: dict = Depends(asset_
         except HTTPException:
             skipped += 1
             continue
-        conn.execute("UPDATE assets SET requires_assign_approval = ?, updated_at = ? WHERE id = ?", (int(body.enabled), now_iso(), aid))
+        conn.execute("UPDATE assets SET requires_assign_approval = ?, updated_at = ? WHERE id = ?", (level, now_iso(), aid))
         changed += 1
     conn.commit(); conn.close()
-    return {"updated": changed, "skipped": skipped, "enabled": body.enabled}
+    return {"updated": changed, "skipped": skipped, "enabled": level > 0, "level": level}
 
 
 @api.post("/assets/bulk-unit")
@@ -2357,7 +2359,7 @@ async def create_asset(body: AssetIn, user: dict = Depends(asset_manager_require
         pending = create_assignment(conn, row_to_dict(conn.execute("SELECT * FROM assets WHERE id = ?", (aid,)).fetchone()),
                                     to_user, "personal", "new", user, to_label=body.assigned_to_name or to_user["name"])
     if body.requires_assign_approval:
-        conn.execute("UPDATE assets SET requires_assign_approval = 1 WHERE id = ?", (aid,))
+        conn.execute("UPDATE assets SET requires_assign_approval = ? WHERE id = ?", (_approval_level(body.requires_assign_approval), aid))
     conn.commit()
     row = conn.execute("SELECT * FROM assets WHERE id = ?", (aid,)).fetchone()
     conn.close()
@@ -2817,7 +2819,7 @@ async def update_asset(aid: str, body: AssetUpdate, user: dict = Depends(asset_m
     if "maintenance_required" in updates:
         updates["maintenance_required"] = 1 if updates["maintenance_required"] else 0
     if "requires_assign_approval" in updates:
-        updates["requires_assign_approval"] = 1 if updates["requires_assign_approval"] else 0
+        updates["requires_assign_approval"] = _approval_level(updates["requires_assign_approval"])
     if "documents" in updates:
         updates["documents"] = json.dumps(updates["documents"])
     set_clause = ", ".join(f"{k} = ?" for k in updates)
@@ -3462,18 +3464,34 @@ def _supervisor_cc(conn, user_ids, exclude=()) -> list:
 
 # Hand-overs of assets that need approval are copied to these people (looked up among the registered users by name):
 # the admin resources team everywhere, plus the campus admin and leaders of the asset's campus.
+# Level 2 copies only the admins (admin resources + campus admin); level 1 adds the campus leaders.
 ASSIGN_CC_NAMES = {
     "*": ["Maria Jacadewa", "Damianus Muyapa", "Tomas Sutejo"],
-    "YPJ Kuala Kencana": ["Jeni Mansawan", "Petrick Richard", "Abidin Nur Rahmat"],
+    "YPJ Kuala Kencana": ["Jeni Mansawan"],
 }
+ASSIGN_CC_LEADERS = {
+    "YPJ Kuala Kencana": ["Petrick Richard", "Abidin Nur Rahmat"],
+}
+
+
+def _approval_level(v) -> int:
+    """0 = no approval, 1 = approval with admins and leaders in CC, 2 = approval with admins only in CC."""
+    try:
+        return max(0, min(2, int(v or 0)))
+    except (TypeError, ValueError):
+        return 1
 ASSIGN_CC_EXTRA = [e.strip() for e in os.environ.get("ASSIGN_APPROVAL_CC", "").split(",") if e.strip()]
 
 
-def assign_cc(conn, campus: str):
+def assign_cc(conn, campus: str, level: int = 1):
     """(e-mail addresses, names that are not registered users) for the CC list of an approval-controlled hand-over."""
     names = ASSIGN_CC_NAMES.get("*", []) + ASSIGN_CC_NAMES.get(campus or "", [])
+    if level != 2:
+        names += ASSIGN_CC_LEADERS.get(campus or "", [])
     users = [dict(r) for r in conn.execute("SELECT name, email FROM users").fetchall()]
     emails, missing = [], []
+    if campus:      # every campus admin account of the asset's campus is copied as well
+        emails += [r["email"] for r in conn.execute("SELECT email FROM users WHERE role = 'campus_admin' AND campus = ?", (campus,)).fetchall() if "@" in (r["email"] or "")]
     for n in names:
         hits = [u["email"] for u in users if _name_key(u["name"]) == _name_key(n) and "@" in (u["email"] or "")]
         if hits:
@@ -3489,7 +3507,7 @@ def _approval_cc(conn, asset_id: str) -> list:
     a = conn.execute("SELECT campus, requires_assign_approval FROM assets WHERE id = ?", (asset_id,)).fetchone()
     if not a or not a["requires_assign_approval"]:
         return []
-    emails, missing = assign_cc(conn, a["campus"])
+    emails, missing = assign_cc(conn, a["campus"], _approval_level(a["requires_assign_approval"]))
     if missing:
         logger.warning("Assignment CC: no registered user named %s", ", ".join(missing))
     return emails
@@ -3899,9 +3917,10 @@ async def bulk_assign(body: BulkAssignIn, user: dict = Depends(admin_required)):
     missing = []
     if waiting:    # tell the admin when someone on the CC list is not a registered user yet
         conn = get_conn()
-        camp = {r["campus"] for r in (conn.execute("SELECT campus FROM assets WHERE id = ?", (c["asset_id"],)).fetchone() for c in waiting) if r}
-        for cp in camp:
-            missing += assign_cc(conn, cp)[1]
+        camp = {(r["campus"], _approval_level(r["requires_assign_approval"])) for r in
+                (conn.execute("SELECT campus, requires_assign_approval FROM assets WHERE id = ?", (c["asset_id"],)).fetchone() for c in waiting) if r}
+        for cp, lv in camp:
+            missing += assign_cc(conn, cp, lv)[1]
         conn.close()
     return {"created": len(created), "skipped": skipped, "batch_id": batch, "awaiting_approval": len(waiting),
             "approver": waiting[0]["approver_name"] if waiting else "", "cc_missing": sorted(set(missing))}

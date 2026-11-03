@@ -41,7 +41,7 @@ const EXTRA_TEXT_KEYS = [
 ];
 
 const extrasFromAsset = (a) => {
-  const out = { maintenance_required: !!a.maintenance_required, requires_assign_approval: !!a.requires_assign_approval };
+  const out = { maintenance_required: !!a.maintenance_required, requires_assign_approval: Number(a.requires_assign_approval) || 0 };
   EXTRA_TEXT_KEYS.forEach((k) => { out[k] = a[k] == null ? "" : String(a[k]); });
   return out;
 };
@@ -399,9 +399,9 @@ export default function AssetFormPage() {
             )}
           </div>
           <div>
-            <SelectField label={t("assign_approval")} value={form.requires_assign_approval ? "yes" : "no"}
-              onChange={(v)=>update("requires_assign_approval", v === "yes")}
-              options={[{ value: "no", label: t("opt_no") }, { value: "yes", label: t("assign_approval_yes") }]}
+            <SelectField label={t("assign_approval")} value={String(form.requires_assign_approval || 0)}
+              onChange={(v)=>update("requires_assign_approval", Number(v))}
+              options={[{ value: "0", label: t("opt_no") }, { value: "2", label: t("assign_approval_yes2") }, { value: "1", label: t("assign_approval_yes") }]}
               testid="asset-assign-approval-select"/>
             <p className="mt-1.5 text-xs text-slate-400">{t("assign_approval_hint")}</p>
           </div>

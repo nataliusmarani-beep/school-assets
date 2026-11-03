@@ -541,3 +541,19 @@ def test_bulk_assign_approval_toggle_and_asset_field(client, make_user, db, monk
     assert r["updated"] == 1 and r["skipped"] == 1
     assert db.execute("SELECT requires_assign_approval FROM assets WHERE id='mu2'").fetchone()[0] == 1
     assert client.put("/api/assets/mu2", headers=auth(admin), json={"requires_assign_approval": False}).json()["requires_assign_approval"] == 0
+
+
+def test_approval_level_two_copies_admins_but_not_leaders(client, make_user, db, monkeypatch):
+    sent, boss, teacher = _approval_setup(db, make_user, monkeypatch)
+    admin = make_user("super_admin", "")
+    campus_admin = make_user("campus_admin", KK, email="kampus@example.com")
+    r = client.post("/api/assets/bulk-assign-approval", headers=auth(admin), json={"asset_ids": ["mu1"], "level": 2}).json()
+    assert r["updated"] == 1 and r["level"] == 2
+    assert db.execute("SELECT requires_assign_approval FROM assets WHERE id='mu1'").fetchone()[0] == 2
+    r = client.post("/api/assignments/bulk", headers=auth(admin), json={"to_user_id": teacher["id"], "asset_ids": ["mu1"], "kind": "class"}).json()
+    assert r["awaiting_approval"] == 1 and r["cc_missing"] == ["Damianus Muyapa", "Tomas Sutejo"]
+    cc = [m for m in sent if m["to"] == "kepsek@example.com"][0]["cc"]
+    assert {"maria@example.com", "jeni@example.com", "kampus@example.com"} <= set(cc)
+    assert "petrick@example.com" not in cc
+    # the asset form can pick the level directly
+    assert client.put("/api/assets/mu2", headers=auth(admin), json={"requires_assign_approval": 2}).json()["requires_assign_approval"] == 2
