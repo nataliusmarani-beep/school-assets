@@ -6,6 +6,7 @@ load_dotenv(ROOT_DIR / '.env')
 
 import os
 import hashlib
+import hmac
 import html as html_mod
 import secrets
 import re
@@ -3661,20 +3662,60 @@ def apply_assignment(conn, a: dict, ts: str):
 
 
 # ---- E-mails ----
+def _email_photo_sig(asset_id: str) -> str:
+    return hmac.new(JWT_SECRET.encode(), f"email-photo:{asset_id}".encode(), hashlib.sha256).hexdigest()[:24]
+
+
+def email_photo_url(asset_id: str) -> str:
+    """Public, unguessable URL of an asset photo for e-mails (mail apps cannot send the login cookie)."""
+    return f"{APP_URL}/api/email-photo/{asset_id}?s={_email_photo_sig(asset_id)}"
+
+
+@api.get("/email-photo/{asset_id}")
+async def email_photo(asset_id: str, s: str = Query("")):
+    if not hmac.compare_digest(s, _email_photo_sig(asset_id)):
+        raise HTTPException(404, "Not found")
+    conn = get_conn()
+    row = conn.execute("SELECT photo_path FROM assets WHERE id = ?", (asset_id,)).fetchone()
+    f = conn.execute("SELECT content_type FROM files WHERE storage_path = ? AND is_deleted = 0", (row["photo_path"],)).fetchone() if row and row["photo_path"] else None
+    conn.close()
+    path = UPLOADS_DIR / row["photo_path"] if row and row["photo_path"] else None
+    if not path or not path.exists():
+        raise HTTPException(404, "Not found")
+    return FileResponse(str(path), media_type=(f["content_type"] if f else "image/jpeg"), headers={"Cache-Control": "public, max-age=86400"})
+
+
 def _assignment_items_html(items: list) -> str:
+    """One card per asset: photo on the left, name / barcode / room in the middle, hand-over kind on the right, all centred vertically."""
     import html as _h
-    rows = "".join(
-        "<tr>"
-        f"<td style='padding:6px 8px;border-bottom:1px solid #e2e8f0;'>{_h.escape(i['asset_name'])}<br>"
-        f"<span style='color:#64748b;font-size:12px;'>{_h.escape(i['asset_tag'])}"
-        f"{' · ' + _h.escape(i['location']) if i.get('location') else ''}</span></td>"
-        f"<td style='padding:6px 8px;border-bottom:1px solid #e2e8f0;white-space:nowrap;'>"
-        f"{_h.escape(ASSIGN_KIND_LABEL_ID.get(i['kind'], i['kind']))}</td>"
-        "</tr>" for i in items)
-    return ("<table style='border-collapse:collapse;width:100%;font-size:14px;margin:14px 0;'>"
-            "<tr style='text-align:left;color:#64748b;font-size:11px;letter-spacing:.1em;text-transform:uppercase;"
-            "border-bottom:1px solid #e2e8f0;'><th style='padding:8px;'>Aset</th><th style='padding:8px;'>Jenis</th></tr>"
-            f"{rows}</table>")
+    photos = {}
+    try:
+        conn = get_conn()
+        for i in items:
+            r = conn.execute("SELECT photo_path FROM assets WHERE id = ?", (i.get("asset_id"),)).fetchone()
+            if r and r["photo_path"] and (UPLOADS_DIR / r["photo_path"]).exists():
+                photos[i["asset_id"]] = email_photo_url(i["asset_id"])
+        conn.close()
+    except Exception:
+        pass
+    cards = []
+    for i in items:
+        url = photos.get(i.get("asset_id"))
+        img = (f"<img src='{url}' width='84' height='84' alt='' style='display:block;width:84px;height:84px;object-fit:cover;"
+               f"border:1px solid #e2e8f0;border-radius:4px;background:#f1f5f9'>") if url else (
+              "<div style='width:84px;height:84px;border:1px solid #e2e8f0;border-radius:4px;background:#f1f5f9;"
+              "text-align:center;line-height:84px;font-size:11px;color:#94a3b8'>No photo</div>")
+        where = f" &middot; {_h.escape(i['location'])}" if i.get("location") else ""
+        kind = _h.escape(ASSIGN_KIND_LABEL_ID.get(i["kind"], i["kind"]))
+        cards.append(
+            "<tr><td style='padding:0 0 10px'><table role='presentation' width='100%' style='border-collapse:collapse;border:1px solid #e2e8f0;background:#ffffff'><tr>"
+            f"<td width='100' style='padding:10px;vertical-align:middle'>{img}</td>"
+            f"<td style='padding:10px 6px;vertical-align:middle'><div style='font-size:15px;font-weight:700;color:#0f172a;line-height:1.3'>{_h.escape(i['asset_name'])}</div>"
+            f"<div style='margin-top:4px;font-family:Menlo,Consolas,monospace;font-size:12px;color:#64748b'>{_h.escape(i['asset_tag'])}{where}</div></td>"
+            f"<td width='90' style='padding:10px;vertical-align:middle;text-align:right'><span style='display:inline-block;border:1px solid #cbd5e1;background:#f8fafc;"
+            f"padding:3px 9px;font-size:11px;color:#334155;letter-spacing:.04em;white-space:nowrap'>{kind}</span></td>"
+            "</tr></table></td></tr>")
+    return f"<table role='presentation' width='100%' style='border-collapse:collapse;margin:16px 0 6px'>{''.join(cards)}</table>"
 
 
 def _assignment_request_html(to_name: str, items: list, by_name: str, note: str = "", reminder: bool = False,

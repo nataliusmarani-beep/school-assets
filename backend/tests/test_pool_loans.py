@@ -638,3 +638,20 @@ def test_transfer_and_new_asset_can_be_class_assets(client, make_user, db, monke
             "assigned_to_user_id": teacher["id"], "assigned_to_name": "Guru", "assignment_kind": "class"}
     r = client.post("/api/assets", headers=auth(admin), json=body)
     assert r.status_code == 200 and r.json()["pending_assignment"]["kind"] == "class"
+
+
+def test_assignment_email_shows_asset_photo(client, make_user, db, monkeypatch):
+    sent, boss, teacher = _approval_setup(db, make_user, monkeypatch)
+    photo = server.UPLOADS_DIR / "t" / "p.jpg"
+    photo.parent.mkdir(exist_ok=True)
+    photo.write_bytes(b"\xff\xd8\xff\xe0fake")
+    db.execute("UPDATE assets SET photo_path='t/p.jpg' WHERE id='mu1'")
+    db.commit()
+    html = server._assignment_items_html([{"asset_id": "mu1", "asset_name": "Keyboard", "asset_tag": "5550001", "kind": "class", "location": "Ruang Musik"}])
+    assert "/api/email-photo/mu1?s=" in html and "5550001" in html
+    path = server.email_photo_url("mu1").replace(server.APP_URL, "")
+    assert client.get(path).status_code == 200
+    assert client.get("/api/email-photo/mu1?s=wrong").status_code == 404
+    no_photo = server._assignment_items_html([{"asset_id": "mu2", "asset_name": "Gitar", "asset_tag": "5550002", "kind": "personal", "location": ""}])
+    assert "email-photo" not in no_photo and "No photo" in no_photo
+    photo.unlink()
