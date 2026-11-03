@@ -579,3 +579,14 @@ def test_cc_name_match_ignores_middle_names(client, make_user, db, monkeypatch):
     db.commit()
     emails, missing = server.assign_cc(db, KK, 2)
     assert "maria@example.com" in emails and "Maria Jacadewa" not in missing
+
+
+def test_cc_follows_roles_not_only_names(client, make_user, db, monkeypatch):
+    _approval_setup(db, make_user, monkeypatch)
+    adm = make_user("admin", "", email="resources@example.com")
+    lead = make_user("leader", KK, email="lead@example.com")
+    other_lead = make_user("leader", "YPJ Tembagapura", email="otherlead@example.com")
+    full, _ = server.assign_cc(db, KK, 1)
+    admins_only, _ = server.assign_cc(db, KK, 2)
+    assert {"resources@example.com", "lead@example.com"} <= set(full) and "otherlead@example.com" not in full
+    assert "resources@example.com" in admins_only and "lead@example.com" not in admins_only

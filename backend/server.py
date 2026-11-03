@@ -3506,9 +3506,15 @@ def assign_cc(conn, campus: str, level: int = 1):
         names += ASSIGN_CC_LEADERS.get(campus or "", [])
     users = [dict(r) for r in conn.execute("SELECT name, email FROM users").fetchall()]
     emails, missing = [], []
-    emails += [r["email"] for r in conn.execute("SELECT email FROM users WHERE role = 'super_admin'").fetchall() if "@" in (r["email"] or "")]
-    if campus:      # every campus admin account of the asset's campus is copied as well
-        emails += [r["email"] for r in conn.execute("SELECT email FROM users WHERE role = 'campus_admin' AND campus = ?", (campus,)).fetchall() if "@" in (r["email"] or "")]
+    # roles decide who is copied, so a differently spelled name never drops anyone: super admins and admins (admin resources)
+    # everywhere, the campus admins of the asset's campus, and (level 1 only) that campus's leaders
+    roles = ["super_admin", "admin"]
+    rows = conn.execute("SELECT email FROM users WHERE role IN (%s)" % ",".join("?" * len(roles)), roles).fetchall()
+    if campus:
+        rows += conn.execute("SELECT email FROM users WHERE role = 'campus_admin' AND campus = ?", (campus,)).fetchall()
+        if level != 2:
+            rows += conn.execute("SELECT email FROM users WHERE role = 'leader' AND campus = ?", (campus,)).fetchall()
+    emails += [r["email"] for r in rows if "@" in (r["email"] or "")]
     for n in names:
         hits = [u["email"] for u in users if _name_key(u["name"]) == _name_key(n) and "@" in (u["email"] or "")]
         if not hits:    # a middle name or initial in the registered name is fine ("Maria Gabriella Jacadewa" for "Maria Jacadewa")
