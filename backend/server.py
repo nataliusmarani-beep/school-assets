@@ -2056,10 +2056,12 @@ async def list_assets(
     pend = {r["asset_id"]: {"to_name": r["to_name"], "created_at": r["created_at"], "status": r["status"], "approver_name": r["approver_name"]}
             for r in conn.execute("SELECT asset_id, to_name, created_at, status, approver_name FROM assignments "
                                   "WHERE status IN ('pending', 'awaiting_approval') OR (status = 'accepted' AND applied = 0)")}
+    lend = {r["asset_id"]: r["borrowable"] for r in conn.execute("SELECT asset_id, borrowable FROM asset_loan_settings")}
     conn.close()
     for a in assets:
         a["depreciation"] = calc_depreciation(a["purchase_price"], a["purchase_date"], a.get("useful_life_years", 5), a.get("residual_value") or 0)
         a["pending_assignment"] = pend.get(a["id"])
+        a["borrowable"] = lend.get(a["id"])      # 1 / 0 once someone decided, None while still undecided
     return assets
 
 
