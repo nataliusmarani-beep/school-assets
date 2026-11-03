@@ -21,6 +21,7 @@ import { useAuth } from "../context/AuthContext";
 import { ICT_CATEGORIES } from "../lib/roles";
 import { CATEGORY_VALUES, CATEGORY_KEYS } from "../i18n";
 import { campusLabel } from "../lib/campus";
+import RoomField from "../components/assets/RoomField";
 
 const CAMPUSES = ["YPJ Kuala Kencana", "YPJ TPRA"];
 
@@ -256,13 +257,15 @@ export default function AssetFormPage() {
   const setDocType = (path, type) =>
     update("documents", form.documents.map((d) => (d.path === path ? { ...d, type } : d)));
 
-  const submit = async (e) => {
-    e.preventDefault();
+  const submit = (e) => { e.preventDefault(); save({}); };
+
+  const save = async (extra) => {
     setError("");
     setSubmitting(true);
     try {
       const payload = {
         ...form,
+        ...extra,
         purchase_price: parseFloat(form.purchase_price),
         useful_life_years: parseInt(form.useful_life_years, 10),
         warranty_end_date: form.warranty_end_date || null,
@@ -282,6 +285,17 @@ export default function AssetFormPage() {
       }
       navigate(`/assets/${res.data.id}`);
     } catch (err) {
+      const d = err.response?.data?.detail;
+      if (d && d.code === "similar_room") {     // the room name reads like an existing room: use that one, or confirm a new room
+        const first = d.suggestions[0];
+        setSubmitting(false);
+        if (window.confirm(t("room_confirm_use").replace("{name}", d.name).replace("{list}", d.suggestions.join(", ")).replace("{first}", first))) {
+          update("location", first);
+          return save({ location: first });
+        }
+        if (window.confirm(t("room_confirm_new").replace("{name}", d.name))) return save({ allow_new_room: true });
+        return;
+      }
       setError(formatErr(err));
     } finally {
       setSubmitting(false);
@@ -372,7 +386,7 @@ export default function AssetFormPage() {
             options={optionsFor("unit", UNIT_VALUES, t)} placeholder={t("select_generic")} testid="asset-unit-select"/>
           <TextField label={t("building")} value={form.building} onChange={(v)=>update("building",v)}
             placeholder={t("building_placeholder")} testid="asset-building-input"/>
-          <TextField label={t("room_location")} value={form.location} onChange={(v)=>update("location",v)}
+          <RoomField label={t("room_location")} value={form.location} onChange={(v)=>update("location",v)} campus={form.campus} t={t}
             required placeholder={t("room_placeholder")} testid="asset-location-input"/>
           <div>
             <Label className="label-mono">{t("initial_owner")}</Label>

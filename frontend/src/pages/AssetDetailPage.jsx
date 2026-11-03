@@ -103,9 +103,9 @@ export default function AssetDetailPage() {
     const campus = !isAdmin && user?.campus ? user.campus : (asset?.campus || "");
     if (!isAdmin && user?.campus) setTransferCampus(user.campus);
     api.get("/users").then((r) => setAllUsers(r.data)).catch(() => {});
-    api.get("/assets", { params: campus ? { campus } : {} })
+    api.get("/rooms", { params: campus ? { campus } : {} })      // the master list of rooms (Classrooms page)
       .then((r) => {
-        const rooms = [...new Set(r.data.map((a) => a.location).filter(Boolean))].sort();
+        const rooms = [...new Set(r.data.map((x) => x.name).filter(Boolean))].sort();
         setAllRooms(rooms);
       }).catch(() => {});
   }, [transferOpen]); // eslint-disable-line

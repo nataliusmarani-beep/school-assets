@@ -739,6 +739,7 @@ class LoginIn(BaseModel):
 
 class AssetIn(BaseModel):
     name: str
+    allow_new_room: Optional[bool] = False    # confirm that a room name similar to an existing one really is a new room
     assignment_kind: Optional[str] = "personal"    # how the first owner holds it: "personal" or "class" (stays in the room)
     asset_tag: Optional[str] = ""      # ignored: the barcode number is generated
     category: str
@@ -786,6 +787,7 @@ class AssetIn(BaseModel):
 
 class AssetUpdate(BaseModel):
     name: Optional[str] = None
+    allow_new_room: Optional[bool] = None
     asset_tag: Optional[str] = None
     category: Optional[str] = None
     asset_type: Optional[str] = None
@@ -2354,6 +2356,7 @@ async def create_asset(body: AssetIn, user: dict = Depends(asset_manager_require
     aid = str(uuid.uuid4())
     ts = now_iso()
     conn = get_conn()
+    body.location = resolve_room(conn, body.campus or "", body.location, bool(body.allow_new_room))
     body.asset_tag = gen_barcode_id(conn)
     # An owner that is a real user must confirm receipt first; the asset starts unassigned until then.
     to_user = (require_user(conn, body.assigned_to_user_id, body.assigned_to_name)
@@ -2703,7 +2706,7 @@ async def bulk_import_assets(
             atype     = (row.get("asset_type") or "School Asset").strip()
             desc      = (row.get("description") or "").strip()
             campus    = (row.get("campus") or "").strip()
-            loc       = (row.get("location") or "").strip()
+            loc       = canonical_room_name(conn, campus, (row.get("location") or "").strip())
             status    = (row.get("status") or "active").strip()
             price_s   = (row.get("purchase_price") or "0").strip()
             price     = float(price_s) if price_s else 0.0
@@ -2839,8 +2842,15 @@ async def get_asset(aid: str, user: dict = Depends(get_current_user)):
 async def update_asset(aid: str, body: AssetUpdate, user: dict = Depends(asset_manager_required)):
     updates = {k: v for k, v in body.model_dump(exclude_none=True).items()}
     updates.pop("asset_tag", None)       # the barcode number is generated and locked
+    allow_new_room = bool(updates.pop("allow_new_room", False))
     if not updates:
         raise HTTPException(400, "No fields to update")
+    if "location" in updates:
+        rc = get_conn()
+        cur_loc = rc.execute("SELECT campus, location FROM assets WHERE id = ?", (aid,)).fetchone()
+        if cur_loc and _room_key(updates["location"]) != _room_key(cur_loc["location"]):    # a changed room goes through the master list
+            updates["location"] = resolve_room(rc, updates.get("campus", cur_loc["campus"]) or "", updates["location"], allow_new_room)
+        rc.close()
     if user["role"] != "super_admin":
         conn = get_conn()
         cur = conn.execute("SELECT campus, category FROM assets WHERE id = ?", (aid,)).fetchone()
@@ -6423,6 +6433,51 @@ def sync_classrooms(conn):
         conn.commit()
 
 
+def _room_norm(s) -> str:
+    return re.sub(r"[^0-9a-z]", "", (s or "").casefold())
+
+
+def similar_rooms(names, loc: str) -> list:
+    """Existing room names that read like `loc` ("Lab Komputer SMP" vs "Lab Komputer  smp ", "B3 TRC" vs "B3 TRC Room")."""
+    import difflib
+    b = _room_norm(loc)
+    out = []
+    for n in names:
+        a = _room_norm(n)
+        if not a or not b:
+            continue
+        if a == b or difflib.SequenceMatcher(None, a, b).ratio() >= 0.86 or (min(len(a), len(b)) >= 4 and (a in b or b in a)):
+            out.append(n)
+    return out
+
+
+def canonical_room_name(conn, campus: str, loc: str) -> str:
+    """Quiet exact-match only (case / spaces): imports reuse the master spelling and never stop on look-alikes."""
+    for r in conn.execute("SELECT name FROM classrooms WHERE campus = ?", (campus or "",)).fetchall():
+        if _room_key(r["name"]) == _room_key(loc):
+            return r["name"]
+    return loc
+
+
+def resolve_room(conn, campus: str, location, allow_new: bool = False) -> str:
+    """Room names come from the master list (Classrooms page): same spelling up to case / spaces -> the master's spelling;
+    a name that reads like an existing room is refused (409) unless the caller confirms it is a new room. Closes `conn` on refusal."""
+    loc = " ".join((location or "").split())
+    if not loc:
+        return loc
+    sync_classrooms(conn)
+    names = [r["name"] for r in conn.execute("SELECT name FROM classrooms WHERE campus = ?", (campus or "",)).fetchall()]
+    for n in names:
+        if _room_key(n) == _room_key(loc):
+            return n
+    if not allow_new:
+        sim = similar_rooms(names, loc)
+        if sim:
+            conn.close()
+            raise HTTPException(409, {"code": "similar_room", "name": loc, "suggestions": sim[:5]})
+    return loc
+
+
 def ownerName_plain(label) -> str:
     return (label or "").split(" — ")[0].strip()
 
@@ -6580,6 +6635,49 @@ async def update_classroom(cid: str, body: ClassroomUpdateIn, user: dict = Depen
     out = _room_summary(conn, _get_room(conn, cid))
     conn.close()
     return out
+
+
+class RoomMergeIn(BaseModel):
+    target_id: str
+
+
+@api.post("/classrooms/{cid}/merge")
+async def merge_classroom(cid: str, body: RoomMergeIn, user: dict = Depends(admin_required)):
+    """Fold a duplicate room into another one of the same campus: its assets move to the target's name, then the duplicate is removed."""
+    if body.target_id == cid:
+        raise HTTPException(400, "Pilih ruang tujuan yang berbeda")
+    conn = get_conn()
+    src = _get_room(conn, cid)
+    _room_scope(conn, user, src)
+    dst = _get_room(conn, body.target_id)
+    _room_scope(conn, user, dst)
+    if (src["campus"] or "") != (dst["campus"] or ""):
+        conn.close()
+        raise HTTPException(400, "Ruang hanya bisa digabung dalam kampus yang sama")
+    if _active_handover(conn, cid) or _active_handover(conn, body.target_id):
+        conn.close()
+        raise HTTPException(409, "Selesaikan dulu serah terima kelas yang sedang berjalan")
+    ts = now_iso()
+    moved = conn.execute("UPDATE assets SET location = ?, updated_at = ? WHERE campus = ? AND LOWER(TRIM(location)) = ?",
+                         (dst["name"], ts, src["campus"], _room_key(src["name"]))).rowcount
+    if src.get("responsible_user_id") and not dst.get("responsible_user_id"):
+        conn.execute("UPDATE classrooms SET responsible_user_id = ?, responsible_name = ?, updated_at = ? WHERE id = ?",
+                     (src["responsible_user_id"], src["responsible_name"], ts, body.target_id))
+    conn.execute("DELETE FROM classrooms WHERE id = ?", (cid,))
+    conn.commit()
+    out = _room_summary(conn, _get_room(conn, body.target_id))
+    conn.close()
+    return {**out, "moved_assets": moved}
+
+
+@api.get("/rooms")
+async def room_names(campus: str = Query(""), user: dict = Depends(get_current_user)):
+    """The master list of room names for pickers on other pages (names only, no asset counts)."""
+    conn = get_conn()
+    sync_classrooms(conn)
+    rows = [dict(r) for r in conn.execute("SELECT id, name, campus, room_type FROM classrooms ORDER BY name").fetchall()]
+    conn.close()
+    return [r for r in rows if _room_visible(user, r) and (not campus or (r["campus"] or "") == campus)]
 
 
 @api.delete("/classrooms/{cid}")

@@ -9,7 +9,7 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../components/ui/dialog";
 import { toast } from "sonner";
-import { Plus, Search, Pencil } from "lucide-react";
+import { Plus, Search, Pencil, Trash2 } from "lucide-react";
 import ClassroomEditDialog from "../components/assets/ClassroomEditDialog";
 import { campusLabel } from "../lib/campus";
 
@@ -34,6 +34,12 @@ export default function ClassroomsPage() {
     .catch((e) => toast.error(formatErr(e))).finally(() => setLoading(false)), []);
   useEffect(() => { load(); }, [load]);
 
+  const removeRoom = async (r) => {
+    if (!window.confirm(t("cr_delete_confirm").replace("{name}", r.name))) return;
+    try { await api.delete(`/classrooms/${r.id}`); toast.success(t("cr_deleted")); load(); }
+    catch (e) { toast.error(formatErr(e)); }
+  };
+
   const shown = useMemo(() => rooms.filter((r) =>
     (campus === "all" || r.campus === campus) &&
     (!q.trim() || `${r.name} ${r.responsible_name || ""}`.toLowerCase().includes(q.trim().toLowerCase()))), [rooms, q, campus]);
@@ -55,6 +61,7 @@ export default function ClassroomsPage() {
           <div className="label-mono mb-2">{t("cr_eyebrow")}</div>
           <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight text-slate-900 mb-1">{t("cr_title")}</h1>
           <p className="text-sm text-slate-500 max-w-2xl">{t("cr_subtitle")}</p>
+          <p className="text-sm text-slate-500 max-w-2xl mt-1" data-testid="cr-master-hint">{t("cr_master_hint")}</p>
         </div>
         {isAdmin && (
           <Button onClick={() => setOpen(true)} className="rounded-none bg-slate-900" data-testid="classroom-add">
@@ -98,6 +105,11 @@ export default function ClassroomsPage() {
                         <Pencil className="w-3.5 h-3.5" strokeWidth={1.75} />
                       </button>
                     )}
+                    {isAdmin && (
+                      <button onClick={() => removeRoom(r)} className="text-slate-400 hover:text-rose-700" title={t("cr_delete")} aria-label={t("cr_delete")} data-testid={`classroom-delete-${r.id}`}>
+                        <Trash2 className="w-3.5 h-3.5" strokeWidth={1.75} />
+                      </button>
+                    )}
                   </div>
                 </td>
                 <td className="py-3 px-4 text-slate-700">{campusLabel(r.campus) || "—"}</td>
@@ -125,7 +137,7 @@ export default function ClassroomsPage() {
         </table>
       </div>
 
-      {isAdmin && <ClassroomEditDialog open={!!editing} onOpenChange={(o) => { if (!o) setEditing(null); }} t={t} room={editing} onDone={load} />}
+      {isAdmin && <ClassroomEditDialog open={!!editing} onOpenChange={(o) => { if (!o) setEditing(null); }} t={t} room={editing} rooms={rooms} onDone={load} />}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="rounded-none" data-testid="classroom-dialog">

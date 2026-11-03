@@ -655,3 +655,43 @@ def test_assignment_email_shows_asset_photo(client, make_user, db, monkeypatch):
     no_photo = server._assignment_items_html([{"asset_id": "mu2", "asset_name": "Gitar", "asset_tag": "5550002", "kind": "personal", "location": ""}])
     assert "email-photo" not in no_photo and "No photo" in no_photo
     photo.unlink()
+
+
+def _room_asset_body(location, **kw):
+    return {"name": "Meja", "category": "Furniture", "campus": KK, "location": location, "purchase_price": 1, "purchase_date": "2026-01-01", **kw}
+
+
+def test_room_master_list_guards_against_near_duplicates(client, make_user, db):
+    admin = make_user("super_admin", "")
+    h = auth(admin)
+    assert client.post("/api/assets", headers=h, json=_room_asset_body("Lab Komputer SMP")).status_code == 200
+    # same name up to case / spaces -> the master's spelling
+    r = client.post("/api/assets", headers=h, json=_room_asset_body("  lab  komputer smp "))
+    assert r.status_code == 200 and r.json()["location"] == "Lab Komputer SMP"
+    # a name that reads like an existing room is refused until confirmed
+    r = client.post("/api/assets", headers=h, json=_room_asset_body("Lab Komputer-SMP"))
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "similar_room" and "Lab Komputer SMP" in r.json()["detail"]["suggestions"]
+    assert client.post("/api/assets", headers=h, json=_room_asset_body("Lab Komputer-SMP", allow_new_room=True)).status_code == 200
+    assert client.post("/api/assets", headers=h, json=_room_asset_body("Gudang Utama")).status_code == 200
+    names = [x["name"] for x in client.get("/api/rooms", headers=h, params={"campus": KK}).json()]
+    assert "Gudang Utama" in names and "Lab Komputer SMP" in names
+    # editing an asset without touching its room never trips the guard; moving it to a look-alike does
+    aid = client.post("/api/assets", headers=h, json=_room_asset_body("Gudang Utama")).json()["id"]
+    assert client.put(f"/api/assets/{aid}", headers=h, json={"name": "Meja 2", "location": "Gudang Utama"}).status_code == 200
+    assert client.put(f"/api/assets/{aid}", headers=h, json={"location": "Gudang  utama 2"}).status_code == 409
+
+
+def test_merge_and_delete_rooms(client, make_user, db):
+    admin = make_user("super_admin", "")
+    h = auth(admin)
+    for loc in ("B3 TRC Room", "B3 TRC"):
+        client.post("/api/assets", headers=h, json=_room_asset_body(loc, allow_new_room=True))
+    rooms = {r["name"]: r for r in client.get("/api/classrooms", headers=h).json()}
+    assert client.delete(f"/api/classrooms/{rooms['B3 TRC']['id']}", headers=h).status_code == 409      # still has an asset
+    r = client.post(f"/api/classrooms/{rooms['B3 TRC']['id']}/merge", headers=h, json={"target_id": rooms["B3 TRC Room"]["id"]})
+    assert r.status_code == 200 and r.json()["moved_assets"] == 1
+    assert db.execute("SELECT COUNT(*) FROM assets WHERE location='B3 TRC Room'").fetchone()[0] == 2
+    assert db.execute("SELECT COUNT(*) FROM classrooms WHERE name='B3 TRC'").fetchone()[0] == 0
+    assert client.post(f"/api/classrooms/{rooms['B3 TRC Room']['id']}/merge", headers=h, json={"target_id": rooms["B3 TRC Room"]["id"]}).status_code == 400
+    empty = client.post("/api/classrooms", headers=h, json={"name": "Ruang Kosong", "campus": KK}).json()
+    assert client.delete(f"/api/classrooms/{empty['id']}", headers=h).status_code == 200
