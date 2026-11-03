@@ -27,7 +27,10 @@ export default function BulkTransferDialog({ open, onOpenChange, t, assets, onDo
       const r = await api.post("/assignments/bulk", { to_user_id: toId, asset_ids: assets.map((a) => a.id), kind, note });
       let msg = t("ho_result").replace("{n}", r.data.created);
       if (r.data.skipped.length) msg += " · " + t("ho_skipped").replace("{n}", r.data.skipped.length);
+      if (r.data.awaiting_approval) msg += " · " + t("aa_waiting").replace("{n}", r.data.awaiting_approval).replace("{name}", r.data.approver);
       toast.success(msg);
+      if (r.data.cc_missing?.length) toast.warning(t("aa_cc_missing").replace("{names}", r.data.cc_missing.join(", ")), { duration: 12000 });
+      if (r.data.skipped.some((x) => x.reason === "no_supervisor")) toast.error(t("aa_no_supervisor"), { duration: 12000 });
       onOpenChange(false);
       setToId(""); setNote("");
       onDone && onDone(r.data);

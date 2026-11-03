@@ -41,7 +41,7 @@ const EXTRA_TEXT_KEYS = [
 ];
 
 const extrasFromAsset = (a) => {
-  const out = { maintenance_required: !!a.maintenance_required };
+  const out = { maintenance_required: !!a.maintenance_required, requires_assign_approval: !!a.requires_assign_approval };
   EXTRA_TEXT_KEYS.forEach((k) => { out[k] = a[k] == null ? "" : String(a[k]); });
   return out;
 };
@@ -397,6 +397,13 @@ export default function AssetFormPage() {
                 <p className="mt-1.5 text-xs text-slate-400">{t("owner_confirm_hint")}</p>
               </>
             )}
+          </div>
+          <div>
+            <SelectField label={t("assign_approval")} value={form.requires_assign_approval ? "yes" : "no"}
+              onChange={(v)=>update("requires_assign_approval", v === "yes")}
+              options={[{ value: "no", label: t("opt_no") }, { value: "yes", label: t("assign_approval_yes") }]}
+              testid="asset-assign-approval-select"/>
+            <p className="mt-1.5 text-xs text-slate-400">{t("assign_approval_hint")}</p>
           </div>
           <TextField label={t("asset_department")} value={form.department} onChange={(v)=>update("department",v)}
             placeholder={t("asset_department_placeholder")} testid="asset-department-input"/>

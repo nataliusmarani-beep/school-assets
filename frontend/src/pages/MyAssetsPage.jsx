@@ -32,8 +32,11 @@ export default function MyAssetsPage() {
   const [rejectIds, setRejectIds] = useState(null);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
+  const [approvals, setApprovals] = useState([]);
+  const [apReject, setApReject] = useState(null);
 
   const load = useCallback(() => {
+    api.get("/assignments/approvals").then((r) => setApprovals(r.data)).catch(() => {});
     return api.get("/my/assets")
       .then((r) => { setData(r.data); setSel(new Set()); })
       .catch((e) => toast.error(formatErr(e)))
@@ -50,6 +53,18 @@ export default function MyAssetsPage() {
       const msg = action === "accept" ? t("ma_accepted_toast") : t("ma_rejected_toast");
       toast.success(msg.replace("{n}", r.data.done));
       setRejectIds(null); setReason("");
+      await load();
+      window.dispatchEvent(new Event("assignments-changed"));
+    } catch (e) { toast.error(formatErr(e)); }
+    finally { setBusy(false); }
+  };
+
+  const decide = async (ids, action, why = "") => {
+    setBusy(true);
+    try {
+      await api.post("/assignments/approve", { ids, action, reason: why });
+      toast.success(t(action === "approve" ? "aa_approved_toast" : "aa_rejected_toast"));
+      setApReject(null); setReason("");
       await load();
       window.dispatchEvent(new Event("assignments-changed"));
     } catch (e) { toast.error(formatErr(e)); }
@@ -73,6 +88,33 @@ export default function MyAssetsPage() {
         <Kpi testid="ma-kpi-pending" label={t("ma_kpi_pending")} value={summary.pending_count} icon={Clock} accent={summary.pending_count > 0} />
         <Kpi testid="ma-kpi-value" label={t("ma_kpi_value")} value={fmtCurrency(summary.book_value)} icon={Wallet} />
       </div>
+
+      {approvals.length > 0 && (
+        <section className="bg-blue-50/60 border border-blue-300 p-6 mb-8" data-testid="approval-section">
+          <h2 className="font-display text-xl font-medium text-slate-900">{t("aa_title")}</h2>
+          <p className="text-sm text-slate-600 mt-1 mb-4 max-w-xl">{t("aa_hint")}</p>
+          <div className="space-y-2">
+            {approvals.map((p) => (
+              <div key={p.id} className="bg-white border border-slate-200 p-4 flex items-center gap-4 flex-wrap" data-testid="approval-row">
+                <div className="flex-1 min-w-[220px]">
+                  <Link to={`/assets/${p.asset_id}`} className="font-medium text-slate-900 hover:text-blue-700">{p.asset_name}</Link>
+                  <span className="font-mono text-xs text-slate-500 ml-2">({p.asset_tag})</span>
+                  <div className="text-xs text-slate-500 mt-1 flex gap-x-3 gap-y-1 flex-wrap">
+                    {p.location && <span>{p.location}</span>}
+                    <span>{t("aa_to")} <span className="text-slate-700">{p.to_name}</span></span>
+                    <span>{t("ma_by")} <span className="text-slate-700">{p.created_by_name}</span></span>
+                  </div>
+                  {p.note && <div className="text-xs text-slate-500 italic mt-1">"{p.note}"</div>}
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" disabled={busy} onClick={() => decide([p.id], "approve")} className="rounded-none bg-emerald-700 hover:bg-emerald-800" data-testid="approve-one">{t("aa_approve")}</Button>
+                  <Button size="sm" variant="outline" disabled={busy} onClick={() => setApReject([p.id])} className="rounded-none" data-testid="approval-reject-one">{t("ma_reject")}</Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {pending.length > 0 && (
         <section className="bg-amber-50/60 border border-amber-300 p-6 mb-8" data-testid="pending-section">
@@ -130,6 +172,19 @@ export default function MyAssetsPage() {
       )}
 
       <AssetBundle bundle={data} t={t} />
+
+      <Dialog open={!!apReject} onOpenChange={(o) => { if (!o) { setApReject(null); setReason(""); } }}>
+        <DialogContent className="rounded-none">
+          <DialogHeader><DialogTitle>{t("ma_reject_title")}</DialogTitle></DialogHeader>
+          <label className="label-mono">{t("ma_reject_reason")}</label>
+          <Textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} className="rounded-none"
+            placeholder={t("ma_reject_placeholder")} data-testid="approval-reject-reason" />
+          <DialogFooter>
+            <Button disabled={busy || reason.trim().length < 3} onClick={() => decide(apReject, "reject", reason.trim())}
+              className="rounded-none bg-rose-700 hover:bg-rose-800" data-testid="approval-reject-confirm">{t("ma_reject")}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!rejectIds} onOpenChange={(o) => { if (!o) { setRejectIds(null); setReason(""); } }}>
         <DialogContent className="rounded-none">

@@ -89,6 +89,7 @@ export default function UserAssetsPage() {
                     {(ownerName(p.from_name) || t("ma_new_asset"))} → <span className="text-slate-800 font-medium">{ownerName(p.to_name)}</span> · {fmtDate(p.created_at)}
                   </div>
                 </div>
+                {p.status === "awaiting_approval" && <span className="text-xs px-2 py-0.5 border bg-amber-50 text-amber-800 border-amber-300" data-testid="awaiting-approval-badge">{t("aa_status_waiting").replace("{name}", p.approver_name || "")}</span>}
                 <span className="text-xs px-2 py-0.5 border bg-slate-50 text-slate-600 border-slate-200">
                   {p.kind === "class" ? t("ma_kind_class") : t("ma_kind_personal")}
                 </span>

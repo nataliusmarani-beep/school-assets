@@ -475,3 +475,69 @@ def test_bulk_loanable_keeps_other_settings(client, make_user, db):
     client.post("/api/assets/bulk-loanable", headers=auth(admin), json={"asset_ids": ["m1"], "borrowable": False})
     assert db.execute("SELECT borrowable FROM asset_loan_settings WHERE asset_id='m1'").fetchone()[0] == 0
     assert client.post("/api/assets/bulk-loanable", headers=auth(admin), json={"asset_ids": [], "borrowable": True}).status_code == 400
+
+
+def _approval_setup(db, make_user, monkeypatch):
+    sent = []
+    monkeypatch.setattr(server, "send_email", lambda to, subject, html, cc=None: sent.append({"to": to, "subject": subject, "cc": list(cc or [])}) or True)
+    boss = make_user("staff", "YPJ Kuala Kencana", email="kepsek@example.com")
+    teacher = make_user("staff", "YPJ Kuala Kencana", email="guru@example.com")
+    db.execute("UPDATE users SET supervisor = 'kepsek@example.com' WHERE id = ?", (teacher["id"],))
+    for nm, em in (("Maria Jacadewa", "maria@example.com"), ("Petrick Richard", "petrick@example.com"), ("Jeni Mansawan", "jeni@example.com")):
+        db.execute("INSERT INTO users (id,email,name,role,campus,password_hash,created_at) VALUES (?,?,?,?,?,?,?)",
+                   (server.uuid.uuid4().hex, em, nm, "staff", "YPJ Kuala Kencana", "x", "t"))
+    db.execute("INSERT INTO assets (id,name,asset_tag,category,item_type,campus,location,serial_number,unit,purchase_price,purchase_date,created_at,updated_at,requires_assign_approval) "
+               "VALUES ('mu1','Keyboard Yamaha','5550001','Music Equipment','Keyboard',?,'Ruang Musik','','smp',0,'2026-01-01','t','t',1)", (KK,))
+    db.execute("INSERT INTO assets (id,name,asset_tag,category,item_type,campus,location,serial_number,unit,purchase_price,purchase_date,created_at,updated_at) "
+               "VALUES ('mu2','Gitar','5550002','Music Equipment','Guitar',?,'Ruang Musik','','smp',0,'2026-01-01','t','t')", (KK,))
+    db.commit()
+    return sent, boss, teacher
+
+
+def test_assign_with_approval_goes_supervisor_then_teacher(client, make_user, db, monkeypatch):
+    sent, boss, teacher = _approval_setup(db, make_user, monkeypatch)
+    admin = make_user("super_admin", "")
+    r = client.post("/api/assignments/bulk", headers=auth(admin), json={"to_user_id": teacher["id"], "asset_ids": ["mu1", "mu2"], "kind": "class"}).json()
+    assert r["created"] == 2 and r["awaiting_approval"] == 1 and r["cc_missing"] == ["Abidin Nur Rahmat", "Damianus Muyapa", "Tomas Sutejo"]
+    rows = {x["asset_id"]: x for x in db.execute("SELECT * FROM assignments")}
+    assert rows["mu1"]["status"] == "awaiting_approval" and rows["mu2"]["status"] == "pending"
+    to_boss = [m for m in sent if m["to"] == "kepsek@example.com"]
+    assert len(to_boss) == 1 and {"maria@example.com", "petrick@example.com", "jeni@example.com"} <= set(to_boss[0]["cc"])
+    assert [m for m in sent if m["to"] == "guru@example.com" and "Konfirmasi" in m["subject"] and "mu1" in str(m)] == []
+    # the teacher cannot accept before approval; only the supervisor can approve
+    assert client.post("/api/assignments/respond", headers=auth(teacher), json={"ids": [rows["mu1"]["id"]], "action": "accept"}).json()["errors"][0]["error"] == "not_pending"
+    assert client.get("/api/assignments/pending-count", headers=auth(boss)).json()["mine"] == 1
+    assert client.get("/api/assignments/approvals", headers=auth(teacher)).json() == []
+    assert client.post("/api/assignments/approve", headers=auth(teacher), json={"ids": [rows["mu1"]["id"]], "action": "approve"}).json()["errors"][0]["error"] == "not_approver"
+    assert len(client.get("/api/assignments/approvals", headers=auth(boss)).json()) == 1
+    sent.clear()
+    assert client.post("/api/assignments/approve", headers=auth(boss), json={"ids": [rows["mu1"]["id"]], "action": "approve"}).json()["approved"] == 1
+    to_teacher = [m for m in sent if m["to"] == "guru@example.com"]
+    assert len(to_teacher) == 1 and "maria@example.com" in to_teacher[0]["cc"] and "kepsek@example.com" in to_teacher[0]["cc"]
+    assert client.post("/api/assignments/respond", headers=auth(teacher), json={"ids": [rows["mu1"]["id"]], "action": "accept"}).json()["done"] == 1
+    assert db.execute("SELECT assigned_to_user_id FROM assets WHERE id='mu1'").fetchone()[0] == teacher["id"]
+
+
+def test_assign_approval_reject_and_missing_supervisor(client, make_user, db, monkeypatch):
+    sent, boss, teacher = _approval_setup(db, make_user, monkeypatch)
+    admin = make_user("super_admin", "")
+    client.post("/api/assignments/bulk", headers=auth(admin), json={"to_user_id": teacher["id"], "asset_ids": ["mu1"], "kind": "class"})
+    rid = db.execute("SELECT id FROM assignments").fetchone()[0]
+    assert client.post("/api/assignments/approve", headers=auth(boss), json={"ids": [rid], "action": "reject", "reason": ""}).status_code == 400
+    assert client.post("/api/assignments/approve", headers=auth(boss), json={"ids": [rid], "action": "reject", "reason": "Belum perlu"}).json()["rejected"] == 1
+    assert db.execute("SELECT status FROM assignments WHERE id=?", (rid,)).fetchone()[0] == "rejected"
+    assert db.execute("SELECT assigned_to_user_id FROM assets WHERE id='mu1'").fetchone()[0] in (None, "")
+    # a teacher without a supervisor cannot receive an approval-controlled asset
+    lone = make_user("staff", "YPJ Kuala Kencana", email="lone@example.com")
+    r = client.post("/api/assignments/bulk", headers=auth(admin), json={"to_user_id": lone["id"], "asset_ids": ["mu1"], "kind": "class"}).json()
+    assert r["created"] == 0 and r["skipped"][0]["reason"] == "no_supervisor"
+    assert client.post("/api/assets/mu1/transfer", headers=auth(admin), json={"new_owner_user_id": lone["id"], "new_owner_name": "x"}).status_code == 409
+
+
+def test_bulk_assign_approval_toggle_and_asset_field(client, make_user, db, monkeypatch):
+    _approval_setup(db, make_user, monkeypatch)
+    admin = make_user("super_admin", "")
+    r = client.post("/api/assets/bulk-assign-approval", headers=auth(admin), json={"asset_ids": ["mu2", "zz"], "enabled": True}).json()
+    assert r["updated"] == 1 and r["skipped"] == 1
+    assert db.execute("SELECT requires_assign_approval FROM assets WHERE id='mu2'").fetchone()[0] == 1
+    assert client.put("/api/assets/mu2", headers=auth(admin), json={"requires_assign_approval": False}).json()["requires_assign_approval"] == 0

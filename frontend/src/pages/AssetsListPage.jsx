@@ -368,6 +368,14 @@ export default function AssetsListPage() {
     } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
 
+  const applyApproval = async (enabled) => {
+    try {
+      const r = await api.post("/assets/bulk-assign-approval", { asset_ids: [...selected], enabled });
+      toast.success(`${t(enabled ? "aa_done_on" : "aa_done_off").replace("{n}", r.data.updated)}${r.data.skipped ? ` · ${t("unit_skipped").replace("{n}", r.data.skipped)}` : ""}`);
+      setSelected(new Set()); load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+  };
+
   const doExport = async () => {
     setExporting(true);
     try {
@@ -537,6 +545,8 @@ export default function AssetsListPage() {
           <button disabled={!bulkUnit} onClick={() => applyUnit({ unit: bulkUnit, asset_ids: [...selected] })} className="bg-blue-800 hover:bg-blue-900 disabled:opacity-40 text-white px-3 py-1.5" data-testid="bulk-unit-apply">{t("bu_apply")}</button>
           <button onClick={() => applyLoanable(true)} className="bg-emerald-700 hover:bg-emerald-800 text-white px-3 py-1.5" data-testid="bulk-loanable-on">{t("bl_on")}</button>
           <button onClick={() => applyLoanable(false)} className="border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 px-3 py-1.5" data-testid="bulk-loanable-off">{t("bl_off")}</button>
+          <button onClick={() => applyApproval(true)} className="border border-amber-400 bg-amber-50 hover:bg-amber-100 text-amber-900 px-3 py-1.5" data-testid="bulk-approval-on">{t("aa_on")}</button>
+          <button onClick={() => applyApproval(false)} className="border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 px-3 py-1.5" data-testid="bulk-approval-off">{t("aa_off")}</button>
           <button onClick={() => setSelected(new Set())} className="text-slate-600 hover:text-slate-900" data-testid="bulk-clear">{t("bt_clear")}</button>
         </div>
       )}

@@ -445,7 +445,12 @@ def init_db():
         conn.execute("ALTER TABLE assets ADD COLUMN assignment_kind TEXT NOT NULL DEFAULT 'personal'")
     if "handover_flag" not in asset_cols:
         conn.execute("ALTER TABLE assets ADD COLUMN handover_flag TEXT NOT NULL DEFAULT ''")
+    if "requires_assign_approval" not in asset_cols:    # this asset can only be handed over after the recipient's supervisor approves
+        conn.execute("ALTER TABLE assets ADD COLUMN requires_assign_approval INTEGER NOT NULL DEFAULT 0")
     as_cols = [r[1] for r in conn.execute("PRAGMA table_info(assignments)").fetchall()]
+    for col in ("approver_id", "approver_name", "approval_note", "approved_at"):
+        if col not in as_cols:
+            conn.execute(f"ALTER TABLE assignments ADD COLUMN {col} TEXT")
     if "applied" not in as_cols:
         conn.execute("ALTER TABLE assignments ADD COLUMN applied INTEGER NOT NULL DEFAULT 1")
     tr_cols = [r[1] for r in conn.execute("PRAGMA table_info(transfer_requests)").fetchall()]
@@ -740,6 +745,7 @@ class AssetIn(BaseModel):
     assigned_to_name: Optional[str] = None
     photo_path: Optional[str] = None
     documents: List[dict] = []
+    requires_assign_approval: Optional[bool] = False
     # Extended register fields
     asset_code: Optional[str] = ""
     item_type: Optional[str] = ""
@@ -782,6 +788,7 @@ class AssetUpdate(BaseModel):
     serial_number: Optional[str] = None
     supplier: Optional[str] = None
     photo_path: Optional[str] = None
+    requires_assign_approval: Optional[bool] = None
     documents: Optional[List[dict]] = None
     asset_code: Optional[str] = None
     item_type: Optional[str] = None
@@ -2017,7 +2024,7 @@ async def list_assets(
     assets = [row_to_dict(r) for r in rows]
     pend = {r["asset_id"]: {"to_name": r["to_name"], "created_at": r["created_at"]}
             for r in conn.execute("SELECT asset_id, to_name, created_at FROM assignments "
-                                  "WHERE status = 'pending' OR (status = 'accepted' AND applied = 0)")}
+                                  "WHERE status IN ('pending', 'awaiting_approval') OR (status = 'accepted' AND applied = 0)")}
     conn.close()
     for a in assets:
         a["depreciation"] = calc_depreciation(a["purchase_price"], a["purchase_date"], a.get("useful_life_years", 5), a.get("residual_value") or 0)
@@ -2237,6 +2244,33 @@ async def bulk_set_loanable(body: BulkLoanableIn, user: dict = Depends(get_curre
     return {"updated": changed, "skipped": skipped, "borrowable": body.borrowable}
 
 
+class BulkApprovalIn(BaseModel):
+    asset_ids: List[str]
+    enabled: bool
+
+
+@api.post("/assets/bulk-assign-approval")
+async def bulk_assign_approval(body: BulkApprovalIn, user: dict = Depends(asset_manager_required)):
+    """Turn "assigning needs the supervisor's approval" on or off for many assets at once."""
+    if not body.asset_ids:
+        raise HTTPException(400, "Pilih aset terlebih dahulu")
+    conn = get_conn()
+    changed, skipped = 0, 0
+    for aid in dict.fromkeys(body.asset_ids):
+        a = conn.execute("SELECT campus, category FROM assets WHERE id = ?", (aid,)).fetchone()
+        try:
+            if not a:
+                raise HTTPException(404, "")
+            ensure_asset_manager(user, a["campus"], a["category"])
+        except HTTPException:
+            skipped += 1
+            continue
+        conn.execute("UPDATE assets SET requires_assign_approval = ?, updated_at = ? WHERE id = ?", (int(body.enabled), now_iso(), aid))
+        changed += 1
+    conn.commit(); conn.close()
+    return {"updated": changed, "skipped": skipped, "enabled": body.enabled}
+
+
 @api.post("/assets/bulk-unit")
 async def bulk_set_unit(body: BulkUnitIn, user: dict = Depends(asset_manager_required)):
     """Set the owning school unit on many assets at once, or (no unit given) fill the empty ones from their names."""
@@ -2322,6 +2356,8 @@ async def create_asset(body: AssetIn, user: dict = Depends(asset_manager_require
     if to_user:
         pending = create_assignment(conn, row_to_dict(conn.execute("SELECT * FROM assets WHERE id = ?", (aid,)).fetchone()),
                                     to_user, "personal", "new", user, to_label=body.assigned_to_name or to_user["name"])
+    if body.requires_assign_approval:
+        conn.execute("UPDATE assets SET requires_assign_approval = 1 WHERE id = ?", (aid,))
     conn.commit()
     row = conn.execute("SELECT * FROM assets WHERE id = ?", (aid,)).fetchone()
     conn.close()
@@ -2780,6 +2816,8 @@ async def update_asset(aid: str, body: AssetUpdate, user: dict = Depends(asset_m
     updates["updated_at"] = now_iso()
     if "maintenance_required" in updates:
         updates["maintenance_required"] = 1 if updates["maintenance_required"] else 0
+    if "requires_assign_approval" in updates:
+        updates["requires_assign_approval"] = 1 if updates["requires_assign_approval"] else 0
     if "documents" in updates:
         updates["documents"] = json.dumps(updates["documents"])
     set_clause = ", ".join(f"{k} = ?" for k in updates)
@@ -2834,7 +2872,8 @@ async def transfer_asset(aid: str, body: TransferIn, user: dict = Depends(asset_
                                   note=body.note or "", to_label=body.new_owner_name)
         except ValueError as e:
             conn.close()
-            raise HTTPException(409, "This asset already has a hand-over waiting for confirmation"
+            raise HTTPException(409, NO_SUPERVISOR_MSG if str(e) == "no_supervisor" else
+                                "This asset already has a hand-over waiting for confirmation"
                                 if str(e) == "pending" else "Asset is already assigned to this person")
         conn.commit()
         conn.close()
@@ -3318,7 +3357,8 @@ async def approve_transfer(rid: str, user: dict = Depends(user_manager_required)
                                   user, note=req.get("note") or "", to_label=req["to_name"], transfer_request_id=rid)
         except ValueError as e:
             conn.close()
-            raise HTTPException(409, "This asset already has a hand-over waiting for confirmation"
+            raise HTTPException(409, NO_SUPERVISOR_MSG if str(e) == "no_supervisor" else
+                                "This asset already has a hand-over waiting for confirmation"
                                 if str(e) == "pending" else "Asset is already assigned to this person")
         conn.execute("""
             UPDATE transfer_requests SET status='approved', reviewed_by=?, reviewed_by_name=?, reviewed_at=? WHERE id=?
@@ -3420,8 +3460,46 @@ def _supervisor_cc(conn, user_ids, exclude=()) -> list:
     return out
 
 
+# Hand-overs of assets that need approval are copied to these people (looked up among the registered users by name):
+# the admin resources team everywhere, plus the campus admin and leaders of the asset's campus.
+ASSIGN_CC_NAMES = {
+    "*": ["Maria Jacadewa", "Damianus Muyapa", "Tomas Sutejo"],
+    "YPJ Kuala Kencana": ["Jeni Mansawan", "Petrick Richard", "Abidin Nur Rahmat"],
+}
+ASSIGN_CC_EXTRA = [e.strip() for e in os.environ.get("ASSIGN_APPROVAL_CC", "").split(",") if e.strip()]
+
+
+def assign_cc(conn, campus: str):
+    """(e-mail addresses, names that are not registered users) for the CC list of an approval-controlled hand-over."""
+    names = ASSIGN_CC_NAMES.get("*", []) + ASSIGN_CC_NAMES.get(campus or "", [])
+    users = [dict(r) for r in conn.execute("SELECT name, email FROM users").fetchall()]
+    emails, missing = [], []
+    for n in names:
+        hits = [u["email"] for u in users if _name_key(u["name"]) == _name_key(n) and "@" in (u["email"] or "")]
+        if hits:
+            emails += hits
+        else:
+            missing.append(n)
+    emails += ASSIGN_CC_EXTRA
+    return list(dict.fromkeys(e.strip() for e in emails if e)), missing
+
+
+def _approval_cc(conn, asset_id: str) -> list:
+    """CC list for e-mails about an asset that needs approval; empty for every other asset."""
+    a = conn.execute("SELECT campus, requires_assign_approval FROM assets WHERE id = ?", (asset_id,)).fetchone()
+    if not a or not a["requires_assign_approval"]:
+        return []
+    emails, missing = assign_cc(conn, a["campus"])
+    if missing:
+        logger.warning("Assignment CC: no registered user named %s", ", ".join(missing))
+    return emails
+
+
+NO_SUPERVISOR_MSG = "Aset ini wajib persetujuan atasan, tetapi guru penerima belum punya supervisor yang terdaftar. Isi dulu supervisor-nya di menu Users."
+
+
 def pending_assignment(conn, asset_id):
-    r = conn.execute("SELECT * FROM assignments WHERE asset_id = ? AND (status = 'pending' OR (status = 'accepted' AND applied = 0))",
+    r = conn.execute("SELECT * FROM assignments WHERE asset_id = ? AND (status IN ('pending', 'awaiting_approval') OR (status = 'accepted' AND applied = 0))",
                      (asset_id,)).fetchone()
     return dict(r) if r else None
 
@@ -3437,6 +3515,13 @@ def create_assignment(conn, asset: dict, to_user: dict, kind: str, source: str, 
         raise ValueError("pending")
     if asset.get("assigned_to_user_id") == to_user["id"] and (asset.get("assignment_kind") or "personal") == kind:
         raise ValueError("same_holder")
+    approver = None
+    if asset.get("requires_assign_approval") and source != "class_handover":
+        sup = conn.execute("SELECT supervisor FROM users WHERE id = ?", (to_user["id"],)).fetchone()
+        sup_email = ((sup["supervisor"] if sup else "") or "").strip()
+        approver = conn.execute("SELECT id, name FROM users WHERE LOWER(email) = ?", (sup_email.lower(),)).fetchone() if sup_email else None
+        if not approver:
+            raise ValueError("no_supervisor")
     rid = str(uuid.uuid4())
     conn.execute("""
         INSERT INTO assignments
@@ -3448,6 +3533,9 @@ def create_assignment(conn, asset: dict, to_user: dict, kind: str, source: str, 
           asset.get("assigned_to_user_id"), asset.get("assigned_to_name"),
           to_user["id"], to_user["name"], to_label or to_user["name"], kind, source, note or "",
           by_user["id"], by_user["name"], now_iso(), transfer_request_id))
+    if approver:    # the supervisor decides first; the teacher is only asked to confirm after that
+        conn.execute("UPDATE assignments SET status = 'awaiting_approval', approver_id = ?, approver_name = ? WHERE id = ?",
+                     (approver["id"], approver["name"], rid))
     return dict(conn.execute("SELECT * FROM assignments WHERE id = ?", (rid,)).fetchone())
 
 
@@ -3513,6 +3601,21 @@ def _assignment_request_html(to_name: str, items: list, by_name: str, note: str 
         </div>""", eyebrow="Serah terima kelas" if room_name else "Serah terima aset", cta_label="Tinjau & konfirmasi", cta_url=f"{APP_URL}/my-assets")
 
 
+def _assignment_approval_html(approver_name: str, items: list, to_name: str, by_name: str, note: str = "") -> str:
+    import html as _h
+    note_html = (f"<p style='font-size:13px;color:#475569;'>Catatan: {_h.escape(note)}</p>" if note else "")
+    return _email_shell(f"""
+        <h2 style="margin:0 0 10px;font-size:22px;color:#0f172a;">Persetujuan serah terima aset</h2>
+        <p style="margin:0 0 8px;">Yth. {_h.escape(approver_name)},</p>
+        <p style="margin:0 0 8px;"><strong>{_h.escape(by_name)}</strong> akan menyerahkan {len(items)} aset kepada
+          <strong>{_h.escape(to_name)}</strong>. Aset ini wajib mendapat persetujuan atasan sebelum guru diminta menerimanya.</p>
+        {_assignment_items_html(items)}
+        {note_html}
+        <div style="border-left:3px solid #f2c14e;background:#fffbeb;padding:10px 14px;font-size:13px;color:#78350f;">
+          Tekan <strong>Setujui</strong> agar {_h.escape(to_name)} dapat memeriksa dan menerima asetnya, atau <strong>Tolak</strong> dan tulis alasannya.
+        </div>""", eyebrow="Persetujuan serah terima", cta_label="Tinjau & putuskan", cta_url=f"{APP_URL}/my-assets")
+
+
 def _assignment_response_html(a_list: list, accepted: bool, by_name: str, reason: str = "") -> str:
     import html as _h
     color, word = ("#15803d", "menerima") if accepted else ("#b91c1c", "menolak")
@@ -3535,9 +3638,25 @@ def notify_assignees(assignments: list, reminder: bool = False):
     """One e-mail per recipient listing all of their pending items."""
     conn = get_conn()
     try:
-        by_user: dict = {}
+        approvals = [a for a in assignments if a.get("status") == "awaiting_approval"]
+        assignments = [a for a in assignments if a.get("status") != "awaiting_approval"]
+        by_user = {}
         for a in assignments:
             by_user.setdefault(a["to_user_id"], []).append(a)
+        by_approver: dict = {}
+        for a in approvals:
+            by_approver.setdefault(a["approver_id"], []).append(a)
+        for aid_, group in by_approver.items():    # first the supervisor, copied to the admin resources / campus admin / leaders
+            email, name = _user_email(conn, aid_)
+            if not email:
+                continue
+            for a in group:
+                row = conn.execute("SELECT location FROM assets WHERE id = ?", (a["asset_id"],)).fetchone()
+                a["location"] = row["location"] if row else ""
+            cc = list(dict.fromkeys(c for a in group for c in _approval_cc(conn, a["asset_id"]) if c.casefold() != email.casefold()))
+            by = ", ".join(sorted({a["created_by_name"] for a in group}))
+            send_email(email, f"[YPJ Assets] Persetujuan diperlukan: serah terima {len(group)} aset ke {group[0]['to_name']}",
+                       _assignment_approval_html(name, group, group[0]["to_name"], by, group[0].get("note") or ""), cc=cc)
         for uid, group in by_user.items():
             email, name = _user_email(conn, uid)
             if not email:
@@ -3555,6 +3674,7 @@ def notify_assignees(assignments: list, reminder: bool = False):
                 if room_name:
                     subject = (f"[YPJ Assets] {'Pengingat: ' if reminder else ''}Serah terima kelas {room_name} — periksa {n} aset")
             cc = _supervisor_cc(conn, [uid] + [a.get("from_user_id") for a in group], exclude=[email])
+            cc += [c for a in group for c in _approval_cc(conn, a["asset_id"]) if c.casefold() not in {x.casefold() for x in cc + [email]}]
             send_email(email, subject,
                        _assignment_request_html(name, group, by, group[0].get("note") or "", reminder, room_name), cc=cc)
     finally:
@@ -3578,6 +3698,7 @@ def notify_responses(responded: list, accepted: bool, by_name: str, reason: str 
             cc = [ASSET_REMINDER_EMAIL] if ASSET_REMINDER_EMAIL else []
             cc += _supervisor_cc(conn, [a["to_user_id"] for a in group] + [a.get("from_user_id") for a in group],
                                  exclude=[email] + cc)
+            cc += [c for a in group for c in _approval_cc(conn, a["asset_id"]) if c.casefold() not in {x.casefold() for x in cc + [email]}]
             subject = (f"[YPJ Assets] {by_name} {'menerima' if accepted else 'menolak'} {len(group)} aset")
             send_email(email, subject, _assignment_response_html(group, accepted, by_name, reason), cc=cc)
     finally:
@@ -3718,10 +3839,12 @@ async def list_assignments(status: Optional[str] = None, user: dict = Depends(ge
     conn = get_conn()
     sql, params = "SELECT * FROM assignments", []
     cond = []
-    if status:
+    if status == "pending":    # waiting for the supervisor or for the recipient
+        cond.append("status IN ('pending', 'awaiting_approval')")
+    elif status:
         cond.append("status = ?"); params.append(status)
     if user["role"] not in ADMIN_ROLES:
-        cond.append("(to_user_id = ? OR created_by = ?)"); params += [user["id"], user["id"]]
+        cond.append("(to_user_id = ? OR created_by = ? OR approver_id = ?)"); params += [user["id"], user["id"], user["id"]]
     if cond:
         sql += " WHERE " + " AND ".join(cond)
     rows = [dict(r) for r in conn.execute(sql + " ORDER BY created_at DESC LIMIT 500", params).fetchall()]
@@ -3732,9 +3855,9 @@ async def list_assignments(status: Optional[str] = None, user: dict = Depends(ge
 @api.get("/assignments/pending-count")
 async def assignments_pending_count(user: dict = Depends(get_current_user)):
     conn = get_conn()
-    mine = conn.execute("SELECT COUNT(*) FROM assignments WHERE status='pending' AND to_user_id = ?",
-                        (user["id"],)).fetchone()[0]
-    total = conn.execute("SELECT COUNT(*) FROM assignments WHERE status='pending'").fetchone()[0] \
+    mine = conn.execute("SELECT COUNT(*) FROM assignments WHERE (status='pending' AND to_user_id = ?) OR (status='awaiting_approval' AND approver_id = ?)",
+                        (user["id"], user["id"])).fetchone()[0]
+    total = conn.execute("SELECT COUNT(*) FROM assignments WHERE status IN ('pending', 'awaiting_approval')").fetchone()[0] \
         if user["role"] in ADMIN_ROLES else None
     conn.close()
     return {"mine": mine, "total": total}
@@ -3772,7 +3895,16 @@ async def bulk_assign(body: BulkAssignIn, user: dict = Depends(admin_required)):
     conn.close()
     if created:
         notify_assignees(created)
-    return {"created": len(created), "skipped": skipped, "batch_id": batch}
+    waiting = [c for c in created if c["status"] == "awaiting_approval"]
+    missing = []
+    if waiting:    # tell the admin when someone on the CC list is not a registered user yet
+        conn = get_conn()
+        camp = {r["campus"] for r in (conn.execute("SELECT campus FROM assets WHERE id = ?", (c["asset_id"],)).fetchone() for c in waiting) if r}
+        for cp in camp:
+            missing += assign_cc(conn, cp)[1]
+        conn.close()
+    return {"created": len(created), "skipped": skipped, "batch_id": batch, "awaiting_approval": len(waiting),
+            "approver": waiting[0]["approver_name"] if waiting else "", "cc_missing": sorted(set(missing))}
 
 
 @api.post("/assignments/respond")
@@ -3819,6 +3951,59 @@ async def respond_assignments(body: RespondIn, user: dict = Depends(get_current_
     return {"done": len(done) + len(class_batches), "errors": errors}
 
 
+class ApproveIn(BaseModel):
+    ids: List[str]
+    action: Literal["approve", "reject"]
+    reason: Optional[str] = ""
+
+
+@api.get("/assignments/approvals")
+async def my_assignment_approvals(user: dict = Depends(get_current_user)):
+    """Hand-overs waiting for the signed-in user's approval (they are the recipient's supervisor)."""
+    conn = get_conn()
+    rows = [dict(r) for r in conn.execute("SELECT * FROM assignments WHERE status = 'awaiting_approval' AND approver_id = ? ORDER BY created_at",
+                                          (user["id"],)).fetchall()]
+    for a in rows:
+        r = conn.execute("SELECT location FROM assets WHERE id = ?", (a["asset_id"],)).fetchone()
+        a["location"] = r["location"] if r else ""
+    conn.close()
+    return rows
+
+
+@api.post("/assignments/approve")
+async def approve_assignments(body: ApproveIn, user: dict = Depends(get_current_user)):
+    """The recipient's supervisor approves (the teacher is then asked to confirm) or rejects a hand-over."""
+    reason = (body.reason or "").strip()
+    if body.action == "reject" and len(reason) < 3:
+        raise HTTPException(400, "Please give a reason for rejecting")
+    conn = get_conn()
+    ts = now_iso()
+    approved, rejected, errors = [], [], []
+    for rid in dict.fromkeys(body.ids):
+        r = conn.execute("SELECT * FROM assignments WHERE id = ?", (rid,)).fetchone()
+        if not r:
+            errors.append({"id": rid, "error": "not_found"}); continue
+        a = dict(r)
+        if a["status"] != "awaiting_approval":
+            errors.append({"id": rid, "error": "not_awaiting"}); continue
+        if a["approver_id"] != user["id"] and user["role"] != "super_admin":
+            errors.append({"id": rid, "error": "not_approver"}); continue
+        if body.action == "approve":
+            conn.execute("UPDATE assignments SET status='pending', approved_at=?, approval_note=? WHERE id=?", (ts, user["name"], rid))
+            approved.append(dict(conn.execute("SELECT * FROM assignments WHERE id = ?", (rid,)).fetchone()))
+        else:
+            conn.execute("UPDATE assignments SET status='rejected', responded_at=?, reject_reason=?, approval_note=? WHERE id=?",
+                         (ts, reason, user["name"], rid))
+            rejected.append(a)
+    conn.commit()
+    conn.close()
+    if approved:
+        notify_assignees(approved)
+    if rejected:
+        notify_responses(rejected, False, user["name"], reason)
+    return {"approved": len(approved), "rejected": len(rejected), "errors": errors}
+
+
 @api.put("/assignments/{rid}/cancel")
 async def cancel_assignment(rid: str, user: dict = Depends(get_current_user)):
     conn = get_conn()
@@ -3830,7 +4015,7 @@ async def cancel_assignment(rid: str, user: dict = Depends(get_current_user)):
     if user["role"] not in ADMIN_ROLES and a["created_by"] != user["id"]:
         conn.close()
         raise HTTPException(403, "Not allowed")
-    if a["status"] != "pending":
+    if a["status"] not in ("pending", "awaiting_approval"):
         conn.close()
         raise HTTPException(400, "Assignment is not pending")
     conn.execute("UPDATE assignments SET status='cancelled', responded_at=? WHERE id=?", (now_iso(), rid))
