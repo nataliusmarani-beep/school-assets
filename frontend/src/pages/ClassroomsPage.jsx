@@ -145,7 +145,7 @@ export default function ClassroomsPage() {
         </table>
       </div>
 
-      {isAdmin && <ClassroomEditDialog open={!!editing} onOpenChange={(o) => { if (!o) setEditing(null); }} t={t} room={editing} rooms={rooms} onDone={load} />}
+      {isAdmin && <ClassroomEditDialog open={!!editing} onOpenChange={(o) => { if (!o) setEditing(null); }} t={t} room={editing} onDone={load} />}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="rounded-none" data-testid="classroom-dialog">
