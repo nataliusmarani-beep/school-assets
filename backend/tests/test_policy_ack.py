@@ -28,10 +28,10 @@ def test_new_version_forces_reconfirmation(client, make_user, monkeypatch):
     assert client.post("/api/policy/accept", headers=auth(u), json={**OK, "signed_name": "staff user"}).status_code == 409
 
 
-def test_leader_not_required_and_admin_lists(client, make_user):
-    leader, admin, staff = make_user("leader"), make_user("admin", accepted=False), make_user("staff", accepted=False)
+def test_leader_required_and_admin_lists(client, make_user):
+    leader, admin, staff = make_user("leader", accepted=False), make_user("admin", accepted=False), make_user("staff", accepted=False)
     me = client.get("/api/auth/me", headers=auth(leader)).json()
-    assert not me["policy_required"] and me["policy_accepted"]
+    assert me["policy_required"] and not me["policy_accepted"]
     client.post("/api/policy/accept", headers=auth(staff), json={**OK, "signed_name": "staff user"})
     items = {i["id"]: i for i in client.get("/api/policy/acceptances", headers=auth(admin)).json()["items"]}
     assert items[staff["id"]]["current"] and not items[admin["id"]]["current"]

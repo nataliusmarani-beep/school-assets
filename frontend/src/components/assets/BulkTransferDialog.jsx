@@ -31,6 +31,7 @@ export default function BulkTransferDialog({ open, onOpenChange, t, assets, onDo
       toast.success(msg);
       if (r.data.cc_missing?.length) toast.warning(t("aa_cc_missing").replace("{names}", r.data.cc_missing.join(", ")), { duration: 12000 });
       if (r.data.skipped.some((x) => x.reason === "no_supervisor")) toast.error(t("aa_no_supervisor"), { duration: 12000 });
+      if (r.data.skipped.some((x) => x.reason === "unit_scope")) toast.error(t("aa_unit_scope"), { duration: 12000 });
       onOpenChange(false);
       setToId(""); setNote("");
       onDone && onDone(r.data);

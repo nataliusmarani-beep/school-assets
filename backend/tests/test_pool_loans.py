@@ -592,11 +592,38 @@ def test_cc_follows_roles_not_only_names(client, make_user, db, monkeypatch):
     assert "resources@example.com" in admins_only and "lead@example.com" not in admins_only
 
 
-def test_paud_scoped_admin_only_copied_on_paud_assets(client, make_user, db, monkeypatch):
-    _approval_setup(db, make_user, monkeypatch)
-    db.execute("INSERT INTO users (id,email,name,role,campus,password_hash,created_at) VALUES (?,?,?,?,?,?,?)",
-               (server.uuid.uuid4().hex, "tsutejo@example.com", "Tomas Tresno Sutejo", "admin", KK, "x", "t"))
+def test_unit_scope_limits_cc_and_assigning(client, make_user, db, monkeypatch):
+    sent, boss, teacher = _approval_setup(db, make_user, monkeypatch)
+    tomas = make_user("admin", KK, email="tsutejo@example.com")
+    maria2 = make_user("admin", KK, email="maria2@example.com")
+    db.execute("UPDATE users SET name='Tomas Tresno Sutejo', unit_scope='paud' WHERE id=?", (tomas["id"],))
+    db.execute("UPDATE users SET unit_scope='sd,smp' WHERE id=?", (maria2["id"],))
+    db.execute("INSERT INTO assets (id,name,asset_tag,category,item_type,campus,location,serial_number,unit,purchase_price,purchase_date,created_at,updated_at,requires_assign_approval) "
+               "VALUES ('pa1','Balok','5550003','Learning Tools','Blocks',?,'Kelas PAUD','','paud',0,'2026-01-01','t','t',1)", (KK,))
+    db.execute("UPDATE assets SET category='Furniture' WHERE id IN ('mu1','mu2')")   # Admins handle non-ICT assets
     db.commit()
-    assert "tsutejo@example.com" not in server.assign_cc(db, KK, 2, server.asset_units("smp", "Keyboard", "Ruang Musik", "Music"))[0]
-    assert "tsutejo@example.com" in server.assign_cc(db, KK, 2, server.asset_units("paud", "Meja", "", ""))[0]
-    assert "tsutejo@example.com" in server.assign_cc(db, KK, 2, server.asset_units("", "Balok PAUD", "", ""))[0]
+    # copied only on the units they look after
+    assert "tsutejo@example.com" not in server.assign_cc(db, KK, 2, {"smp"})[0]
+    assert "tsutejo@example.com" in server.assign_cc(db, KK, 2, {"paud"})[0]
+    assert "maria2@example.com" in server.assign_cc(db, KK, 2, {"sd"})[0] and "maria2@example.com" not in server.assign_cc(db, KK, 2, {"paud"})[0]
+    # and they can only assign those units
+    bt = client.post("/api/assignments/bulk", headers=auth(tomas), json={"to_user_id": teacher["id"], "asset_ids": ["mu1", "pa1"], "kind": "class"}).json()
+    assert bt["created"] == 1 and bt["skipped"][0]["reason"] == "unit_scope" and bt["skipped"][0]["asset_id"] == "mu1"
+    assert client.post("/api/assets/mu1/transfer", headers=auth(tomas), json={"new_owner_user_id": teacher["id"], "new_owner_name": "x"}).status_code == 409
+    # a campus admin is not tied to a unit
+    jeni = make_user("campus_admin", KK, email="jeni2@example.com")
+    assert client.post("/api/assets/mu2/transfer", headers=auth(jeni), json={"new_owner_user_id": teacher["id"], "new_owner_name": "x"}).status_code == 200
+
+
+def test_leaders_sign_policy_and_answer_handovers(client, make_user, db, monkeypatch):
+    sent, boss, teacher = _approval_setup(db, make_user, monkeypatch)
+    lead = make_user("leader", KK, email="abidin2@example.com")
+    assert client.get("/api/auth/me", headers=auth(lead)).json()["policy_required"] is True
+    r = client.post("/api/policy/accept", headers=auth(lead), json={"version": server.POLICY_VERSION, "signed_name": db.execute("SELECT name FROM users WHERE id=?", (lead["id"],)).fetchone()[0],
+                                                                      "text_hash": "x", "lang": "ID", "read_all": True, "will_comply": True, "accept_sanctions": True})
+    assert r.status_code == 200
+    admin = make_user("super_admin", "")
+    assert client.post("/api/assignments/bulk", headers=auth(admin), json={"to_user_id": lead["id"], "asset_ids": ["mu2"], "kind": "personal"}).json()["created"] == 1
+    rid = db.execute("SELECT id FROM assignments WHERE to_user_id=?", (lead["id"],)).fetchone()[0]
+    assert client.post("/api/assignments/respond", headers=auth(lead), json={"ids": [rid], "action": "accept"}).json()["done"] == 1
+    assert client.post("/api/assets", headers=auth(lead), json={"name": "x"}).status_code == 403   # still view-only elsewhere

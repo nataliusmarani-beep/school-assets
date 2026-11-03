@@ -13,8 +13,8 @@ import BulkUsersDialog from "../components/BulkUsersDialog";
 import { isAdminRole, isSuperAdmin, isCampusAdmin } from "../lib/roles";
 import { campusLabel } from "../lib/campus";
 
-const EMPTY_FORM = { name: "", email: "", password: "", role: "staff", department: "", campus: "", supervisor_name: "", supervisor: "", employee_id: "", phone: "" };
-const EMPTY_EDIT = { name: "", email: "", role: "staff", department: "", campus: "", supervisor_name: "", supervisor: "", employee_id: "", phone: "", password: "" };
+const EMPTY_FORM = { name: "", email: "", password: "", role: "staff", department: "", campus: "", supervisor_name: "", supervisor: "", employee_id: "", phone: "", unit_scope: "" };
+const EMPTY_EDIT = { name: "", email: "", role: "staff", department: "", campus: "", supervisor_name: "", supervisor: "", employee_id: "", phone: "", password: "", unit_scope: "" };
 
 /* Free-text field with dropdown suggestions from a string list */
 function SuggestField({ value, onChange, suggestions, placeholder, className = "", required = false, testid }) {
@@ -126,6 +126,28 @@ function FormFields({ values, set, isEdit, t, allNames, allDepts, users, canSupe
             suggestions={allDepts} /></div>
       </div>
 
+      {values.role === "admin" && !limited && (
+        <div data-testid="unit-scope-field"><Label className="label-mono">{t("unit_scope")}</Label>
+          <div className="mt-2 flex flex-wrap gap-4">
+            {["paud", "sd", "smp"].map((code) => {
+              const on = (values.unit_scope || "").split(",").includes(code);
+              return (
+                <label key={code} className="inline-flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+                  <input type="checkbox" className="w-4 h-4 accent-slate-900" checked={on} data-testid={`unit-scope-${code}`}
+                    onChange={() => {
+                      const cur = (values.unit_scope || "").split(",").filter(Boolean);
+                      const next = on ? cur.filter((x) => x !== code) : [...cur, code];
+                      set({ ...values, unit_scope: next.join(",") });
+                    }} />
+                  {code.toUpperCase()}
+                </label>
+              );
+            })}
+          </div>
+          <p className="mt-1.5 text-xs text-slate-400">{t("unit_scope_hint")}</p>
+        </div>
+      )}
+
       <div><Label className="label-mono">{t("col_campus")}</Label>
         <Select value={fixedCampus || values.campus} disabled={!!fixedCampus} onValueChange={(v) => set({ ...values, campus: v })}>
           <SelectTrigger className="mt-2 rounded-none"><SelectValue placeholder={t("select_campus")} /></SelectTrigger>
@@ -199,6 +221,7 @@ export default function UsersPage() {
       supervisor: u.supervisor || "",
       employee_id: u.employee_id || "",
       phone: u.phone || "",
+      unit_scope: u.unit_scope || "",
       password: "",
     });
     setEditOpen(true);

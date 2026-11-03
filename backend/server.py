@@ -417,6 +417,14 @@ def init_db():
     if "supervisor_name" not in user_cols:
         conn.execute("ALTER TABLE users ADD COLUMN supervisor_name TEXT DEFAULT ''")
         conn.commit()
+    if "unit_scope" not in user_cols:     # school units an Admin looks after ("paud", "sd,smp"); empty = every unit
+        conn.execute("ALTER TABLE users ADD COLUMN unit_scope TEXT DEFAULT ''")
+        for nm, scope in (("Tomas Sutejo", "paud"), ("Maria Jacadewa", "sd,smp"), ("Damianus Muyapa", "sd,smp")):
+            want = set(re.sub(r"[^\w\s]", " ", nm.casefold()).split())
+            for r in conn.execute("SELECT id, name FROM users WHERE role = 'admin'").fetchall():
+                if want <= set(re.sub(r"[^\w\s]", " ", (r["name"] or "").casefold()).split()):
+                    conn.execute("UPDATE users SET unit_scope = ? WHERE id = ?", (scope, r["id"]))
+        conn.commit()
     # Loan request workflow columns (deliver / return / reminder)
     loan_cols = [r[1] for r in conn.execute("PRAGMA table_info(loan_requests)").fetchall()]
     for col, defn in [
@@ -602,7 +610,8 @@ ALL_ROLES = ("super_admin", "admin", "campus_admin", "ict_admin", "leader", "sta
 CAMPUS_BOUND = ("ict_admin", "campus_admin")
 # ict_admin: PIC of the ICT-media categories for ONE campus (loans, schedules, hand-over). leader: read-only, sees everything.
 ICT_CATEGORIES = ("IT Equipment", "AV Equipment", "Music Equipment")
-LEADER_WRITE_ALLOWED = ("/api/auth/logout",)  # leaders are view-only, so they do not sign the policy acknowledgement (see policy_status)
+# leaders are view-only, except: signing out, signing the policies, and answering the hand-overs addressed to them (as recipient or approver)
+LEADER_WRITE_ALLOWED = ("/api/auth/logout", "/api/policy/accept", "/api/assignments/respond", "/api/assignments/approve")
 
 
 async def admin_required(user: dict = Depends(get_current_user)) -> dict:
@@ -719,6 +728,7 @@ class UserCreate(BaseModel):
     supervisor_name: Optional[str] = ""
     employee_id: Optional[str] = ""
     phone: Optional[str] = ""
+    unit_scope: Optional[str] = ""
 
 
 class LoginIn(BaseModel):
@@ -1302,6 +1312,12 @@ def normalize_phone(value) -> str:
     return digits
 
 
+def clean_unit_scope(v) -> str:
+    """"PAUD, sd" -> "paud,sd": only known school units, no duplicates."""
+    parts = [p.strip().lower() for p in re.split(r"[,;\s]+", v or "") if p.strip()]
+    return ",".join(dict.fromkeys(p for p in parts if p in UNIT_CODES))
+
+
 def _require_campus_for_ict_admin(role: Optional[str], campus: Optional[str]):
     """ICT Admins and Campus Admins run one campus, so the account must have one."""
     if role in CAMPUS_BOUND and not (campus or "").strip():
@@ -1322,8 +1338,8 @@ async def register(body: UserCreate, actor: dict = Depends(user_manager_required
         raise HTTPException(400, "Email already registered")
     uid = str(uuid.uuid4())
     conn.execute(
-        "INSERT INTO users (id,email,name,role,department,campus,supervisor,supervisor_name,employee_id,phone,password_hash,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-        (uid, email, body.name, body.role, body.department, body.campus or "", body.supervisor or "", body.supervisor_name or "", body.employee_id or "", normalize_phone(body.phone), hash_password(body.password), now_iso()),
+        "INSERT INTO users (id,email,name,role,department,campus,supervisor,supervisor_name,employee_id,phone,unit_scope,password_hash,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (uid, email, body.name, body.role, body.department, body.campus or "", body.supervisor or "", body.supervisor_name or "", body.employee_id or "", normalize_phone(body.phone), clean_unit_scope(body.unit_scope), hash_password(body.password), now_iso()),
     )
     conn.commit()
     conn.close()
@@ -1365,9 +1381,6 @@ def _norm_name(x: str) -> str:
 
 
 def policy_status(conn, user: dict) -> dict:
-    # Leaders are view-only accounts and cannot write, so they are not asked to sign.
-    if user.get("role") == "leader":
-        return {"policy_required": False, "policy_accepted": True, "policy_version": POLICY_VERSION, "policy_accepted_at": None}
     row = conn.execute("SELECT accepted_at FROM policy_acceptances WHERE user_id = ? AND policy_version = ? ORDER BY accepted_at DESC LIMIT 1",
                        (user["id"], POLICY_VERSION)).fetchone()
     return {"policy_required": True, "policy_accepted": bool(row), "policy_version": POLICY_VERSION,
@@ -1442,7 +1455,7 @@ async def list_policy_acceptances(_: dict = Depends(admin_required)):
         last = conn.execute("SELECT policy_version, accepted_at, signed_name, ip FROM policy_acceptances WHERE user_id = ? ORDER BY accepted_at DESC LIMIT 1",
                             (u["id"],)).fetchone()
         d = dict(u)
-        d["required"] = u["role"] != "leader"
+        d["required"] = True
         d["accepted_version"] = last["policy_version"] if last else None
         d["accepted_at"] = last["accepted_at"] if last else None
         d["signed_name"] = last["signed_name"] if last else None
@@ -1457,7 +1470,7 @@ async def report_policy_acceptances(_: dict = Depends(admin_required)):
     import openpyxl
     conn = get_conn()
     rows = conn.execute("SELECT * FROM policy_acceptances ORDER BY accepted_at DESC").fetchall()
-    pending = [dict(u) for u in conn.execute("SELECT id,name,email,role,campus FROM users WHERE role != 'leader' AND id NOT IN (SELECT user_id FROM policy_acceptances WHERE policy_version = ?) ORDER BY name", (POLICY_VERSION,)).fetchall()]
+    pending = [dict(u) for u in conn.execute("SELECT id,name,email,role,campus FROM users WHERE id NOT IN (SELECT user_id FROM policy_acceptances WHERE policy_version = ?) ORDER BY name", (POLICY_VERSION,)).fetchall()]
     conn.close()
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -1478,7 +1491,7 @@ async def report_policy_acceptances(_: dict = Depends(admin_required)):
 @api.get("/users")
 async def list_users(user: dict = Depends(get_current_user)):
     conn = get_conn()
-    rows = conn.execute("SELECT id,email,name,role,department,campus,supervisor,supervisor_name,employee_id,phone,created_at FROM users ORDER BY created_at DESC").fetchall()
+    rows = conn.execute("SELECT id,email,name,role,department,campus,supervisor,supervisor_name,employee_id,phone,unit_scope,created_at FROM users ORDER BY created_at DESC").fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -1836,6 +1849,7 @@ class UserPatch(BaseModel):
     employee_id: Optional[str] = None
     phone: Optional[str] = None
     password: Optional[str] = None
+    unit_scope: Optional[str] = None
 
 
 @api.put("/users/{uid}")
@@ -1847,6 +1861,8 @@ async def update_user(uid: str, body: UserPatch, actor: dict = Depends(user_mana
         raise HTTPException(400, "Invalid role")
     if "phone" in updates:
         updates["phone"] = normalize_phone(updates["phone"])
+    if "unit_scope" in updates:
+        updates["unit_scope"] = clean_unit_scope(updates["unit_scope"])
     chk = get_conn()
     target = chk.execute("SELECT role, campus FROM users WHERE id = ?", (uid,)).fetchone()
     if target:
@@ -1873,7 +1889,7 @@ async def update_user(uid: str, body: UserPatch, actor: dict = Depends(user_mana
         conn.close()
         raise HTTPException(404, "User not found")
     conn.commit()
-    row = conn.execute("SELECT id,email,name,role,department,campus,supervisor,supervisor_name,employee_id,phone,created_at FROM users WHERE id = ?", (uid,)).fetchone()
+    row = conn.execute("SELECT id,email,name,role,department,campus,supervisor,supervisor_name,employee_id,phone,unit_scope,created_at FROM users WHERE id = ?", (uid,)).fetchone()
     conn.close()
     return dict(row)
 
@@ -2886,9 +2902,7 @@ async def transfer_asset(aid: str, body: TransferIn, user: dict = Depends(asset_
                                   note=body.note or "", to_label=body.new_owner_name)
         except ValueError as e:
             conn.close()
-            raise HTTPException(409, NO_SUPERVISOR_MSG if str(e) == "no_supervisor" else
-                                "This asset already has a hand-over waiting for confirmation"
-                                if str(e) == "pending" else "Asset is already assigned to this person")
+            raise HTTPException(409, assignment_error_message(e, user))
         conn.commit()
         conn.close()
         notify_assignees([a])
@@ -3371,9 +3385,7 @@ async def approve_transfer(rid: str, user: dict = Depends(user_manager_required)
                                   user, note=req.get("note") or "", to_label=req["to_name"], transfer_request_id=rid)
         except ValueError as e:
             conn.close()
-            raise HTTPException(409, NO_SUPERVISOR_MSG if str(e) == "no_supervisor" else
-                                "This asset already has a hand-over waiting for confirmation"
-                                if str(e) == "pending" else "Asset is already assigned to this person")
+            raise HTTPException(409, assignment_error_message(e, user))
         conn.execute("""
             UPDATE transfer_requests SET status='approved', reviewed_by=?, reviewed_by_name=?, reviewed_at=? WHERE id=?
         """, (user["id"], user["name"], ts, rid))
@@ -3499,8 +3511,7 @@ def _approval_level(v) -> int:
 ASSIGN_CC_EXTRA = [e.strip() for e in os.environ.get("ASSIGN_APPROVAL_CC", "").split(",") if e.strip()]
 
 
-# Admins who only look after one school unit are copied on hand-overs of that unit's assets only (matched by name tokens).
-ASSIGN_CC_UNIT_SCOPE = {"Tomas Sutejo": {"paud"}}
+NOT_IN_UNIT_SCOPE_MSG = "Akun Anda hanya mengelola aset unit {units}. Aset ini bukan milik unit tersebut."
 
 
 def asset_units(unit, *texts) -> set:
@@ -3511,13 +3522,23 @@ def asset_units(unit, *texts) -> set:
     return out
 
 
+def asset_units_of(asset: dict) -> set:
+    """Units of a stored asset; a missing unit is guessed from its name / room like the rest of the app does."""
+    unit = asset.get("unit") or guess_unit(asset.get("name") or "", asset.get("item_type") or "", asset.get("location") or "")
+    return asset_units(unit, asset.get("name"), asset.get("location"), asset.get("category"))
+
+
+def unit_scope_set(user: dict) -> set:
+    return {x for x in (user.get("unit_scope") or "").split(",") if x}
+
+
 def assign_cc(conn, campus: str, level: int = 1, units=None):
     """(e-mail addresses, names that are not registered users) for the CC list of an approval-controlled hand-over."""
     units = set(units or ())
     names = ASSIGN_CC_NAMES.get("*", []) + ASSIGN_CC_NAMES.get(campus or "", [])
     if level != 2:
         names += ASSIGN_CC_LEADERS.get(campus or "", [])
-    users = [dict(r) for r in conn.execute("SELECT name, email, role, campus FROM users").fetchall() if "@" in (r["email"] or "")]
+    users = [dict(r) for r in conn.execute("SELECT name, email, role, campus, unit_scope FROM users").fetchall() if "@" in (r["email"] or "")]
     chosen, missing = {}, []
     # roles decide who is copied, so a differently spelled name never drops anyone: super admins and admins (admin resources)
     # everywhere, the campus admins of the asset's campus, and (level 1 only) that campus's leaders
@@ -3536,10 +3557,10 @@ def assign_cc(conn, campus: str, level: int = 1, units=None):
                 chosen[u["email"].strip()] = u["name"]
         else:
             missing.append(n)
-    for email, name in list(chosen.items()):    # unit-scoped admins only for their own unit's assets
-        for scoped, scope_units in ASSIGN_CC_UNIT_SCOPE.items():
-            if _name_tokens(scoped) <= _name_tokens(name) and not (units & scope_units):
-                chosen.pop(email, None)
+    scope_of = {u["email"].strip(): unit_scope_set(u) for u in users}
+    for email in list(chosen):      # admins who look after certain units are only copied on those units' assets
+        if scope_of.get(email) and not (units & scope_of[email]):
+            chosen.pop(email, None)
     emails = list(chosen) + ASSIGN_CC_EXTRA
     return list(dict.fromkeys(e.strip() for e in emails if e)), missing
 
@@ -3565,6 +3586,17 @@ def pending_assignment(conn, asset_id):
     return dict(r) if r else None
 
 
+def assignment_error_message(e: Exception, user: dict) -> str:
+    code = str(e)
+    if code == "no_supervisor":
+        return NO_SUPERVISOR_MSG
+    if code == "unit_scope":
+        return NOT_IN_UNIT_SCOPE_MSG.format(units=", ".join(u.upper() for u in sorted(unit_scope_set(user))))
+    if code == "pending":
+        return "This asset already has a hand-over waiting for confirmation"
+    return "Asset is already assigned to this person"
+
+
 def create_assignment(conn, asset: dict, to_user: dict, kind: str, source: str, by_user: dict,
                       note: str = "", batch_id: str = None, to_label: str = None,
                       transfer_request_id: str = None) -> dict:
@@ -3572,6 +3604,9 @@ def create_assignment(conn, asset: dict, to_user: dict, kind: str, source: str, 
     ensure_policy_compliant(conn, to_user["id"], "other")   # nobody receives assets before confirming the policies
     if kind not in ASSIGN_KINDS:
         kind = "personal"
+    scope = unit_scope_set(by_user) if by_user.get("role") == "admin" else set()
+    if scope and not (asset_units_of(asset) & scope):    # an Admin tied to certain school units assigns only those units' assets
+        raise ValueError("unit_scope")
     if pending_assignment(conn, asset["id"]):
         raise ValueError("pending")
     if asset.get("assigned_to_user_id") == to_user["id"] and (asset.get("assignment_kind") or "personal") == kind:
