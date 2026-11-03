@@ -555,6 +555,7 @@ def test_approval_level_two_copies_admins_but_not_leaders(client, make_user, db,
     cc = [m for m in sent if m["to"] == "kepsek@example.com"][0]["cc"]
     assert {"maria@example.com", "jeni@example.com", "kampus@example.com"} <= set(cc)
     assert "petrick@example.com" not in cc
+    assert admin["email"] in cc      # super admins are always copied
     # the asset form can pick the level directly
     assert client.put("/api/assets/mu2", headers=auth(admin), json={"requires_assign_approval": 2}).json()["requires_assign_approval"] == 2
 

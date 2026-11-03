@@ -3506,6 +3506,7 @@ def assign_cc(conn, campus: str, level: int = 1):
         names += ASSIGN_CC_LEADERS.get(campus or "", [])
     users = [dict(r) for r in conn.execute("SELECT name, email FROM users").fetchall()]
     emails, missing = [], []
+    emails += [r["email"] for r in conn.execute("SELECT email FROM users WHERE role = 'super_admin'").fetchall() if "@" in (r["email"] or "")]
     if campus:      # every campus admin account of the asset's campus is copied as well
         emails += [r["email"] for r in conn.execute("SELECT email FROM users WHERE role = 'campus_admin' AND campus = ?", (campus,)).fetchall() if "@" in (r["email"] or "")]
     for n in names:
