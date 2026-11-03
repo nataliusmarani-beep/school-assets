@@ -695,3 +695,12 @@ def test_merge_and_delete_rooms(client, make_user, db):
     assert client.post(f"/api/classrooms/{rooms['B3 TRC Room']['id']}/merge", headers=h, json={"target_id": rooms["B3 TRC Room"]["id"]}).status_code == 400
     empty = client.post("/api/classrooms", headers=h, json={"name": "Ruang Kosong", "campus": KK}).json()
     assert client.delete(f"/api/classrooms/{empty['id']}", headers=h).status_code == 200
+
+
+def test_new_room_with_similar_name_needs_confirmation(client, make_user, db):
+    admin = make_user("super_admin", "")
+    h = auth(admin)
+    assert client.post("/api/classrooms", headers=h, json={"name": "Lab Bahasa", "campus": KK}).status_code == 200
+    r = client.post("/api/classrooms", headers=h, json={"name": "Lab-Bahasa 2", "campus": KK})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "similar_room"
+    assert client.post("/api/classrooms", headers=h, json={"name": "Lab-Bahasa 2", "campus": KK, "allow_similar": True}).status_code == 200

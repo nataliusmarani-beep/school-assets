@@ -44,14 +44,22 @@ export default function ClassroomsPage() {
     (campus === "all" || r.campus === campus) &&
     (!q.trim() || `${r.name} ${r.responsible_name || ""}`.toLowerCase().includes(q.trim().toLowerCase()))), [rooms, q, campus]);
 
-  const create = async () => {
+  const create = async (extra = {}) => {
     setBusy(true);
     try {
-      await api.post("/classrooms", form);
+      await api.post("/classrooms", { ...form, ...extra });
       toast.success(t("cr_created"));
       setOpen(false); setForm({ ...form, name: "" });
       load();
-    } catch (e) { toast.error(formatErr(e)); } finally { setBusy(false); }
+    } catch (e) {
+      const d = e.response?.data?.detail;
+      if (d && d.code === "similar_room") {     // looks like an existing room: only create it after an explicit yes
+        setBusy(false);
+        if (window.confirm(t("room_confirm_new").replace("{name}", d.name) + "\n\n" + t("room_similar") + " " + d.suggestions.join(", "))) return create({ allow_similar: true });
+        return;
+      }
+      toast.error(formatErr(e));
+    } finally { setBusy(false); }
   };
 
   return (
@@ -163,7 +171,7 @@ export default function ClassroomsPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button disabled={busy || !form.name.trim()} onClick={create} className="rounded-none bg-slate-900" data-testid="classroom-save">{t("cr_save")}</Button>
+            <Button disabled={busy || !form.name.trim()} onClick={() => create()} className="rounded-none bg-slate-900" data-testid="classroom-save">{t("cr_save")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

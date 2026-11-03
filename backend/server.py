@@ -6523,6 +6523,7 @@ def _room_summary(conn, room: dict) -> dict:
 
 class ClassroomIn(BaseModel):
     name: str
+    allow_similar: Optional[bool] = False     # confirm that a name like an existing room really is a separate room
     campus: Optional[str] = ""
     room_type: Optional[str] = "kelas"
     responsible_user_id: Optional[str] = None
@@ -6590,6 +6591,11 @@ async def create_classroom(body: ClassroomIn, user: dict = Depends(admin_require
     if conn.execute("SELECT 1 FROM classrooms WHERE campus = ? AND LOWER(name) = ?", (campus, name.casefold())).fetchone():
         conn.close()
         raise HTTPException(409, "Kelas dengan nama ini sudah ada di kampus tersebut")
+    if not body.allow_similar:
+        sim = similar_rooms([r["name"] for r in conn.execute("SELECT name FROM classrooms WHERE campus = ?", (campus,)).fetchall()], name)
+        if sim:
+            conn.close()
+            raise HTTPException(409, {"code": "similar_room", "name": name, "suggestions": sim[:5]})
     resp = require_user(conn, body.responsible_user_id) if body.responsible_user_id else None
     cid, ts = str(uuid.uuid4()), now_iso()
     conn.execute("""INSERT INTO classrooms (id,name,campus,room_type,responsible_user_id,responsible_name,created_at,updated_at)
