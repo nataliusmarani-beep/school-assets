@@ -754,12 +754,15 @@ def test_blank_asset_id_is_generated_in_sequence(client, make_user):
     assert a.status_code == 200 and b.status_code == 200 and c.status_code == 200
     assert a.json()["asset_code"].startswith("YPJ-KK-FUR-")
     assert int(b.json()["asset_code"][-4:]) == int(a.json()["asset_code"][-4:]) + 1
-    assert c.json()["asset_code"] == "MY-OWN-1"
+    assert c.json()["asset_code"] != "MY-OWN-1" and c.json()["asset_code"].startswith("YPJ-KK-FUR-")     # a typed ID is ignored
+    put = client.put(f"/api/assets/{a.json()['id']}", headers=headers, json={"asset_code": "HACK", "description": "x"})
+    assert put.status_code == 200 and put.json()["asset_code"] == a.json()["asset_code"]
 
 
 def test_backfill_fills_only_blank_asset_ids(client, make_user, db):
     headers = auth(make_user("super_admin", ""))
-    keep = client.post("/api/assets", headers=headers, json=_room_asset_body("", name="A", asset_code="KEEP-1")).json()["id"]
+    keep = client.post("/api/assets", headers=headers, json=_room_asset_body("", name="A")).json()["id"]
+    db.execute("UPDATE assets SET asset_code = 'KEEP-1' WHERE id = ?", (keep,))
     blank = client.post("/api/assets", headers=headers, json=_room_asset_body("", name="B")).json()["id"]
     db.execute("UPDATE assets SET asset_code = '' WHERE id = ?", (blank,))
     db.commit()

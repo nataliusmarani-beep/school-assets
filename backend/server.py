@@ -2433,8 +2433,7 @@ def _insert_asset(conn, body: AssetIn, name: str, user: dict, to_user, ts: str, 
     for k, _t, d in EXTRA_ASSET_FIELDS:
         if extras[k] is None:
             extras[k] = d
-    if not (extras.get("asset_code") or "").strip():     # blank ID -> generated, so every item gets a readable ID
-        extras["asset_code"] = gen_asset_code(conn, body.campus or "", body.category)
+    extras["asset_code"] = gen_asset_code(conn, body.campus or "", body.category)     # always generated, never typed
     extras["requires_assign_approval"] = level      # set before the first hand-over, so the supervisor approves that one too
     conn.execute(
         "UPDATE assets SET " + ", ".join(f"{k}=?" for k in extras) + " WHERE id=?",
@@ -3832,6 +3831,7 @@ async def get_asset(aid: str, user: dict = Depends(get_current_user)):
 async def update_asset(aid: str, body: AssetUpdate, user: dict = Depends(asset_manager_required)):
     updates = {k: v for k, v in body.model_dump(exclude_none=True).items()}
     updates.pop("asset_tag", None)       # the barcode number is generated and locked
+    updates.pop("asset_code", None)      # so is the ID code, so nobody overwrites it by accident
     allow_new_room = bool(updates.pop("allow_new_room", False))
     if not updates:
         raise HTTPException(400, "No fields to update")
