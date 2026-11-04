@@ -5,6 +5,7 @@ import { Textarea } from "../ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "../ui/dialog";
 import { toast } from "sonner";
 import { ownerName } from "../../lib/format";
+import RoomField from "./RoomField";
 
 const SEL = "mt-2 w-full h-10 px-3 text-sm border border-slate-300 bg-white rounded-none";
 
@@ -14,6 +15,7 @@ export default function BulkTransferDialog({ open, onOpenChange, t, assets, onDo
   const [toId, setToId] = useState("");
   const [kind, setKind] = useState("personal");
   const [note, setNote] = useState("");
+  const [room, setRoom] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -24,7 +26,7 @@ export default function BulkTransferDialog({ open, onOpenChange, t, assets, onDo
   const submit = async () => {
     setBusy(true);
     try {
-      const r = await api.post("/assignments/bulk", { to_user_id: toId, asset_ids: assets.map((a) => a.id), kind, note });
+      const r = await api.post("/assignments/bulk", { to_user_id: toId, asset_ids: assets.map((a) => a.id), kind, note, location: room });
       let msg = t("ho_result").replace("{n}", r.data.created);
       if (r.data.skipped.length) msg += " · " + t("ho_skipped").replace("{n}", r.data.skipped.length);
       if (r.data.awaiting_approval) msg += " · " + t("aa_waiting").replace("{n}", r.data.awaiting_approval).replace("{name}", r.data.approver);
@@ -33,7 +35,7 @@ export default function BulkTransferDialog({ open, onOpenChange, t, assets, onDo
       if (r.data.skipped.some((x) => x.reason === "no_supervisor")) toast.error(t("aa_no_supervisor"), { duration: 12000 });
       if (r.data.skipped.some((x) => x.reason === "unit_scope")) toast.error(t("aa_unit_scope"), { duration: 12000 });
       onOpenChange(false);
-      setToId(""); setNote("");
+      setToId(""); setNote(""); setRoom("");
       onDone && onDone(r.data);
     } catch (e) { toast.error(formatErr(e)); }
     finally { setBusy(false); }
@@ -58,6 +60,11 @@ export default function BulkTransferDialog({ open, onOpenChange, t, assets, onDo
               <option value="personal">{t("ma_kind_personal")}</option>
               <option value="class">{t("ma_kind_class")}</option>
             </select>
+          </div>
+          <div>
+            <RoomField label={t("col_room")} value={room} onChange={setRoom} t={t} testid="bt-room"
+              campus={[...new Set(assets.map((a) => a.campus).filter(Boolean))].length === 1 ? assets[0].campus : ""} placeholder={t("room_placeholder")} />
+            <p className="text-xs text-slate-400 mt-1.5">{t("bt_room_hint")}</p>
           </div>
           <div className="border border-slate-200 max-h-48 overflow-y-auto" data-testid="bt-list">
             {assets.map((a) => (

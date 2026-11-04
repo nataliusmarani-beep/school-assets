@@ -4900,6 +4900,7 @@ class BulkAssignIn(BaseModel):
     asset_ids: List[str]
     kind: Literal["personal", "class"] = "class"
     note: Optional[str] = ""
+    location: Optional[str] = ""     # optional: put every selected asset in this registered room
 
 
 class RespondIn(BaseModel):
@@ -5044,6 +5045,10 @@ async def bulk_assign(body: BulkAssignIn, user: dict = Depends(admin_required)):
         raise HTTPException(404, "Recipient not found")
     batch = str(uuid.uuid4())
     created, skipped = [], []
+    room_by_campus = {}
+    if (body.location or "").strip():     # the room must be a registered one (checked per campus before anything is sent)
+        for (camp,) in conn.execute(f"SELECT DISTINCT campus FROM assets WHERE id IN ({','.join('?' * len(body.asset_ids))})", list(body.asset_ids)).fetchall():
+            room_by_campus[camp or ""] = resolve_room(conn, camp or "", body.location, False)
     for aid in dict.fromkeys(body.asset_ids):
         r = conn.execute("SELECT * FROM assets WHERE id = ?", (aid,)).fetchone()
         if not r:
@@ -5058,6 +5063,9 @@ async def bulk_assign(body: BulkAssignIn, user: dict = Depends(admin_required)):
         try:
             created.append(create_assignment(conn, asset, to_user, body.kind, "handover", user,
                                              note=body.note or "", batch_id=batch))
+            if room_by_campus:
+                conn.execute("UPDATE assets SET location = ?, updated_at = ? WHERE id = ?",
+                             (room_by_campus.get(asset["campus"] or "", asset["location"]), now_iso(), aid))
         except ValueError as e:
             skipped.append({"asset_id": aid, "name": asset["name"], "reason": str(e)})
     conn.commit()

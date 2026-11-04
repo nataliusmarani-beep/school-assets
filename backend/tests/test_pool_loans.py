@@ -788,3 +788,15 @@ def test_label_list_by_ids_covers_non_ict_assets(client, make_user):
     got = client.get("/api/assets/label-list", headers=headers, params={"ids": ",".join(ids[:2])}).json()
     assert {x["id"] for x in got} == set(ids[:2])
     assert all(x["asset_tag"].isdigit() and x["asset_code"].startswith("YPJ-KK-FUR-") for x in got)
+
+
+def test_bulk_assign_can_put_the_assets_in_a_room(client, make_user, db, monkeypatch):
+    sent, boss, teacher = _approval_setup(db, make_user, monkeypatch)
+    admin = make_user("super_admin", "")
+    h = auth(admin)
+    client.post("/api/classrooms", headers=h, json={"campus": KK, "name": "Kelas 7A"})
+    ids = client.post("/api/assets", headers=h, json=_room_asset_body("", name="Desk Bell", quantity=3, category="Learning Tools")).json()["created_ids"]
+    r = client.post("/api/assignments/bulk", headers=h, json={"to_user_id": teacher["id"], "asset_ids": ids, "kind": "class", "location": "kelas 7a"})
+    assert r.status_code == 200 and r.json()["created"] == 3
+    locs = {x[0] for x in db.execute("SELECT location FROM assets WHERE id IN (?,?,?)", ids).fetchall()}
+    assert locs == {"Kelas 7A"}                    # the master's spelling
