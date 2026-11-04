@@ -721,3 +721,26 @@ def test_photos_are_inlined_into_the_mail(client, make_user, db, monkeypatch):
     big_html, big_inline = server._inline_photos(html)
     assert big_inline == [] and "email-photo" in big_html
     photo.unlink()
+
+
+def test_create_many_numbered_copies_with_one_mail(client, make_user, db, monkeypatch):
+    sent, boss, teacher = _approval_setup(db, make_user, monkeypatch)
+    admin = make_user("super_admin", "")
+    h = auth(admin)
+    body = _room_asset_body("Room H1", assigned_to_user_id=teacher["id"], assigned_to_name="Guru", assignment_kind="class", quantity=10, name="Bel Kuis",
+                            category="Learning Tools", requires_assign_approval=2)
+    r = client.post("/api/assets", headers=h, json=body)
+    assert r.status_code == 200 and r.json()["created_count"] == 10 and r.json()["created_names"][0] == "Bel Kuis #1" and r.json()["created_names"][-1] == "Bel Kuis #10"
+    rows = db.execute("SELECT name, asset_tag FROM assets WHERE name LIKE 'Bel Kuis #%'").fetchall()
+    assert len(rows) == 10 and len({x["asset_tag"] for x in rows}) == 10
+    assert db.execute("SELECT COUNT(*) FROM assignments WHERE status='awaiting_approval' AND kind='class'").fetchone()[0] == 10   # approval applies to the first hand-over too
+    to_boss = [m for m in sent if m["to"] == "kepsek@example.com"]
+    assert len(to_boss) == 1                                                                                                       # one mail for all ten
+    # adding more later continues the numbering
+    r = client.post("/api/assets", headers=h, json=_room_asset_body("Room H1", name="Bel Kuis", quantity=3, category="Learning Tools"))
+    assert r.json()["created_names"] == ["Bel Kuis #11", "Bel Kuis #12", "Bel Kuis #13"]
+    # approval needed but the recipient has no supervisor -> nothing is created
+    lone = make_user("staff", KK, email="lone2@example.com")
+    before = db.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
+    r = client.post("/api/assets", headers=h, json=_room_asset_body("Room H1", name="Bel Lain", quantity=2, assigned_to_user_id=lone["id"], assigned_to_name="x", requires_assign_approval=1, category="Learning Tools"))
+    assert r.status_code == 409 and db.execute("SELECT COUNT(*) FROM assets").fetchone()[0] == before

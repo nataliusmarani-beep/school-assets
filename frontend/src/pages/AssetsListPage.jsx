@@ -329,7 +329,7 @@ export default function AssetsListPage() {
   const isAdmin = isManagerRole(user?.role);
   const [assets, setAssets] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(() => new URLSearchParams(window.location.search).get("search") || "");
   const [campus, setCampus] = useState("all");
   const [category, setCategory] = useState("all");
   const [status, setStatus] = useState("all");

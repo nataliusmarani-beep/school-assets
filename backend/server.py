@@ -740,6 +740,7 @@ class LoginIn(BaseModel):
 class AssetIn(BaseModel):
     name: str
     allow_new_room: Optional[bool] = False    # confirm that a room name similar to an existing one really is a new room
+    quantity: Optional[int] = 1              # create N numbered copies ("Bel Kuis #1".."#N"), each with its own barcode
     assignment_kind: Optional[str] = "personal"    # how the first owner holds it: "personal" or "class" (stays in the room)
     asset_tag: Optional[str] = ""      # ignored: the barcode number is generated
     category: str
@@ -1544,6 +1545,934 @@ async def create_user(body: UserCreate, actor: dict = Depends(user_manager_requi
 
 
 USER_IMPORT_COLUMNS = ["name", "email", "role", "department", "campus", "supervisor_name", "supervisor", "employee_id", "password"]
+_USER_COL_ALIASES = {
+    "nama": "name", "full_name": "name", "email_address": "email", "peran": "role", "jabatan": "department",
+    "departemen": "department", "unit": "department", "kampus": "campus", "nama_atasan": "supervisor_name",
+    "atasan": "supervisor_name", "supervisor_email": "supervisor", "email_atasan": "supervisor",
+    "nip": "employee_id", "id_karyawan": "employee_id", "kata_sandi": "password",
+}
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_PW_ALPHABET = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def _gen_password(n: int = 10) -> str:
+    return "".join(secrets.choice(_PW_ALPHABET) for _ in range(n))
+
+
+def _norm_user_row(raw: dict) -> dict:
+    out = {}
+    for k, v in raw.items():
+        key = re.sub(r"[\s\-]+", "_", (k or "").strip().lower())
+        key = _USER_COL_ALIASES.get(key, key)
+        if key in USER_IMPORT_COLUMNS and key not in out:
+            out[key] = (v or "").strip() if isinstance(v, str) else ("" if v is None else str(v).strip())
+    return {c: out.get(c, "") for c in USER_IMPORT_COLUMNS}
+
+
+def _validate_user_rows(conn, rows: list) -> list:
+    """Normalise + validate parsed rows. Returns [{row, data, errors}]."""
+    existing = {r["email"].lower(): r for r in conn.execute("SELECT email, name FROM users").fetchall()}
+    by_name = {}
+    for r in conn.execute("SELECT email, name FROM users").fetchall():
+        by_name.setdefault(_name_key(r["name"]), set()).add(r["email"].lower())
+    file_emails = {}
+    parsed = []
+    for i, raw in enumerate(rows, start=2):  # row 1 = header
+        d = _norm_user_row(raw)
+        if not any(d.values()):
+            continue
+        parsed.append((i, d))
+        if _EMAIL_RE.match(d["email"]):
+            by_name.setdefault(_name_key(d["name"]), set()).add(d["email"].lower())
+    campuses = {c.casefold(): c for c in VALID_CAMPUSES if c}
+    campuses.update({k: v for k, v in CAMPUS_ALIASES.items()})
+    out = []
+    for i, d in parsed:
+        errs = []
+        d["email"] = d["email"].lower()
+        if not d["name"]:
+            errs.append("name is required")
+        if not _EMAIL_RE.match(d["email"]):
+            errs.append("email is missing or invalid")
+        elif d["email"] in existing:
+            errs.append(f'email "{d["email"]}" is already registered')
+        elif d["email"] in file_emails:
+            errs.append(f'email "{d["email"]}" is duplicated (row {file_emails[d["email"]]})')
+        else:
+            file_emails[d["email"]] = i
+        role = (d["role"] or "staff").casefold()
+        role = {"administrator": "admin", "staf": "staff", "user": "staff"}.get(role, role)
+        if role not in ("admin", "staff"):
+            errs.append('role must be "admin" or "staff"')
+        d["role"] = role
+        if d["campus"]:
+            c = campuses.get(d["campus"].casefold())
+            if c:
+                d["campus"] = c
+            else:
+                errs.append('campus must be "YPJ Kuala Kencana" or "YPJ Tembagapura"')
+        if d["password"] and len(d["password"]) < 6:
+            errs.append("password must be at least 6 characters")
+        if d["supervisor"] and not _EMAIL_RE.match(d["supervisor"]):
+            errs.append("supervisor e-mail is invalid")
+        if not d["supervisor"] and d["supervisor_name"]:  # fill the e-mail from a registered / listed user with that name
+            hits = by_name.get(_name_key(d["supervisor_name"]), set())
+            if len(hits) == 1:
+                d["supervisor"] = next(iter(hits))
+        out.append({"row": i, "data": d, "errors": errs})
+    return out
+
+
+def _welcome_email_html(name: str, email: str, password: str, generated: bool) -> str:
+    pw_line = (f'<tr><td style="padding:6px 0;color:#64748b;width:120px">Kata sandi sementara</td>'
+               f'<td style="padding:6px 0;font-family:monospace;font-size:15px"><b>{html_mod.escape(password)}</b></td></tr>') if password else ""
+    body = f"""
+      <h2 style="margin:0 0 10px;font-size:20px">Akun Anda sudah dibuat</h2>
+      <p style="margin:0 0 14px;font-size:14px;line-height:1.6">Halo {html_mod.escape(name)}, Anda sekarang terdaftar di aplikasi manajemen aset YPJ.
+      Aset yang diserahkan kepada Anda akan diberitahukan lewat email ini dan perlu Anda konfirmasi di menu <b>Aset Saya</b>.</p>
+      <table role="presentation" style="border-collapse:collapse;font-size:14px;margin:0 0 10px">
+        <tr><td style="padding:6px 0;color:#64748b;width:120px">Email</td><td style="padding:6px 0"><b>{html_mod.escape(email)}</b></td></tr>
+        {pw_line}
+      </table>
+      {'<p style="margin:0;font-size:13px;color:#b45309">Segera ganti kata sandi setelah masuk.</p>' if generated else ''}"""
+    return _email_shell(body, eyebrow="Akun baru", cta_label="Masuk ke Asset Registry")
+
+
+@api.get("/users/import-template")
+async def users_import_template(_: dict = Depends(admin_required)):
+    ex1 = "Budi Santoso,budi@fmi.com,staff,SD Administration,YPJ Kuala Kencana,Jeni Mansawan,jnelcema@fmi.com,0000123456,"
+    ex2 = "Sari Dewi,sari@fmi.com,staff,SMP,YPJ TPRA,,,,"
+    buf = io.BytesIO(("﻿" + ",".join(USER_IMPORT_COLUMNS) + f"\n{ex1}\n{ex2}\n").encode("utf-8"))
+    return StreamingResponse(buf, media_type="text/csv",
+                             headers={"Content-Disposition": 'attachment; filename="user-import-template.csv"'})
+
+
+@api.post("/users/import")
+async def users_import(file: UploadFile = File(...), dry_run: bool = Query(True),
+                       send_invite: bool = Query(False), admin: dict = Depends(admin_required)):
+    content = await file.read()
+    if len(content) > 2 * 1024 * 1024:
+        raise HTTPException(400, "File too large (max 2 MB)")
+    rows = _parse_import_file(content, file.filename or "upload.csv")
+    if not rows:
+        raise HTTPException(400, "File is empty or has no data rows")
+    if len(rows) > 500:
+        raise HTTPException(400, "Too many rows (max 500 per file)")
+    conn = get_conn()
+    checked = _validate_user_rows(conn, rows)
+    if not checked:
+        conn.close()
+        raise HTTPException(400, "File is empty or has no data rows")
+    preview = [{"row": c["row"], "name": c["data"]["name"], "email": c["data"]["email"], "role": c["data"]["role"],
+                "department": c["data"]["department"], "campus": c["data"]["campus"],
+                "supervisor": c["data"]["supervisor"], "errors": c["errors"]} for c in checked]
+    total = len(preview)
+    invalid = sum(1 for p in preview if p["errors"])
+    if dry_run:
+        conn.close()
+        return {"dry_run": True, "total": total, "valid": total - invalid, "invalid": invalid, "preview": preview}
+    created = []
+    ts = now_iso()
+    for c in checked:
+        if c["errors"]:
+            continue
+        d = c["data"]
+        generated = not d["password"]
+        pw = d["password"] or _gen_password()
+        uid = str(uuid.uuid4())
+        conn.execute(
+            "INSERT INTO users (id,email,name,role,department,campus,supervisor,supervisor_name,employee_id,password_hash,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (uid, d["email"], d["name"], d["role"], d["department"], d["campus"], d["supervisor"], d["supervisor_name"],
+             d["employee_id"], hash_password(pw), ts))
+        created.append({"id": uid, "name": d["name"], "email": d["email"], "role": d["role"],
+                        "password": pw, "generated": generated})
+    conn.commit()
+    conn.close()
+    invited = 0
+    if send_invite and email_configured():
+        # everyone makes their own password: the generated one is discarded and the e-mail carries a set-password link
+        conn = get_conn()
+        for u in created:
+            if not u["generated"]:
+                continue
+            conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(_gen_password(24)), u["id"]))
+            u["password"] = ""
+            if _send_password_link(conn, {"id": u["id"], "name": u["name"], "email": u["email"]}, "invite", INVITE_HOURS)["sent"]:
+                invited += 1
+        conn.close()
+        for u in created:       # rows that came with a password in the file keep the old welcome e-mail
+            if u["password"] and send_email(u["email"], "[YPJ Assets] Akun Anda sudah dibuat",
+                                            _welcome_email_html(u["name"], u["email"], u["password"], u["generated"])):
+                invited += 1
+    logger.info("Bulk user import by %s: %d created, %d skipped, %d invited", admin.get("email"), len(created), invalid, invited)
+    return {"dry_run": False, "created": len(created), "skipped": invalid, "invited": invited,
+            "invite_requested": bool(send_invite), "email_configured": email_configured(), "users": created,
+            "errors": [p for p in preview if p["errors"]]}
+
+
+# ---- Invitations & password reset (single-use, expiring links; only a hash of the token is stored) ----
+INVITE_HOURS = 7 * 24
+ADMIN_RESET_HOURS = 24
+FORGOT_RESET_HOURS = 2
+
+
+class SetPasswordIn(BaseModel):
+    token: str
+    password: str
+
+
+class ForgotPasswordIn(BaseModel):
+    email: str
+
+
+def _token_hash(tok: str) -> str:
+    return hashlib.sha256(tok.encode()).hexdigest()
+
+
+def _make_password_token(conn, uid: str, kind: str, hours: int) -> str:
+    conn.execute("DELETE FROM password_tokens WHERE user_id = ? AND used_at IS NULL", (uid,))
+    tok = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    conn.execute("INSERT INTO password_tokens (token_hash,user_id,kind,expires_at,created_at) VALUES (?,?,?,?,?)",
+                 (_token_hash(tok), uid, kind, (now + timedelta(hours=hours)).isoformat(), now.isoformat()))
+    return tok
+
+
+def _password_link_email(name: str, kind: str, link: str, hours: int) -> tuple:
+    days = hours // 24
+    valid = f"{days} hari" if hours >= 24 else f"{hours} jam"
+    if kind == "invite":
+        subject = "[YPJ Assets] Undangan: buat kata sandi akun Anda"
+        title, intro, cta, eyebrow = ("Selamat datang di YPJ Assets",
+            "Akun Anda di aplikasi manajemen aset YPJ sudah dibuat. Klik tombol di bawah untuk membuat kata sandi, lalu masuk. "
+            "Aset yang diserahkan kepada Anda akan diberitahukan lewat email dan dikonfirmasi di menu <b>Aset Saya</b>.",
+            "Buat kata sandi", "Undangan")
+    else:
+        subject = "[YPJ Assets] Atur ulang kata sandi Anda"
+        title, intro, cta, eyebrow = ("Atur ulang kata sandi",
+            "Kami menerima permintaan untuk mengatur ulang kata sandi akun Anda. Klik tombol di bawah untuk membuat kata sandi baru.",
+            "Atur ulang kata sandi", "Keamanan akun")
+    body = (f'<h2 style="margin:0 0 10px;font-size:20px">{title}</h2>'
+            f'<p style="margin:0 0 14px;font-size:14px;line-height:1.6">Halo {html_mod.escape(name)}, {intro}</p>'
+            f'<p style="margin:0;font-size:12px;color:#64748b">Tautan berlaku {valid} dan hanya dapat dipakai sekali. '
+            f'Jika Anda tidak merasa memintanya, abaikan email ini.</p>')
+    return subject, _email_shell(body, eyebrow=eyebrow, cta_label=cta, cta_url=link)
+
+
+def _send_password_link(conn, u: dict, kind: str, hours: int) -> dict:
+    tok = _make_password_token(conn, u["id"], kind, hours)
+    conn.commit()
+    link = f"{APP_URL}/set-password?token={tok}"
+    sent = False
+    if email_configured():
+        subject, html_body = _password_link_email(u["name"], kind, link, hours)
+        sent = bool(send_email(u["email"], subject, html_body))
+    return {"sent": sent, "link": link, "email_configured": email_configured(), "email": u["email"]}
+
+
+@api.post("/users/{uid}/invite")
+async def invite_user(uid: str, admin: dict = Depends(user_manager_required)):
+    conn = get_conn()
+    u = conn.execute("SELECT id,name,email,role,campus FROM users WHERE id = ?", (uid,)).fetchone()
+    if not u:
+        conn.close()
+        raise HTTPException(404, "User not found")
+    _guard_campus_admin_conn(admin, u, conn)
+    # an invitation means "make your own password": the old / initial password stops working until the link is used
+    conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(_gen_password(24)), uid))
+    res = _send_password_link(conn, dict(u), "invite", INVITE_HOURS)
+    conn.close()
+    logger.info("Invitation for %s created by %s (sent=%s)", u["email"], admin.get("email"), res["sent"])
+    return res
+
+
+@api.post("/users/{uid}/reset-password")
+async def admin_reset_password(uid: str, admin: dict = Depends(user_manager_required)):
+    conn = get_conn()
+    u = conn.execute("SELECT id,name,email,role,campus FROM users WHERE id = ?", (uid,)).fetchone()
+    if not u:
+        conn.close()
+        raise HTTPException(404, "User not found")
+    _guard_campus_admin_conn(admin, u, conn)
+    res = _send_password_link(conn, dict(u), "reset", ADMIN_RESET_HOURS)
+    conn.close()
+    logger.info("Password reset link for %s created by %s (sent=%s)", u["email"], admin.get("email"), res["sent"])
+    return res
+
+
+@api.post("/auth/forgot-password")
+async def forgot_password(body: ForgotPasswordIn):
+    """Always answers the same way so it cannot be used to discover which e-mails are registered."""
+    conn = get_conn()
+    u = conn.execute("SELECT id,name,email FROM users WHERE email = ?", (body.email.strip().lower(),)).fetchone()
+    if u:
+        recent = conn.execute("SELECT created_at FROM password_tokens WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
+                              (u["id"],)).fetchone()
+        too_soon = False
+        if recent:
+            try:
+                too_soon = (datetime.now(timezone.utc) - datetime.fromisoformat(recent["created_at"])).total_seconds() < 60
+            except ValueError:
+                pass
+        if not too_soon:
+            _send_password_link(conn, dict(u), "reset", FORGOT_RESET_HOURS)
+    conn.close()
+    return {"ok": True}
+
+
+def _lookup_password_token(conn, tok: str):
+    r = conn.execute("SELECT t.*, u.name, u.email FROM password_tokens t JOIN users u ON u.id = t.user_id WHERE t.token_hash = ?",
+                     (_token_hash(tok or ""),)).fetchone()
+    if not r or r["used_at"]:
+        return None
+    try:
+        if datetime.fromisoformat(r["expires_at"]) < datetime.now(timezone.utc):
+            return None
+    except ValueError:
+        return None
+    return dict(r)
+
+
+@api.get("/auth/password-token/{tok}")
+async def check_password_token(tok: str):
+    conn = get_conn()
+    r = _lookup_password_token(conn, tok)
+    conn.close()
+    if not r:
+        return {"valid": False}
+    return {"valid": True, "kind": r["kind"], "name": r["name"], "email": r["email"]}
+
+
+@api.post("/auth/set-password")
+async def set_password(body: SetPasswordIn):
+    if len(body.password or "") < 6:
+        raise HTTPException(400, "Password must be at least 6 characters")
+    conn = get_conn()
+    r = _lookup_password_token(conn, body.token)
+    if not r:
+        conn.close()
+        raise HTTPException(400, "Tautan tidak valid atau sudah kedaluwarsa. Minta tautan baru.")
+    conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hash_password(body.password), r["user_id"]))
+    conn.execute("UPDATE password_tokens SET used_at = ? WHERE token_hash = ?", (now_iso(), r["token_hash"]))
+    conn.execute("DELETE FROM password_tokens WHERE user_id = ? AND used_at IS NULL", (r["user_id"],))
+    conn.commit()
+    conn.close()
+    return {"ok": True, "email": r["email"]}
+
+
+@api.delete("/users/{uid}")
+async def delete_user(uid: str, actor: dict = Depends(user_manager_required)):
+    conn = get_conn()
+    t = conn.execute("SELECT role, campus FROM users WHERE id = ?", (uid,)).fetchone()
+    if t:
+        _guard_campus_admin_conn(actor, t, conn)
+    if t and t["role"] == "super_admin":
+        if actor.get("role") != "super_admin":
+            conn.close()
+            raise HTTPException(403, "Only a Super Admin can delete a Super Admin account")
+        if conn.execute("SELECT COUNT(*) FROM users WHERE role='super_admin'").fetchone()[0] <= 1:
+            conn.close()
+            raise HTTPException(400, "Cannot delete the last Super Admin")
+    res = conn.execute("DELETE FROM users WHERE id = ?", (uid,))
+    conn.commit()
+    conn.close()
+    if res.rowcount == 0:
+        raise HTTPException(404, "User not found")
+    return {"ok": True}
+
+
+class UserPatch(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[str] = None
+    department: Optional[str] = None
+    campus: Optional[str] = None
+    supervisor: Optional[str] = None
+    supervisor_name: Optional[str] = None
+    employee_id: Optional[str] = None
+    phone: Optional[str] = None
+    password: Optional[str] = None
+    unit_scope: Optional[str] = None
+
+
+@api.put("/users/{uid}")
+async def update_user(uid: str, body: UserPatch, actor: dict = Depends(user_manager_required)):
+    updates = {k: v for k, v in body.model_dump(exclude_none=True).items() if v is not None}
+    if not updates:
+        raise HTTPException(400, "No fields to update")
+    if "role" in updates and updates["role"] not in ALL_ROLES:
+        raise HTTPException(400, "Invalid role")
+    if "phone" in updates:
+        updates["phone"] = normalize_phone(updates["phone"])
+    if "unit_scope" in updates:
+        updates["unit_scope"] = clean_unit_scope(updates["unit_scope"])
+    chk = get_conn()
+    target = chk.execute("SELECT role, campus FROM users WHERE id = ?", (uid,)).fetchone()
+    if target:
+        _guard_privileged_role(actor, target["role"], updates.get("role"))
+        try:
+            _guard_campus_admin(actor, target["role"], target["campus"])
+            _guard_campus_admin(actor, updates.get("role", target["role"]), updates.get("campus", target["campus"]))
+        except HTTPException:
+            chk.close()
+            raise
+        _require_campus_for_ict_admin(updates.get("role", target["role"]), updates.get("campus", target["campus"]))
+        if target["role"] == "super_admin" and updates.get("role", "super_admin") != "super_admin" \
+                and chk.execute("SELECT COUNT(*) FROM users WHERE role='super_admin'").fetchone()[0] <= 1:
+            chk.close()
+            raise HTTPException(400, "Cannot remove the last Super Admin")
+    chk.close()
+    if "password" in updates:
+        updates["password_hash"] = hash_password(updates.pop("password"))
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    params = list(updates.values()) + [uid]
+    conn = get_conn()
+    res = conn.execute(f"UPDATE users SET {set_clause} WHERE id = ?", params)
+    if res.rowcount == 0:
+        conn.close()
+        raise HTTPException(404, "User not found")
+    conn.commit()
+    row = conn.execute("SELECT id,email,name,role,department,campus,supervisor,supervisor_name,employee_id,phone,unit_scope,created_at FROM users WHERE id = ?", (uid,)).fetchone()
+    conn.close()
+    return dict(row)
+
+
+# ---- File upload ----
+LOAN_PHOTO_MAX_BYTES = 50 * 1024   # condition photos of the loan module: at most 50 KB each, one before + one after per unit
+
+
+def _check_loan_photo_size(data: bytes):
+    if len(data) > LOAN_PHOTO_MAX_BYTES:
+        raise HTTPException(413, f"Foto kondisi maksimal {LOAN_PHOTO_MAX_BYTES // 1024} KB (ukuran foto ini {len(data) // 1024} KB).")
+
+
+@api.post("/upload")
+async def upload_file(file: UploadFile = File(...), purpose: str = Query(""), user: dict = Depends(get_current_user)):
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "bin"
+    file_id = str(uuid.uuid4())
+    rel_path = f"{user['id']}/{file_id}.{ext}"
+    dest = UPLOADS_DIR / user['id']
+    dest.mkdir(exist_ok=True)
+    full_path = dest / f"{file_id}.{ext}"
+    data = await file.read()
+    if purpose == "loan":
+        _check_loan_photo_size(data)
+    full_path.write_bytes(data)
+    content_type = file.content_type or "application/octet-stream"
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO files (id,storage_path,original_filename,content_type,size,uploaded_by,is_deleted,created_at) VALUES (?,?,?,?,?,?,0,?)",
+        (file_id, rel_path, file.filename, content_type, len(data), user["id"], now_iso()),
+    )
+    conn.commit()
+    conn.close()
+    return {"path": rel_path, "name": file.filename, "size": len(data), "content_type": content_type}
+
+
+@api.get("/files/{path:path}")
+async def download_file(path: str, request: Request, auth: Optional[str] = Query(None)):
+    token = request.cookies.get("access_token")
+    if not token:
+        ah = request.headers.get("Authorization", "")
+        if ah.startswith("Bearer "):
+            token = ah[7:]
+    if not token and auth:
+        token = auth
+    if not token:
+        raise HTTPException(401, "Not authenticated")
+    try:
+        jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+    except Exception:
+        raise HTTPException(401, "Invalid token")
+    full_path = UPLOADS_DIR / path
+    if not full_path.exists():
+        raise HTTPException(404, "File not found")
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM files WHERE storage_path = ? AND is_deleted = 0", (path,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "File not found")
+    return FileResponse(str(full_path), media_type=row["content_type"], filename=row["original_filename"])
+
+
+# ---- Assets ----
+# ---- Staff access rules ----
+# Staff see only assets of their own campus (plus anything assigned to them), may report faults / request transfers
+# only for assets they hold (or have on loan), and may borrow only "shared" assets nobody holds personally.
+def is_admin_user(user: dict) -> bool:
+    return user.get("role") in ADMIN_ROLES
+
+
+def asset_scope(user: dict, prefix: str = "") -> tuple:
+    """(sql_condition, params) limiting an assets query to what this user may see; ("", []) for admins and leaders."""
+    if is_admin_user(user) or user.get("role") == "leader":
+        return "", []
+    campus = (user.get("campus") or "").strip()
+    if campus:
+        return f"({prefix}campus = ? OR {prefix}assigned_to_user_id = ?)", [campus, user["id"]]
+    return f"({prefix}assigned_to_user_id = ?)", [user["id"]]
+
+
+def can_view_asset(user: dict, asset: dict) -> bool:
+    if is_admin_user(user) or user.get("role") == "leader":
+        return True
+    campus = (user.get("campus") or "").strip()
+    return asset.get("assigned_to_user_id") == user["id"] or bool(campus and asset.get("campus") == campus)
+
+
+def has_active_loan(conn, user: dict, asset_id: str) -> bool:
+    return bool(conn.execute("SELECT 1 FROM loan_requests WHERE asset_id = ? AND requested_by = ? AND status = 'active' LIMIT 1",
+                             (asset_id, user["id"])).fetchone())
+
+
+def loan_block_reason(user: dict, asset: dict):
+    """None when this user may request a loan on the asset, else a user-facing reason (Indonesian)."""
+    if is_admin_user(user):
+        return None
+    if not can_view_asset(user, asset):
+        return "Aset ini bukan di kampus Anda."
+    if (asset.get("user_type") or "") != "shared":
+        return "Hanya aset kategori Bersama (Shared) yang dapat dipinjam, misalnya laptop, kamera, atau perangkat di Lab Komputer."
+    if asset.get("status") != "active":
+        return "Aset ini sedang tidak aktif dan tidak dapat dipinjam."
+    holder_id, holder = asset.get("assigned_to_user_id"), (asset.get("assigned_to_name") or "").strip()
+    if holder_id == user["id"]:
+        return "Aset ini sudah di-assign kepada Anda."
+    if (holder_id or holder) and (asset.get("assignment_kind") or "personal") == "personal":
+        return "Aset ini di-assign personal kepada pengguna lain dan tidak dapat dipinjam."
+    return None
+
+
+def asset_permissions(conn, user: dict, asset: dict) -> dict:
+    admin = is_admin_user(user)
+    holder = asset.get("assigned_to_user_id") == user["id"]
+    return {
+        "can_report": admin or holder or has_active_loan(conn, user, asset["id"]),
+        "can_transfer": admin or (holder and (asset.get("assignment_kind") or "personal") != "class"),
+        "can_loan": loan_block_reason(user, asset) is None,
+        "loan_block_reason": loan_block_reason(user, asset),
+    }
+
+
+@api.get("/assets")
+async def list_assets(
+    user: dict = Depends(get_current_user),
+    search: Optional[str] = None,
+    category: Optional[str] = None,
+    status: Optional[str] = None,
+    location: Optional[str] = None,
+    campus: Optional[str] = None,
+    assigned_to: Optional[str] = None,
+):
+    conn = get_conn()
+    conditions = []
+    params = []
+    if category:
+        conditions.append("category = ?")
+        params.append(category)
+    if status:
+        conditions.append("status = ?")
+        params.append(status)
+    if campus:
+        conditions.append("campus = ?")
+        params.append(campus)
+    if location:
+        conditions.append("location = ?")
+        params.append(location)
+    if assigned_to:
+        conditions.append("assigned_to_user_id = ?")
+        params.append(assigned_to)
+    if search:
+        conditions.append("(name LIKE ? OR asset_tag LIKE ? OR serial_number LIKE ?)")
+        like = f"%{search}%"
+        params.extend([like, like, like])
+    sc, sp = asset_scope(user)
+    if sc:
+        conditions.append(sc)
+        params.extend(sp)
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    rows = conn.execute(f"SELECT * FROM assets {where} ORDER BY created_at DESC", params).fetchall()
+    assets = [row_to_dict(r) for r in rows]
+    pend = {r["asset_id"]: {"to_name": r["to_name"], "created_at": r["created_at"], "status": r["status"], "approver_name": r["approver_name"]}
+            for r in conn.execute("SELECT asset_id, to_name, created_at, status, approver_name FROM assignments "
+                                  "WHERE status IN ('pending', 'awaiting_approval') OR (status = 'accepted' AND applied = 0)")}
+    lend = {r["asset_id"]: r["borrowable"] for r in conn.execute("SELECT asset_id, borrowable FROM asset_loan_settings")}
+    conn.close()
+    for a in assets:
+        a["depreciation"] = calc_depreciation(a["purchase_price"], a["purchase_date"], a.get("useful_life_years", 5), a.get("residual_value") or 0)
+        a["pending_assignment"] = pend.get(a["id"])
+        a["borrowable"] = lend.get(a["id"])      # 1 / 0 once someone decided, None while still undecided
+    return assets
+
+
+def gen_barcode_id(conn) -> str:
+    """A fresh random 7-digit barcode number, unique among all asset tags (and numeric names / ID codes a scan could also match)."""
+    taken = set()
+    for r in conn.execute("SELECT asset_tag, name, asset_code FROM assets").fetchall():
+        taken.update(v for v in (r["asset_tag"], r["name"], r["asset_code"]) if v)
+    while True:
+        code = str(random.randint(1000000, 9999999))
+        if code not in taken:
+            return code
+
+
+def ensure_barcode_ids(conn) -> int:
+    """Give every asset a numeric, unique barcode tag. A numeric tag is kept; a text tag becomes the asset's numeric name when
+    that is free, else a new random number. Safe to run at every start (does nothing once all assets are numbered)."""
+    rows = conn.execute("SELECT id, name, asset_tag FROM assets ORDER BY created_at, id").fetchall()
+    used, todo = set(), []
+    names = {x["name"] for x in rows if x["name"]}
+    for r in rows:
+        tag = (r["asset_tag"] or "").strip()
+        if tag.isdigit() and tag not in used:
+            used.add(tag)
+        else:
+            todo.append(r)
+    for r in todo:
+        nm = (r["name"] or "").strip()
+        code = nm if nm.isdigit() and nm not in used else None
+        while not code:
+            c = str(random.randint(1000000, 9999999))
+            if c not in used and c not in names:
+                code = c
+        used.add(code)
+        conn.execute("UPDATE assets SET asset_tag = ?, updated_at = ? WHERE id = ?", (code, now_iso(), r["id"]))
+    if todo:
+        conn.commit()
+    return len(todo)
+
+
+def restore_asset_names(conn) -> int:
+    """Assets whose name is just their barcode number (name == tag, digits only) lost the descriptive text they carried as the tag
+    when barcode numbers were generated. Loan / transfer / assignment records kept a copy of that text: put it back as the name."""
+    n = 0
+    for a in conn.execute("SELECT id, name, asset_tag FROM assets WHERE name = asset_tag").fetchall():
+        if not (a["name"] or "").isdigit():
+            continue
+        text = None
+        for tbl in ("loan_requests", "transfer_requests", "assignments"):
+            r = conn.execute(f"SELECT asset_tag FROM {tbl} WHERE asset_id = ? AND asset_tag != '' AND asset_tag != ? ORDER BY rowid DESC", (a["id"], a["asset_tag"])).fetchall()
+            text = next((x["asset_tag"] for x in r if not x["asset_tag"].isdigit()), None)
+            if text:
+                break
+        if text:
+            conn.execute("UPDATE assets SET name = ?, updated_at = ? WHERE id = ?", (text, now_iso(), a["id"])); n += 1
+    if n:
+        conn.commit()
+    return n
+
+
+UNIT_CODES = ("paud", "sd", "smp", "admin", "shared")
+
+
+def guess_unit(name: str, item_type: str = "", location: str = "") -> Optional[str]:
+    """The school unit an asset obviously belongs to: from its room ("Lab Komputer SMP"), else from its name: Student's Desktop /
+    Monitor = SMP computer lab, Student's Laptop = SD computer lab, an iPad whose name says PAUD / SD. None when nothing says."""
+    loc, n = (location or "").lower(), (name or "").lower()
+    m = re.search(r"lab\w*\s+komputer\s+(paud|sd|smp)\b", loc)
+    if m:
+        return m.group(1)
+    if "student" in n and ("desktop" in n or "monitor" in n):
+        return "smp"
+    if "student" in n and "laptop" in n:
+        return "sd"
+    if "ipad" in n or (item_type or "").lower() == "ipad":
+        if "paud" in n:
+            return "paud"
+        if re.search(r"(^|[^a-z])sd", n):
+            return "sd"
+    return None
+
+
+class BulkUnitIn(BaseModel):
+    unit: Optional[str] = None            # set this unit on asset_ids; omitted = fill empty units by name rules
+    asset_ids: Optional[List[str]] = None
+
+
+@api.post("/assets/restore-names")
+async def restore_names_from_export(file: UploadFile = File(...), user: dict = Depends(asset_manager_required)):
+    """Put descriptive asset names back from an earlier asset export (columns Asset Name, Tag, Serial Number). An asset is matched by
+    its old name or serial number and renamed to the old Tag text only if it still carries the old name or a bare number. The old
+    name (an inventory number) moves to the empty ID Aset field so nothing is lost."""
+    import openpyxl
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(await file.read()), read_only=True, data_only=True)
+        rows = list(wb.worksheets[0].iter_rows(values_only=True))
+    except Exception:
+        raise HTTPException(400, "File tidak bisa dibaca (gunakan ekspor aset .xlsx)")
+    if not rows:
+        raise HTTPException(400, "File kosong")
+    head = [str(c or "").strip().lower() for c in rows[0]]
+    def _col(*names):
+        return next((head.index(n) for n in names if n in head), None)
+    i_name, i_tag, i_ser = _col("asset name", "name"), _col("tag", "asset_tag"), _col("serial number", "serial_number")
+    if i_name is None or i_tag is None:
+        raise HTTPException(400, "Kolom nama dan tag (name / asset_tag) tidak ditemukan")
+    conn = get_conn()
+    cur = [dict(r) for r in conn.execute("SELECT id, name, asset_tag, asset_code, serial_number, campus, category FROM assets").fetchall()]
+    by_name, by_serial = {}, {}
+    for a in cur:
+        by_name.setdefault((a["name"] or "").strip(), []).append(a)
+        if (a["serial_number"] or "").strip():
+            by_serial.setdefault(a["serial_number"].strip().lower(), []).append(a)
+    restored = unmatched = skipped = 0
+    for r in rows[1:]:
+        old_name = str(r[i_name] or "").strip(); text = str(r[i_tag] or "").strip()
+        if not old_name or not text or text.isdigit():
+            continue
+        ser = str(r[i_ser] or "").strip().lower() if i_ser is not None else ""
+        cands = by_serial.get(ser, []) if ser else []        # the serial number is the surest match; the name only when there is none
+        if len(cands) != 1:
+            cands = by_name.get(old_name, [])
+            if ser and cands and (cands[0]["serial_number"] or "").strip().lower() not in ("", ser):
+                cands = []
+        if len(cands) != 1:
+            unmatched += 1
+            continue
+        a = cands[0]
+        descriptive = " " in old_name              # "Lenovo 11th Gen" says what it is; "1002880_GRS" / "9661732" is only a number
+        try:
+            ensure_asset_manager(user, a["campus"], a["category"])
+        except HTTPException:
+            skipped += 1
+            continue
+        if descriptive:
+            # keep the descriptive name; the old tag text goes into the empty ID Aset field (an earlier run may have swapped them)
+            if a["name"] == text and a["asset_code"] == old_name:
+                new_name, code = old_name, text
+            elif a["name"] == old_name and not a["asset_code"]:
+                new_name, code = old_name, text
+            else:
+                skipped += 1
+                continue
+        elif a["name"] == old_name or (a["name"] or "").isdigit():
+            new_name, code = text, a["asset_code"] or (old_name if old_name != a["asset_tag"] else "")
+        else:
+            skipped += 1                      # already restored, or someone gave it a different name since
+            continue
+        conn.execute("UPDATE assets SET name = ?, asset_code = ?, updated_at = ? WHERE id = ?", (new_name, code, now_iso(), a["id"]))
+        a["name"], a["asset_code"] = new_name, code
+        restored += 1
+    conn.commit(); conn.close()
+    return {"restored": restored, "unmatched": unmatched, "skipped": skipped}
+
+
+class SharePhotoIn(BaseModel):
+    dry_run: bool = False
+    only_empty: bool = False
+
+
+def _base_name(name: str) -> str:
+    """'Seiko wall clock #12' -> 'seiko wall clock' (numbered copies of one model share a base name)."""
+    return re.sub(r"\s*#\s*\d+\s*$", "", (name or "").strip()).strip().lower()
+
+
+@api.post("/assets/{aid}/share-photo")
+async def share_asset_photo(aid: str, body: SharePhotoIn, user: dict = Depends(asset_manager_required)):
+    """Use this asset's photo for every numbered copy of it (same name without the '#N', same category)."""
+    conn = get_conn()
+    src = conn.execute("SELECT id, name, category, photo_path FROM assets WHERE id = ?", (aid,)).fetchone()
+    if not src:
+        conn.close(); raise HTTPException(404, "Aset tidak ditemukan")
+    if not src["photo_path"]:
+        conn.close(); raise HTTPException(400, "Aset ini belum punya foto")
+    base = _base_name(src["name"])
+    targets = []
+    for r in conn.execute("SELECT id, name, campus, category, photo_path FROM assets WHERE category = ? AND id != ?", (src["category"], aid)).fetchall():
+        if base and _base_name(r["name"]) == base and (not body.only_empty or not r["photo_path"]) and r["photo_path"] != src["photo_path"]:
+            try:
+                ensure_asset_manager(user, r["campus"], r["category"])
+            except HTTPException:
+                continue
+            targets.append(r["id"])
+    if not body.dry_run:
+        for tid in targets:
+            conn.execute("UPDATE assets SET photo_path = ?, updated_at = ? WHERE id = ?", (src["photo_path"], now_iso(), tid))
+        conn.commit()
+    conn.close()
+    return {"count": len(targets), "applied": not body.dry_run}
+
+
+class BulkLoanableIn(BaseModel):
+    asset_ids: List[str]
+    borrowable: bool
+
+
+@api.post("/assets/bulk-loanable")
+async def bulk_set_loanable(body: BulkLoanableIn, user: dict = Depends(get_current_user)):
+    """Mark many assets as lendable (or not) at once. Other loan settings of an asset that already has them stay as they are."""
+    if not body.asset_ids:
+        raise HTTPException(400, "Pilih aset terlebih dahulu")
+    conn = get_conn()
+    changed, skipped = 0, 0
+    for aid in dict.fromkeys(body.asset_ids):
+        a = conn.execute("SELECT campus, category FROM assets WHERE id = ?", (aid,)).fetchone()
+        if not a or not (can_manage_loan(user, a["campus"], a["category"]) or user["role"] in ADMIN_ROLES):
+            skipped += 1
+            continue
+        conn.execute("""INSERT INTO asset_loan_settings (asset_id, borrowable, loan_type) VALUES (?,?,'item')
+                        ON CONFLICT(asset_id) DO UPDATE SET borrowable = excluded.borrowable""", (aid, int(body.borrowable)))
+        changed += 1
+    conn.commit(); conn.close()
+    return {"updated": changed, "skipped": skipped, "borrowable": body.borrowable}
+
+
+class BulkApprovalIn(BaseModel):
+    asset_ids: List[str]
+    enabled: bool = True
+    level: Optional[int] = None     # 1 = CC admins + leaders, 2 = CC admins only; default follows `enabled`
+
+
+@api.post("/assets/bulk-assign-approval")
+async def bulk_assign_approval(body: BulkApprovalIn, user: dict = Depends(asset_manager_required)):
+    """Turn "assigning needs the supervisor's approval" on or off for many assets at once."""
+    if not body.asset_ids:
+        raise HTTPException(400, "Pilih aset terlebih dahulu")
+    level = _approval_level(body.level if body.level is not None else (1 if body.enabled else 0))
+    conn = get_conn()
+    changed, skipped = 0, 0
+    for aid in dict.fromkeys(body.asset_ids):
+        a = conn.execute("SELECT campus, category FROM assets WHERE id = ?", (aid,)).fetchone()
+        try:
+            if not a:
+                raise HTTPException(404, "")
+            ensure_asset_manager(user, a["campus"], a["category"])
+        except HTTPException:
+            skipped += 1
+            continue
+        conn.execute("UPDATE assets SET requires_assign_approval = ?, updated_at = ? WHERE id = ?", (level, now_iso(), aid))
+        changed += 1
+    conn.commit(); conn.close()
+    return {"updated": changed, "skipped": skipped, "enabled": level > 0, "level": level}
+
+
+@api.post("/assets/bulk-unit")
+async def bulk_set_unit(body: BulkUnitIn, user: dict = Depends(asset_manager_required)):
+    """Set the owning school unit on many assets at once, or (no unit given) fill the empty ones from their names."""
+    if body.unit is not None and body.unit not in UNIT_CODES:
+        raise HTTPException(400, "Unit tidak dikenal")
+    conn = get_conn()
+    if body.unit is not None:
+        if not body.asset_ids:
+            conn.close(); raise HTTPException(400, "Pilih aset terlebih dahulu")
+        rows = [conn.execute("SELECT id, name, campus, category, item_type, location FROM assets WHERE id = ?", (i,)).fetchone() for i in body.asset_ids]
+    else:
+        # automatic: a unit that belongs to a cart / lab follows that cart's / lab's school unit (the one its schedule uses);
+        # the others with no unit yet are guessed from their name
+        rows = conn.execute("""SELECT a.id, a.name, a.campus, a.category, a.item_type, a.location, LOWER(COALESCE(r.unit, '')) AS res_unit, COALESCE(a.unit, '') AS cur
+                               FROM assets a LEFT JOIN asset_loan_settings s ON s.asset_id = a.id LEFT JOIN resources r ON r.id = s.resource_id
+                               WHERE (r.unit IS NOT NULL AND r.unit != '') OR COALESCE(a.unit, '') = ''""").fetchall()
+    changed, skipped, counts = 0, 0, {}
+    for r in rows:
+        if not r:
+            continue
+        if body.unit is not None:
+            unit = body.unit
+        elif r["res_unit"] in UNIT_CODES:
+            unit = r["res_unit"]
+            if unit == r["cur"]:
+                continue
+        else:
+            unit = guess_unit(r["name"], r["item_type"], r["location"]) if not r["cur"] else None
+        if not unit:
+            skipped += 1
+            continue
+        try:
+            ensure_asset_manager(user, r["campus"], r["category"])
+        except HTTPException:
+            skipped += 1
+            continue
+        conn.execute("UPDATE assets SET unit = ?, updated_at = ? WHERE id = ?", (unit, now_iso(), r["id"]))
+        changed += 1; counts[unit] = counts.get(unit, 0) + 1
+    conn.commit(); conn.close()
+    return {"updated": changed, "skipped": skipped, "by_unit": counts}
+
+
+def _insert_asset(conn, body: AssetIn, name: str, user: dict, to_user, ts: str, level: int):
+    """One asset row (+ its first hand-over when an owner is given). Returns (asset id, pending assignment or None)."""
+    aid = str(uuid.uuid4())
+    tag = gen_barcode_id(conn)
+    direct_uid, direct_name = (None, None) if to_user else (body.assigned_to_user_id, body.assigned_to_name)
+    conn.execute("""
+        INSERT INTO assets (id,name,asset_tag,category,asset_type,description,campus,location,status,
+            purchase_price,purchase_date,useful_life_years,warranty_end_date,
+            serial_number,supplier,assigned_to_user_id,assigned_to_name,
+            photo_path,documents,created_at,updated_at,created_by)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    """, (
+        aid, name, tag, body.category, body.asset_type or "School Asset",
+        body.description or "", body.campus or "", body.location, body.status,
+        body.purchase_price, body.purchase_date, body.useful_life_years, body.warranty_end_date,
+        body.serial_number or "", body.supplier or "", direct_uid, direct_name,
+        body.photo_path, json.dumps(body.documents), ts, ts, user["id"],
+    ))
+    extras = {k: getattr(body, k) for k in EXTRA_ASSET_KEYS}
+    extras["maintenance_required"] = 1 if extras["maintenance_required"] else 0
+    for k, _t, d in EXTRA_ASSET_FIELDS:
+        if extras[k] is None:
+            extras[k] = d
+    extras["requires_assign_approval"] = level      # set before the first hand-over, so the supervisor approves that one too
+    conn.execute(
+        "UPDATE assets SET " + ", ".join(f"{k}=?" for k in extras) + " WHERE id=?",
+        list(extras.values()) + [aid],
+    )
+    if direct_name:
+        conn.execute("""
+            INSERT INTO ownership_logs (id,asset_id,from_name,from_user_id,to_name,to_user_id,note,by,by_name,at)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
+        """, (str(uuid.uuid4()), aid, None, None, direct_name,
+              direct_uid, "Initial assignment", user["id"], user["name"], ts))
+    pending = None
+    if to_user:
+        pending = create_assignment(conn, row_to_dict(conn.execute("SELECT * FROM assets WHERE id = ?", (aid,)).fetchone()),
+                                    to_user, body.assignment_kind if body.assignment_kind in ASSIGN_KINDS else "personal", "new", user,
+                                    to_label=body.assigned_to_name or to_user["name"])
+    return aid, pending
+
+
+@api.post("/assets")
+async def create_asset(body: AssetIn, user: dict = Depends(asset_manager_required)):
+    ensure_asset_manager(user, body.campus or "", body.category)
+    qty = max(1, min(int(body.quantity or 1), 50))
+    ts = now_iso()
+    conn = get_conn()
+    body.location = resolve_room(conn, body.campus or "", body.location, bool(body.allow_new_room))
+    # An owner that is a real user must confirm receipt first; the asset starts unassigned until then.
+    to_user = (require_user(conn, body.assigned_to_user_id, body.assigned_to_name)
+               if (body.assigned_to_name or body.assigned_to_user_id) else None)
+    level = _approval_level(body.requires_assign_approval)
+    names = [body.name]
+    if qty > 1:     # "Bel Kuis" x 10 -> "Bel Kuis #1" ... "Bel Kuis #10", continuing after the highest number already used
+        base = re.sub(r"\s*#\s*\d+\s*$", "", body.name.strip()).strip()
+        used = [int(m.group(1)) for r in conn.execute("SELECT name FROM assets WHERE campus = ?", (body.campus or "",)).fetchall()
+                if _base_name(r["name"]) == base.lower() for m in [re.search(r"#\s*(\d+)\s*$", r["name"])] if m]
+        first = max(used, default=0) + 1
+        names = [f"{base} #{first + k}" for k in range(qty)]
+    ids, pendings = [], []
+    try:
+        for nm in names:
+            aid, pend = _insert_asset(conn, body, nm, user, to_user, ts, level)
+            ids.append(aid)
+            if pend:
+                pendings.append(pend)
+    except ValueError as e:     # e.g. approval needed but the recipient has no supervisor: nothing is created
+        conn.rollback()
+        conn.close()
+        raise HTTPException(409, assignment_error_message(e, user))
+    conn.commit()
+    row = conn.execute("SELECT * FROM assets WHERE id = ?", (ids[0],)).fetchone()
+    conn.close()
+    doc = row_to_dict(row)
+    doc["depreciation"] = calc_depreciation(doc["purchase_price"], doc["purchase_date"], doc.get("useful_life_years", 5), doc.get("residual_value") or 0)
+    doc["created_count"] = len(ids)
+    doc["created_names"] = names
+    if pendings:
+        notify_assignees(pendings)      # one e-mail per recipient listing every new asset
+        doc["pending_assignment"] = pendings[0]
+    return doc
+
+
+IMPORT_COLUMNS = ["name", "email", "role", "department", "campus", "supervisor_name", "supervisor", "employee_id", "password"]
 _USER_COL_ALIASES = {
     "nama": "name", "full_name": "name", "email_address": "email", "peran": "role", "jabatan": "department",
     "departemen": "department", "unit": "department", "kampus": "campus", "nama_atasan": "supervisor_name",

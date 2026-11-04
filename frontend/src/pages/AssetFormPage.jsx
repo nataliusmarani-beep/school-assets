@@ -155,7 +155,7 @@ export default function AssetFormPage() {
     campus: "", location: "", status: "active", purchase_price: "",
     purchase_date: new Date().toISOString().split("T")[0],
     useful_life_years: DEFAULT_USEFUL_LIFE[user?.role === "admin" ? "Furniture" : "IT Equipment"], warranty_end_date: "", serial_number: "",
-    supplier: "", assigned_to_name: "", assigned_to_user_id: null, assignment_kind: "personal", photo_path: null, documents: [],
+    supplier: "", assigned_to_name: "", assigned_to_user_id: null, assignment_kind: "personal", quantity: 1, photo_path: null, documents: [],
     ...extrasFromAsset({}),
   });
 
@@ -266,6 +266,7 @@ export default function AssetFormPage() {
       const payload = {
         ...form,
         ...extra,
+        quantity: parseInt(form.quantity, 10) || 1,
         purchase_price: parseFloat(form.purchase_price),
         useful_life_years: parseInt(form.useful_life_years, 10),
         warranty_end_date: form.warranty_end_date || null,
@@ -277,6 +278,11 @@ export default function AssetFormPage() {
         res = await api.put(`/assets/${id}`, payload);
       } else {
         res = await api.post("/assets", payload);
+      }
+      if (!isEdit && res.data.created_count > 1) {
+        toast.success(t("asset_created_many").replace("{n}", res.data.created_count).replace("{first}", res.data.created_names[0]).replace("{last}", res.data.created_names[res.data.created_names.length - 1]));
+        navigate(`/assets?search=${encodeURIComponent(res.data.created_names[0].replace(/\s*#\s*\d+\s*$/, ""))}`);
+        return;
       }
       if (!isEdit && res.data.pending_assignment) {
         toast.success(t("asset_created_pending").replace("{name}", res.data.pending_assignment.to_name));
@@ -326,6 +332,13 @@ export default function AssetFormPage() {
             placeholder={t("asset_tag_auto")} hint={t("asset_tag_auto_hint")} mono testid="asset-tag-input"/>
           <TextField label={t("asset_name")} value={form.name} onChange={(v)=>update("name",v)}
             required span2 testid="asset-name-input"/>
+          {!isEdit && (
+            <TextField label={t("asset_quantity")} type="number" min={1} value={form.quantity} onChange={(v)=>update("quantity", v === "" ? "" : Math.max(1, Math.min(50, parseInt(v, 10) || 1)))}
+              hint={Number(form.quantity) > 1
+                ? t("asset_quantity_many").replace("{n}", form.quantity).replace("{name}", (form.name || "…").replace(/\s*#\s*\d+\s*$/, "").trim())
+                : t("asset_quantity_hint")}
+              testid="asset-quantity-input"/>
+          )}
           <div>
             <Label className="label-mono">{t("col_category")}</Label>
             <Select value={form.category} onValueChange={(v)=>{
