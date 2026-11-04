@@ -548,6 +548,7 @@ export default function AssetsListPage() {
         <div className="mb-3 flex flex-wrap items-center gap-3 bg-blue-50 border border-blue-200 px-4 py-2.5 text-sm" data-testid="bulk-transfer-bar">
           <span className="font-medium text-blue-900">{t("bt_selected").replace("{n}", selected.size)}</span>
           <button onClick={() => setShowBulk(true)} className="bg-blue-800 hover:bg-blue-900 text-white px-3 py-1.5" data-testid="bulk-transfer-button">{t("bt_transfer")}</button>
+          <Link to="/loans/labels" state={{ ids: [...selected] }} className="border border-blue-300 bg-white text-blue-900 hover:bg-blue-100 px-3 py-1.5" data-testid="bulk-print-labels">{t("qr_print_these")}</Link>
           <select value={bulkUnit} onChange={(e) => setBulkUnit(e.target.value)} className="border border-blue-200 bg-white px-2 py-1.5" data-testid="bulk-unit-select">
             <option value="">{t("bu_pick")}</option>
             {["paud", "sd", "smp", "admin", "shared"].map((u) => <option key={u} value={u}>{t(`unit_${u}`)}</option>)}

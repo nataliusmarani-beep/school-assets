@@ -2506,6 +2506,7 @@ async def create_asset(body: AssetIn, user: dict = Depends(asset_manager_require
     doc["depreciation"] = calc_depreciation(doc["purchase_price"], doc["purchase_date"], doc.get("useful_life_years", 5), doc.get("residual_value") or 0)
     doc["created_count"] = len(ids)
     doc["created_names"] = names
+    doc["created_ids"] = ids
     if pendings:
         notify_assignees(pendings)      # one e-mail per recipient listing every new asset
         doc["pending_assignment"] = pendings[0]
@@ -3796,17 +3797,21 @@ def is_lent_asset(item_type: str, name: str, borrowable, category: str = "", bra
 
 
 @api.get("/assets/label-list")
-async def label_list(group: str = "fixed", user: dict = Depends(get_current_user), campus: Optional[str] = None):
-    """Assets for the sticker sheet. group=loan: laptops, iPads, cameras (lent out); group=fixed: everything else (furniture, desktops, monitors...)."""
+async def label_list(group: str = "fixed", user: dict = Depends(get_current_user), campus: Optional[str] = None, ids: Optional[str] = None):
+    """Assets for the sticker sheet. group=loan: laptops, iPads, cameras (lent out); group=fixed: everything else (furniture, desktops, monitors...).
+    ids=a,b,c: exactly those assets (just created or ticked in the list), whatever their group."""
     conn = get_conn()
     conds = ["a.status != 'retired'"]
     params = []
     own_campus = (user.get("campus") or "").strip()
     if user["role"] in ("staff",) + CAMPUS_BOUND and own_campus:
         conds.append("a.campus = ?"); params.append(own_campus)
-    elif campus:
+    elif campus and not ids:
         conds.append("a.campus = ?"); params.append(campus)
-    rows = conn.execute(f"""SELECT a.id, a.name, a.asset_tag, a.category, a.campus, a.location, a.unit, a.item_type, a.brand, a.assigned_to_name,
+    want_ids = [x for x in (ids or "").split(",") if x.strip()][:300]
+    if want_ids:
+        conds.append(f"a.id IN ({','.join('?' * len(want_ids))})"); params.extend(want_ids)
+    rows = conn.execute(f"""SELECT a.id, a.name, a.asset_tag, a.asset_code, a.category, a.campus, a.location, a.unit, a.item_type, a.brand, a.assigned_to_name,
                                    COALESCE(s.borrowable, 0) AS borrowable, s.asset_id IS NOT NULL AS decided,
                                    (COALESCE(a.assigned_to_user_id, '') != '' OR TRIM(COALESCE(a.assigned_to_name, '')) != '') AS assigned
                             FROM assets a LEFT JOIN asset_loan_settings s ON s.asset_id = a.id
@@ -3814,7 +3819,7 @@ async def label_list(group: str = "fixed", user: dict = Depends(get_current_user
     conn.close()
     want_lent = group == "loan"
     return [{k: v for k, v in dict(r).items() if k not in ("borrowable", "brand", "decided", "assigned")} for r in rows
-            if is_lent_asset(r["item_type"], r["name"], r["borrowable"], r["category"], r["brand"], bool(r["decided"]), bool(r["assigned"])) == want_lent]
+            if want_ids or is_lent_asset(r["item_type"], r["name"], r["borrowable"], r["category"], r["brand"], bool(r["decided"]), bool(r["assigned"])) == want_lent]
 
 
 @api.get("/assets/{aid}")

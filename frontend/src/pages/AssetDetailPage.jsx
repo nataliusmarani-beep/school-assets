@@ -16,7 +16,7 @@ import { ownerName } from "../lib/format";
 import PhotoZoomDialog from "../components/assets/PhotoZoomDialog";
 import LoanSettingsCard from "../components/loans/LoanSettingsCard";
 import {
-  ArrowLeft, ArrowRightLeft, Wrench, Edit, Trash2, Download,
+  ArrowLeft, ArrowRightLeft, Printer, Wrench, Edit, Trash2, Download,
   FileText, Calendar, ShieldCheck, Building2, User as UserIcon, Tag, Copy,
 } from "lucide-react";
 import { campusLabel } from "../lib/campus";
@@ -270,6 +270,10 @@ export default function AssetDetailPage() {
               </DialogFooter>
             </DialogContent>
           </Dialog>}
+
+          {isAdmin && <Button asChild variant="outline" className="rounded-none" data-testid="print-label-button">
+            <Link to="/loans/labels" state={{ ids: [asset.id] }}><Printer className="w-4 h-4 mr-2" strokeWidth={1.75}/> {t("qr_print_one")}</Link>
+          </Button>}
 
           {canTransferAsset && <Dialog open={transferOpen} onOpenChange={setTransferOpen}>
             <DialogTrigger asChild>

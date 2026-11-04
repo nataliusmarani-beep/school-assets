@@ -778,3 +778,13 @@ def test_backfill_fills_only_blank_asset_ids(client, make_user, db):
     code = lambda i: db.execute("SELECT asset_code FROM assets WHERE id = ?", (i,)).fetchone()[0]
     assert code(keep) == "KEEP-1" and code(blank).startswith("YPJ-KK-FUR-")
     assert server.ensure_asset_codes(db) == 0
+
+
+def test_label_list_by_ids_covers_non_ict_assets(client, make_user):
+    headers = auth(make_user("super_admin", ""))
+    r = client.post("/api/assets", headers=headers, json=_room_asset_body("", name="Bel Kuis", quantity=3))
+    assert r.status_code == 200 and len(r.json()["created_ids"]) == 3
+    ids = r.json()["created_ids"]
+    got = client.get("/api/assets/label-list", headers=headers, params={"ids": ",".join(ids[:2])}).json()
+    assert {x["id"] for x in got} == set(ids[:2])
+    assert all(x["asset_tag"].isdigit() and x["asset_code"].startswith("YPJ-KK-FUR-") for x in got)

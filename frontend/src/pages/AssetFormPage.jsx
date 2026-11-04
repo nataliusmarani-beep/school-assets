@@ -279,15 +279,17 @@ export default function AssetFormPage() {
       } else {
         res = await api.post("/assets", payload);
       }
+      const printAction = !isEdit && res.data.created_ids?.length
+        ? { label: t("qr_print_these"), onClick: () => navigate("/loans/labels", { state: { ids: res.data.created_ids } }) } : undefined;
       if (!isEdit && res.data.created_count > 1) {
-        toast.success(t("asset_created_many").replace("{n}", res.data.created_count).replace("{first}", res.data.created_names[0]).replace("{last}", res.data.created_names[res.data.created_names.length - 1]));
+        toast.success(t("asset_created_many").replace("{n}", res.data.created_count).replace("{first}", res.data.created_names[0]).replace("{last}", res.data.created_names[res.data.created_names.length - 1]), { action: printAction, duration: 15000 });
         navigate(`/assets?search=${encodeURIComponent(res.data.created_names[0].replace(/\s*#\s*\d+\s*$/, ""))}`);
         return;
       }
       if (!isEdit && res.data.pending_assignment) {
-        toast.success(t("asset_created_pending").replace("{name}", res.data.pending_assignment.to_name));
+        toast.success(t("asset_created_pending").replace("{name}", res.data.pending_assignment.to_name), { action: printAction, duration: 15000 });
       } else {
-        toast.success(isEdit ? "Asset updated" : "Asset created");
+        toast.success(isEdit ? "Asset updated" : "Asset created", { action: printAction, duration: 15000 });
       }
       navigate(`/assets/${res.data.id}`);
     } catch (err) {

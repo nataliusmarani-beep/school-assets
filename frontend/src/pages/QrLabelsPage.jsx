@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import JsBarcode from "jsbarcode";
 import api, { formatErr } from "../lib/api";
 import { useLang } from "../context/LangContext";
@@ -33,6 +33,9 @@ function BarRow({ value }) {
 export default function QrLabelsPage() {
   const { t } = useLang();
   const { user } = useAuth();
+  const loc = useLocation();
+  // opened from a new asset, the asset page or ticked rows in the list: print exactly those assets
+  const pickedIds = useMemo(() => (loc.state?.ids?.length ? loc.state.ids : (new URLSearchParams(loc.search).get("ids") || "").split(",").filter(Boolean)), [loc.state, loc.search]);
   const [campus, setCampus] = useState(user?.campus && CAMPUSES.includes(user.campus) ? user.campus : CAMPUSES[0]);
   const [assets, setAssets] = useState([]);
   const [q, setQ] = useState("");
@@ -43,10 +46,16 @@ export default function QrLabelsPage() {
 
   useEffect(() => {
     setQ(""); setCat("");
+    if (pickedIds.length) {
+      api.get("/assets/label-list", { params: { ids: pickedIds.join(",") } })
+        .then((r) => { setAssets(r.data); setSel(new Set(r.data.map((a) => a.id))); })
+        .catch((e) => toast.error(formatErr(e)));
+      return;
+    }
     api.get("/assets/label-list", { params: { campus, group: mode } })
       .then((r) => { setAssets(r.data); setSel(mode === "loan" ? new Set(r.data.map((a) => a.id)) : new Set()); })
       .catch((e) => toast.error(formatErr(e)));
-  }, [campus, mode]);
+  }, [campus, mode, pickedIds]);
 
   const categories = useMemo(() => [...new Set(assets.map((a) => a.category).filter(Boolean))].sort(), [assets]);
   const shown = useMemo(() => assets.filter((a) => (!cat || a.category === cat)
@@ -59,16 +68,17 @@ export default function QrLabelsPage() {
       <Link to="/scan" className="text-sm text-slate-500 hover:text-slate-900 inline-flex items-center gap-1 mb-4"><ArrowLeft className="w-4 h-4" /> {t("qr_title")}</Link>
       <h1 className="font-display text-3xl font-semibold tracking-tight text-slate-900">{t("qr_print_labels")}</h1>
       <p className="text-sm text-slate-500 mt-2">{t("qr_labels_hint")}</p>
-      <div className="flex mt-5" role="tablist">
+      {pickedIds.length > 0 && <p className="text-sm text-blue-900 bg-blue-50 border border-blue-200 px-3 py-2 mt-4" data-testid="qr-picked-hint">{t("qr_picked_hint").replace("{n}", assets.length)} <Link to="/loans/labels" className="underline ml-1">{t("qr_picked_all")}</Link></p>}
+      <div className={`flex mt-5 ${pickedIds.length ? "hidden" : ""}`} role="tablist">
         {[["loan", "qr_mode_loan"], ["fixed", "qr_mode_fixed"]].map(([m, k]) => (
           <button key={m} role="tab" aria-selected={mode === m} onClick={() => setMode(m)} data-testid={`qr-mode-${m}`}
             className={`px-4 py-2 text-sm border border-slate-300 ${mode === m ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-700 hover:bg-slate-50"}`}>{t(k)}</button>))}
       </div>
       {mode === "fixed" && <p className="text-xs text-slate-500 mt-2">{t("qr_fixed_hint")}</p>}
       <div className="flex gap-3 flex-wrap items-center my-5">
-        <select className="border border-slate-200 bg-white px-3 py-2 text-sm h-10" value={campus} disabled={isCampusBound(user?.role)} onChange={(e) => setCampus(e.target.value)}>
-          {CAMPUSES.map((c) => <option key={c} value={c}>{campusLabel(c)}</option>)}</select>
-        {mode === "fixed" && <select className="border border-slate-200 bg-white px-3 py-2 text-sm h-10" value={cat} onChange={(e) => setCat(e.target.value)} data-testid="qr-category">
+        {!pickedIds.length && <select className="border border-slate-200 bg-white px-3 py-2 text-sm h-10" value={campus} disabled={isCampusBound(user?.role)} onChange={(e) => setCampus(e.target.value)}>
+          {CAMPUSES.map((c) => <option key={c} value={c}>{campusLabel(c)}</option>)}</select>}
+        {mode === "fixed" && !pickedIds.length && <select className="border border-slate-200 bg-white px-3 py-2 text-sm h-10" value={cat} onChange={(e) => setCat(e.target.value)} data-testid="qr-category">
           <option value="">{t("qr_all_categories")}</option>{categories.map((c) => <option key={c} value={c}>{c}</option>)}</select>}
         <Input className="w-64 rounded-none" value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("ln_search")} />
         <Button variant="outline" className="rounded-none" onClick={() => setSel(new Set(shown.map((a) => a.id)))}>{t("qr_select_all")}</Button>
@@ -85,7 +95,7 @@ export default function QrLabelsPage() {
         {chosen.map((a) => (
           <div key={a.id} className="border border-slate-300 p-2 text-center break-inside-avoid" data-testid={`qr-label-${a.asset_tag}`}>
             <BarRow value={a.asset_tag} />
-            <div className="text-sm font-bold text-slate-900 leading-tight mt-0.5 truncate">{[a.name !== a.asset_tag ? a.name : null, a.asset_tag, mode === "fixed" ? (a.location || a.assigned_to_name || campusLabel(a.campus)) : (a.unit ? t(`unit_${a.unit}`) : campusLabel(a.campus))].filter(Boolean).join(" | ")}</div>
+            <div className="text-sm font-bold text-slate-900 leading-tight mt-0.5 truncate">{[a.name !== a.asset_tag ? a.name : null, a.asset_code || null, a.asset_tag, mode === "fixed" ? (a.location || a.assigned_to_name || campusLabel(a.campus)) : (a.unit ? t(`unit_${a.unit}`) : campusLabel(a.campus))].filter(Boolean).join(" | ")}</div>
           </div>))}
       </div>
     </div>
