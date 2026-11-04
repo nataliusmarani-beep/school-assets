@@ -2400,6 +2400,16 @@ def gen_asset_code(conn, campus: str, category: str) -> str:
     return f"{prefix}{max(nums, default=0) + 1:04d}"
 
 
+def ensure_asset_codes(conn) -> int:
+    """Give every asset that has no ID code one (oldest first, so numbers follow creation order). Does nothing once all have one."""
+    rows = conn.execute("SELECT id, campus, category FROM assets WHERE COALESCE(TRIM(asset_code), '') = '' ORDER BY created_at, id").fetchall()
+    for r in rows:
+        conn.execute("UPDATE assets SET asset_code = ? WHERE id = ?", (gen_asset_code(conn, r["campus"], r["category"]), r["id"]))
+    if rows:
+        conn.commit()
+    return len(rows)
+
+
 def _insert_asset(conn, body: AssetIn, name: str, user: dict, to_user, ts: str, level: int):
     """One asset row (+ its first hand-over when an owner is given). Returns (asset id, pending assignment or None)."""
     aid = str(uuid.uuid4())
@@ -8609,6 +8619,9 @@ async def on_startup():
         r = restore_asset_names(_c)
         if r:
             logger.info(f"Descriptive names restored for {r} assets")
+        k = ensure_asset_codes(_c)
+        if k:
+            logger.info(f"ID codes generated for {k} assets")
     finally:
         _c.close()
     # Start background scheduler for daily return reminders

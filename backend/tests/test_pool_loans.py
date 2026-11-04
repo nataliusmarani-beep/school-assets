@@ -755,3 +755,15 @@ def test_blank_asset_id_is_generated_in_sequence(client, make_user):
     assert a.json()["asset_code"].startswith("YPJ-KK-FUR-")
     assert int(b.json()["asset_code"][-4:]) == int(a.json()["asset_code"][-4:]) + 1
     assert c.json()["asset_code"] == "MY-OWN-1"
+
+
+def test_backfill_fills_only_blank_asset_ids(client, make_user, db):
+    headers = auth(make_user("super_admin", ""))
+    keep = client.post("/api/assets", headers=headers, json=_room_asset_body("", name="A", asset_code="KEEP-1")).json()["id"]
+    blank = client.post("/api/assets", headers=headers, json=_room_asset_body("", name="B")).json()["id"]
+    db.execute("UPDATE assets SET asset_code = '' WHERE id = ?", (blank,))
+    db.commit()
+    assert server.ensure_asset_codes(db) == 1
+    code = lambda i: db.execute("SELECT asset_code FROM assets WHERE id = ?", (i,)).fetchone()[0]
+    assert code(keep) == "KEEP-1" and code(blank).startswith("YPJ-KK-FUR-")
+    assert server.ensure_asset_codes(db) == 0
