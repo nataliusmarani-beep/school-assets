@@ -744,3 +744,14 @@ def test_create_many_numbered_copies_with_one_mail(client, make_user, db, monkey
     before = db.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
     r = client.post("/api/assets", headers=h, json=_room_asset_body("Room H1", name="Bel Lain", quantity=2, assigned_to_user_id=lone["id"], assigned_to_name="x", requires_assign_approval=1, category="Learning Tools"))
     assert r.status_code == 409 and db.execute("SELECT COUNT(*) FROM assets").fetchone()[0] == before
+
+
+def test_blank_asset_id_is_generated_in_sequence(client, make_user):
+    headers = auth(make_user("super_admin", ""))
+    mk = lambda **k: client.post("/api/assets", headers=headers, json=_room_asset_body("", **k))
+    a, b = mk(), mk(name="Meja 2")
+    c = mk(name="Meja 3", asset_code="MY-OWN-1")
+    assert a.status_code == 200 and b.status_code == 200 and c.status_code == 200
+    assert a.json()["asset_code"].startswith("YPJ-KK-FUR-")
+    assert int(b.json()["asset_code"][-4:]) == int(a.json()["asset_code"][-4:]) + 1
+    assert c.json()["asset_code"] == "MY-OWN-1"

@@ -327,7 +327,7 @@ export default function AssetFormPage() {
         {/* Section 1: Identity */}
         <Section title={t("section_basic")}>
           <TextField label={t("asset_code")} value={form.asset_code} onChange={(v)=>update("asset_code",v)}
-            placeholder={t("asset_code_placeholder")} mono testid="asset-code-input"/>
+            placeholder={t("asset_code_placeholder")} hint={isEdit ? undefined : t("asset_code_hint")} mono testid="asset-code-input"/>
           <TextField label={t("asset_tag")} value={isEdit ? form.asset_tag : ""} onChange={() => {}} locked
             placeholder={t("asset_tag_auto")} hint={t("asset_tag_auto_hint")} mono testid="asset-tag-input"/>
           <TextField label={t("asset_name")} value={form.name} onChange={(v)=>update("name",v)}

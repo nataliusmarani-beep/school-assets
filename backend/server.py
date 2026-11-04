@@ -2388,6 +2388,18 @@ async def bulk_set_unit(body: BulkUnitIn, user: dict = Depends(asset_manager_req
     return {"updated": changed, "skipped": skipped, "by_unit": counts}
 
 
+def gen_asset_code(conn, campus: str, category: str) -> str:
+    """Next readable ID, e.g. YPJ-KK-FUR-0001: campus initials, first three letters of the category, running number per campus+category."""
+    words = [w for w in re.sub(r"[^A-Za-z0-9 ]", " ", re.sub(r"(?i)^\s*ypj\s+", "", campus or "")).split() if w]
+    camp = (words[0].upper() if len(words) == 1 else "".join(w[0] for w in words).upper()) if words else "XX"
+    cat = (re.sub(r"[^A-Za-z0-9]", "", (category or "").split(" ")[0]).upper()[:3] or "AST")
+    prefix = f"YPJ-{camp}-{cat}-"
+    nums = [int(r["asset_code"][len(prefix):]) for r in conn.execute(
+        "SELECT asset_code FROM assets WHERE asset_code LIKE ?", (prefix + "%",)).fetchall()
+        if (r["asset_code"] or "")[len(prefix):].isdigit()]
+    return f"{prefix}{max(nums, default=0) + 1:04d}"
+
+
 def _insert_asset(conn, body: AssetIn, name: str, user: dict, to_user, ts: str, level: int):
     """One asset row (+ its first hand-over when an owner is given). Returns (asset id, pending assignment or None)."""
     aid = str(uuid.uuid4())
@@ -2411,6 +2423,8 @@ def _insert_asset(conn, body: AssetIn, name: str, user: dict, to_user, ts: str, 
     for k, _t, d in EXTRA_ASSET_FIELDS:
         if extras[k] is None:
             extras[k] = d
+    if not (extras.get("asset_code") or "").strip():     # blank ID -> generated, so every item gets a readable ID
+        extras["asset_code"] = gen_asset_code(conn, body.campus or "", body.category)
     extras["requires_assign_approval"] = level      # set before the first hand-over, so the supervisor approves that one too
     conn.execute(
         "UPDATE assets SET " + ", ".join(f"{k}=?" for k in extras) + " WHERE id=?",
