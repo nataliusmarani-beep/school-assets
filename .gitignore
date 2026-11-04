@@ -19,3 +19,7 @@ frontend/.env.local
 
 # OS
 .DS_Store
+
+# separate projects that live in this folder
+/edufair/
+/warta/
