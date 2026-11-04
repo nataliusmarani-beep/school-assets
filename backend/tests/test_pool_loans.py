@@ -754,9 +754,16 @@ def test_blank_asset_id_is_generated_in_sequence(client, make_user):
     assert a.status_code == 200 and b.status_code == 200 and c.status_code == 200
     assert a.json()["asset_code"].startswith("YPJ-KK-FUR-")
     assert int(b.json()["asset_code"][-4:]) == int(a.json()["asset_code"][-4:]) + 1
-    assert c.json()["asset_code"] != "MY-OWN-1" and c.json()["asset_code"].startswith("YPJ-KK-FUR-")     # a typed ID is ignored
-    put = client.put(f"/api/assets/{a.json()['id']}", headers=headers, json={"asset_code": "HACK", "description": "x"})
-    assert put.status_code == 200 and put.json()["asset_code"] == a.json()["asset_code"]
+    assert c.json()["asset_code"] == "MY-OWN-1"                                          # a super admin may type one
+    assert mk(name="Meja 4", asset_code="my-own-1").status_code == 409                   # but not a duplicate
+    put = client.put(f"/api/assets/{a.json()['id']}", headers=headers, json={"asset_code": "CHANGED-1"})
+    assert put.status_code == 200 and put.json()["asset_code"] == "CHANGED-1"
+    assert client.put(f"/api/assets/{b.json()['id']}", headers=headers, json={"asset_code": "CHANGED-1"}).status_code == 409
+    adm = auth(make_user("admin", ""))                                                   # other admins cannot
+    r = client.post("/api/assets", headers=adm, json=_room_asset_body("", name="Meja 5", asset_code="NOPE-1"))
+    assert r.status_code == 200 and r.json()["asset_code"].startswith("YPJ-KK-FUR-")
+    put = client.put(f"/api/assets/{b.json()['id']}", headers=adm, json={"asset_code": "HACK", "description": "x"})
+    assert put.status_code == 200 and put.json()["asset_code"] == b.json()["asset_code"]
 
 
 def test_backfill_fills_only_blank_asset_ids(client, make_user, db):

@@ -2410,6 +2410,18 @@ def ensure_asset_codes(conn) -> int:
     return len(rows)
 
 
+def _free_asset_code(code: str, own_id: str = "") -> str:
+    """A typed ID code, trimmed; 409 when another asset already uses it. Empty stays empty (= keep / generate)."""
+    code = (code or "").strip()
+    if code:
+        c = get_conn()
+        dup = c.execute("SELECT id FROM assets WHERE LOWER(asset_code) = LOWER(?) AND id != ?", (code, own_id)).fetchone()
+        c.close()
+        if dup:
+            raise HTTPException(409, f"ID aset '{code}' sudah dipakai aset lain")
+    return code
+
+
 def _insert_asset(conn, body: AssetIn, name: str, user: dict, to_user, ts: str, level: int):
     """One asset row (+ its first hand-over when an owner is given). Returns (asset id, pending assignment or None)."""
     aid = str(uuid.uuid4())
@@ -2433,7 +2445,8 @@ def _insert_asset(conn, body: AssetIn, name: str, user: dict, to_user, ts: str, 
     for k, _t, d in EXTRA_ASSET_FIELDS:
         if extras[k] is None:
             extras[k] = d
-    extras["asset_code"] = gen_asset_code(conn, body.campus or "", body.category)     # always generated, never typed
+    typed = (extras.get("asset_code") or "").strip() if user["role"] == "super_admin" else ""     # only a super admin may type an ID
+    extras["asset_code"] = typed or gen_asset_code(conn, body.campus or "", body.category)
     extras["requires_assign_approval"] = level      # set before the first hand-over, so the supervisor approves that one too
     conn.execute(
         "UPDATE assets SET " + ", ".join(f"{k}=?" for k in extras) + " WHERE id=?",
@@ -2457,6 +2470,10 @@ def _insert_asset(conn, body: AssetIn, name: str, user: dict, to_user, ts: str, 
 async def create_asset(body: AssetIn, user: dict = Depends(asset_manager_required)):
     ensure_asset_manager(user, body.campus or "", body.category)
     qty = max(1, min(int(body.quantity or 1), 50))
+    if user["role"] == "super_admin" and (body.asset_code or "").strip():
+        if qty > 1:
+            raise HTTPException(409, "Isi ID aset hanya untuk satu aset; kosongkan agar tiap salinan mendapat ID otomatis")
+        body.asset_code = _free_asset_code(body.asset_code)
     ts = now_iso()
     conn = get_conn()
     body.location = resolve_room(conn, body.campus or "", body.location, bool(body.allow_new_room))
@@ -3831,7 +3848,12 @@ async def get_asset(aid: str, user: dict = Depends(get_current_user)):
 async def update_asset(aid: str, body: AssetUpdate, user: dict = Depends(asset_manager_required)):
     updates = {k: v for k, v in body.model_dump(exclude_none=True).items()}
     updates.pop("asset_tag", None)       # the barcode number is generated and locked
-    updates.pop("asset_code", None)      # so is the ID code, so nobody overwrites it by accident
+    if user["role"] != "super_admin":
+        updates.pop("asset_code", None)  # so is the ID code (only a super admin may change it), so nobody overwrites it by accident
+    elif "asset_code" in updates:
+        updates["asset_code"] = _free_asset_code(updates["asset_code"], aid)
+        if not updates["asset_code"]:
+            updates.pop("asset_code")
     allow_new_room = bool(updates.pop("allow_new_room", False))
     if not updates:
         raise HTTPException(400, "No fields to update")
