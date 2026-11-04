@@ -763,6 +763,7 @@ def test_backfill_fills_only_blank_asset_ids(client, make_user, db):
     headers = auth(make_user("super_admin", ""))
     keep = client.post("/api/assets", headers=headers, json=_room_asset_body("", name="A")).json()["id"]
     db.execute("UPDATE assets SET asset_code = 'KEEP-1' WHERE id = ?", (keep,))
+    db.commit()
     blank = client.post("/api/assets", headers=headers, json=_room_asset_body("", name="B")).json()["id"]
     db.execute("UPDATE assets SET asset_code = '' WHERE id = ?", (blank,))
     db.commit()
