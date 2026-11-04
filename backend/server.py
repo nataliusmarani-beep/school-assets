@@ -909,7 +909,34 @@ def email_configured() -> bool:
     return bool(RESEND_API_KEY or (SMTP_HOST and SMTP_USER and SMTP_PASSWORD))
 
 
-def _send_via_resend(to_addr: str, subject: str, body_html: str, cc: list) -> None:
+INLINE_PHOTO_MAX_BYTES = 400 * 1024
+
+
+def _inline_photos(body_html: str):
+    """Asset photos in a mail travel inside it (CID) so Outlook / Gmail show them without "download pictures" prompts.
+    Returns (html with cid: references, [{"cid","filename","mime","data"}]); a photo that is missing or too big stays a normal link."""
+    import mimetypes
+    pat = re.compile(re.escape(APP_URL) + r"/api/email-photo/([0-9A-Za-z-]+)\?s=[0-9a-f]+")
+    ids = list(dict.fromkeys(m.group(1) for m in pat.finditer(body_html)))
+    if not ids:
+        return body_html, []
+    out, conn = [], get_conn()
+    try:
+        for n, aid in enumerate(ids):
+            r = conn.execute("SELECT photo_path FROM assets WHERE id = ?", (aid,)).fetchone()
+            path = UPLOADS_DIR / r["photo_path"] if r and r["photo_path"] else None
+            if not path or not path.exists() or path.stat().st_size > INLINE_PHOTO_MAX_BYTES:
+                continue
+            cid = f"assetphoto{n}"
+            mime = mimetypes.guess_type(path.name)[0] or "image/jpeg"
+            out.append({"cid": cid, "filename": f"{aid[:8]}{path.suffix or '.jpg'}", "mime": mime, "data": path.read_bytes()})
+            body_html = re.sub(re.escape(APP_URL) + r"/api/email-photo/" + re.escape(aid) + r"\?s=[0-9a-f]+", f"cid:{cid}", body_html)
+    finally:
+        conn.close()
+    return body_html, out
+
+
+def _send_via_resend(to_addr: str, subject: str, body_html: str, cc: list, inline: list = None) -> None:
     import json as _json, urllib.request, urllib.error
     payload = {
         "from": formataddr((SMTP_FROM_NAME, f"noreply@{MAIL_FROM_DOMAIN}")),
@@ -917,15 +944,18 @@ def _send_via_resend(to_addr: str, subject: str, body_html: str, cc: list) -> No
     }
     if cc:
         payload["cc"] = cc
+    if inline:
+        import base64 as _b64
+        payload["attachments"] = [{"filename": i["filename"], "content_id": i["cid"], "content": _b64.b64encode(i["data"]).decode()} for i in inline]
     # Embed the logo inline (CID) so Outlook shows it without "download pictures" prompts.
     try:
         logo_url = _email_logo_url()
         if logo_url and logo_url in body_html:
             import base64
             f = next((BUILD_DIR / "static" / "media").glob("ypj-logo*.png"))
-            payload["html"] = body_html.replace(logo_url, "cid:ypjlogo")
-            payload["attachments"] = [{"filename": "ypj-logo.png", "content_id": "ypjlogo",
-                                       "content": base64.b64encode(f.read_bytes()).decode()}]
+            payload["html"] = payload["html"].replace(logo_url, "cid:ypjlogo")
+            payload.setdefault("attachments", []).append({"filename": "ypj-logo.png", "content_id": "ypjlogo",
+                                                         "content": base64.b64encode(f.read_bytes()).decode()})
     except Exception as exc:
         logger.warning("Inline logo skipped: %s", exc)
     req = urllib.request.Request(
@@ -989,17 +1019,24 @@ def send_email(to_addr: str, subject: str, body_html: str, cc: list = None) -> b
         return False
     try:
         clean_cc = [a for a in (cc or []) if a and a != to_addr]
+        body_html, inline = _inline_photos(body_html)
         if RESEND_API_KEY:
-            _send_via_resend(to_addr, subject, body_html, clean_cc)
+            _send_via_resend(to_addr, subject, body_html, clean_cc, inline)
             logger.info("Email sent via Resend to %s (CC: %s) — %s", to_addr, clean_cc, subject)
             return True
-        msg = MIMEMultipart("alternative")
+        msg = MIMEMultipart("related" if inline else "alternative")
         msg["Subject"] = subject
         msg["From"]    = formataddr((SMTP_FROM_NAME, SMTP_FROM or SMTP_USER))
         msg["To"]      = to_addr
         if clean_cc:
             msg["Cc"] = ", ".join(clean_cc)
         msg.attach(MIMEText(body_html, "html", "utf-8"))
+        for i in inline:
+            from email.mime.image import MIMEImage
+            part = MIMEImage(i["data"], _subtype=i["mime"].split("/")[-1])
+            part.add_header("Content-ID", f"<{i['cid']}>")
+            part.add_header("Content-Disposition", "inline", filename=i["filename"])
+            msg.attach(part)
         all_recipients = [to_addr] + clean_cc
         if SMTP_PORT == 465:
             smtp = _SMTP4_SSL(SMTP_HOST, SMTP_PORT, timeout=20)

@@ -704,3 +704,20 @@ def test_new_room_with_similar_name_needs_confirmation(client, make_user, db):
     r = client.post("/api/classrooms", headers=h, json={"name": "Lab-Bahasa 2", "campus": KK})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "similar_room"
     assert client.post("/api/classrooms", headers=h, json={"name": "Lab-Bahasa 2", "campus": KK, "allow_similar": True}).status_code == 200
+
+
+def test_photos_are_inlined_into_the_mail(client, make_user, db, monkeypatch):
+    sent, boss, teacher = _approval_setup(db, make_user, monkeypatch)
+    photo = server.UPLOADS_DIR / "t" / "q.jpg"
+    photo.parent.mkdir(exist_ok=True)
+    photo.write_bytes(b"\xff\xd8\xff\xe0smallfake")
+    db.execute("UPDATE assets SET photo_path='t/q.jpg' WHERE id='mu1'")
+    db.commit()
+    html = server._assignment_items_html([{"asset_id": "mu1", "asset_name": "Keyboard", "asset_tag": "5550001", "kind": "class", "location": "R"}])
+    new_html, inline = server._inline_photos("<p>" + html + "</p>")
+    assert len(inline) == 1 and f"cid:{inline[0]['cid']}" in new_html and "email-photo" not in new_html and inline[0]["data"].startswith(b"\xff\xd8")
+    # a photo that is too big stays a normal link
+    photo.write_bytes(b"x" * (server.INLINE_PHOTO_MAX_BYTES + 1))
+    big_html, big_inline = server._inline_photos(html)
+    assert big_inline == [] and "email-photo" in big_html
+    photo.unlink()
