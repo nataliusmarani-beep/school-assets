@@ -169,9 +169,9 @@ export default function AssetFormPage() {
       setCopySource(a.name);
       setForm((f) => ({
         ...f, ...a, ...extrasFromAsset(a),
-        // each item gets its own barcode, ID, serial and owner; the invoice documents belong to the original purchase
+        // each item gets its own barcode, ID, serial, owner and photo; the invoice documents belong to the original purchase
         id: undefined, asset_tag: "", asset_code: "", serial_number: "", assigned_to_name: "", assigned_to_user_id: null, assignment_kind: "personal",
-        status: "active", quantity: 1, documents: [], requires_assign_approval: Number(a.requires_assign_approval) || 0,
+        status: "active", quantity: 1, documents: [], photo_path: null, requires_assign_approval: Number(a.requires_assign_approval) || 0,
         purchase_price: String(a.purchase_price ?? ""),
         warranty_end_date: a.warranty_end_date ? a.warranty_end_date.split("T")[0] : "",
         purchase_date: a.purchase_date ? a.purchase_date.split("T")[0] : f.purchase_date,
