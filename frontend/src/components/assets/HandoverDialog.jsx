@@ -59,7 +59,7 @@ export default function HandoverDialog({ open, onOpenChange, t, onDone, classroo
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="rounded-none max-w-xl" data-testid="handover-dialog">
+      <DialogContent className="rounded-none max-w-xl max-h-[90vh] overflow-y-auto" data-testid="handover-dialog">
         <DialogHeader><DialogTitle>{t("ho_title")}</DialogTitle></DialogHeader>
         <p className="text-sm text-slate-500">{t("ho_hint")}</p>
         <div className="space-y-4">
@@ -120,7 +120,7 @@ export default function HandoverDialog({ open, onOpenChange, t, onDone, classroo
             <Textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} className="mt-2 rounded-none" />
           </div>
         </div>
-        <DialogFooter>
+        <DialogFooter className="sticky bottom-0 bg-white pt-3 -mb-1 border-t border-slate-100">
           <Button disabled={busy || !roomId || !toId || checked.size === 0} onClick={submit} className="rounded-none bg-slate-900" data-testid="ho-submit">
             {t("ho_submit")} ({checked.size})
           </Button>

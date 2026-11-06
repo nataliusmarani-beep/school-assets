@@ -43,7 +43,7 @@ export default function BulkTransferDialog({ open, onOpenChange, t, assets, onDo
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="rounded-none max-w-xl" data-testid="bulk-transfer-dialog">
+      <DialogContent className="rounded-none max-w-xl max-h-[90vh] overflow-y-auto" data-testid="bulk-transfer-dialog">
         <DialogHeader><DialogTitle>{t("bt_title").replace("{n}", assets.length)}</DialogTitle></DialogHeader>
         <p className="text-sm text-slate-500">{t("bt_hint")}</p>
         <div className="space-y-4">
@@ -79,7 +79,7 @@ export default function BulkTransferDialog({ open, onOpenChange, t, assets, onDo
             <Textarea value={note} onChange={(e) => setNote(e.target.value)} className="mt-2 rounded-none" />
           </div>
         </div>
-        <DialogFooter>
+        <DialogFooter className="sticky bottom-0 bg-white pt-3 -mb-1 border-t border-slate-100">
           <Button variant="outline" className="rounded-none" onClick={() => onOpenChange(false)}>{t("cancel")}</Button>
           <Button className="rounded-none" disabled={!toId || busy || assets.length === 0} onClick={submit} data-testid="bt-submit">
             {t("ho_submit")}
