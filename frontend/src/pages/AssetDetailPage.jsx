@@ -271,6 +271,10 @@ export default function AssetDetailPage() {
             </DialogContent>
           </Dialog>}
 
+          {isAdmin && <Button asChild variant="outline" className="rounded-none" data-testid="copy-asset-button">
+            <Link to={`/assets/new?copy=${asset.id}`}><Copy className="w-4 h-4 mr-2" strokeWidth={1.75}/> {t("asset_copy")}</Link>
+          </Button>}
+
           {isAdmin && <Button asChild variant="outline" className="rounded-none" data-testid="print-label-button">
             <Link to="/loans/labels" state={{ ids: [asset.id] }}><Printer className="w-4 h-4 mr-2" strokeWidth={1.75}/> {t("qr_print_one")}</Link>
           </Button>}

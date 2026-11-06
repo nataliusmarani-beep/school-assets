@@ -159,6 +159,26 @@ export default function AssetFormPage() {
     ...extrasFromAsset({}),
   });
 
+  const copyFrom = !isEdit ? qs.get("copy") : null;     // "Copy asset": start a new asset from an existing one
+  const [copySource, setCopySource] = useState("");
+  useEffect(() => {
+    if (!copyFrom) return;
+    api.get(`/assets/${copyFrom}`).then((r) => {
+      const a = r.data;
+      lifeTouched.current = true;
+      setCopySource(a.name);
+      setForm((f) => ({
+        ...f, ...a, ...extrasFromAsset(a),
+        // each item gets its own barcode, ID, serial and owner; the invoice documents belong to the original purchase
+        id: undefined, asset_tag: "", asset_code: "", serial_number: "", assigned_to_name: "", assigned_to_user_id: null, assignment_kind: "personal",
+        status: "active", quantity: 1, documents: [], requires_assign_approval: Number(a.requires_assign_approval) || 0,
+        purchase_price: String(a.purchase_price ?? ""),
+        warranty_end_date: a.warranty_end_date ? a.warranty_end_date.split("T")[0] : "",
+        purchase_date: a.purchase_date ? a.purchase_date.split("T")[0] : f.purchase_date,
+      }));
+    }).catch((e) => setError(formatErr(e)));
+  }, [copyFrom]);
+
   const [owners, setOwners] = useState([]);
   useEffect(() => {
     if (!isEdit) api.get("/users").then((r) => setOwners(r.data)).catch(() => {});
@@ -324,6 +344,8 @@ export default function AssetFormPage() {
       <h1 className="font-display text-3xl font-semibold tracking-tight text-slate-900 mb-8">
         {isEdit ? form.name : t("register_asset")}
       </h1>
+
+      {copySource && <p className="mt-4 text-sm text-blue-900 bg-blue-50 border border-blue-200 px-3 py-2" data-testid="copy-banner">{t("asset_copy_banner").replace("{name}", copySource)}</p>}
 
       <form onSubmit={submit} className="space-y-8">
         {/* Section 1: Identity */}
