@@ -5897,6 +5897,9 @@ def _loan_view(conn, user: dict, b: dict, asset: dict) -> dict:
         out["units_out"] = sum(1 for u in units if u["status"] == "out")
         out["units_not_returned"] = out["units_out"] if b["status"] == "overdue" else 0
         out["device_label"] = booking_engine.pool_label(b["device_type"])
+        if b.get("pool_resource_id"):
+            cr = conn.execute("SELECT name, location FROM resources WHERE id = ?", (b["pool_resource_id"],)).fetchone()
+            out["pool_cart"] = (f"{cr['name']} — {cr['location']}" if cr and cr["location"] else cr["name"]) if cr else ""
         # what is still to be handed over: the units ICT reserved when approving
         out["cart_units"] = [{"id": u["asset_id"], "name": u["asset_name"], "asset_tag": u["asset_tag"]} for u in units if u["status"] == "reserved"]
     manage = can_manage_loan(user, b["campus"], b["category"])
@@ -5930,6 +5933,7 @@ class LoanIn(BaseModel):
     terms_accepted: bool = False
     override_reason: str = ""
     campus: Optional[str] = None              # pool loans by an account without its own campus (admin)
+    cart_id: Optional[str] = None             # SMP teachers: the laptop cart (location) the laptops come from
 
 
 def _engine_call(fn, *args, **kwargs):
@@ -6055,8 +6059,34 @@ async def loan_availability(asset_id: str, start_at: str, end_at: str, _: dict =
     return {**info, "blocked": reason}
 
 
+def is_smp_user(user: dict) -> bool:
+    return bool(re.search(r"\bsmp\b", user.get("department") or "", re.I))
+
+
+def smp_carts(conn, campus: str) -> list:
+    """Laptop carts of the SMP unit on a campus, with where they stand and whether their schedule exists yet."""
+    rows = conn.execute("""SELECT id, name, location FROM resources WHERE campus = ? AND active = 1 AND kind = 'laptop_cart'
+                           AND UPPER(unit) = 'SMP' ORDER BY name""", (campus,)).fetchall()
+    return [{"id": r["id"], "name": r["name"], "location": r["location"] or "", "has_schedule": booking_engine.cart_has_schedule(conn, r["id"])}
+            for r in rows]
+
+
+@api.get("/loans/pool/sources")
+async def pool_sources(device_type: str = "laptop", campus: Optional[str] = None, user: dict = Depends(get_current_user)):
+    """SMP teachers borrow laptops from an SMP laptop cart (each stands in a different lab): which carts they can choose from."""
+    own = (user.get("campus") or "").strip()
+    campus = own or campus or ""
+    if device_type != "laptop" or not campus or not is_smp_user(user):
+        return {"required": False, "carts": []}
+    conn = get_conn()
+    carts = smp_carts(conn, campus)
+    conn.close()
+    return {"required": bool(carts), "carts": carts}
+
+
 @api.get("/loans/pool/availability")
-async def pool_availability(device_type: str, start_at: str, end_at: str, campus: Optional[str] = None, user: dict = Depends(get_current_user)):
+async def pool_availability(device_type: str, start_at: str, end_at: str, campus: Optional[str] = None, cart_id: Optional[str] = None,
+                            user: dict = Depends(get_current_user)):
     """How many laptops / iPads are free for a window (teachers see the count, ICT also the units)."""
     own = (user.get("campus") or "").strip()
     campus = own if (user["role"] in ("staff",) + CAMPUS_BOUND and own) else (campus or own)
@@ -6064,7 +6094,9 @@ async def pool_availability(device_type: str, start_at: str, end_at: str, campus
     try:
         start, end = booking_engine.parse_dt(start_at), booking_engine.parse_dt(end_at)
         diag = {}
-        free = booking_engine.pool_free_units(conn, campus, device_type, start, end, now=_local_now(), diag=diag)
+        if cart_id and cart_id not in {c["id"] for c in smp_carts(conn, campus)}:
+            raise booking_engine.BookingError("Cart ini tidak tersedia untuk peminjaman.", "cart")
+        free = booking_engine.pool_free_units(conn, campus, device_type, start, end, now=_local_now(), diag=diag, cart_id=cart_id or None)
         policy = booking_engine.get_policy(conn, campus, booking_engine.POOL_CATEGORY)
     except booking_engine.BookingError as e:
         conn.close()
@@ -6090,7 +6122,8 @@ async def pool_candidates(bid: str, start_at: Optional[str] = None, end_at: Opti
     except booking_engine.BookingError as e:
         conn.close()
         raise HTTPException(400, e.message)
-    free = booking_engine.pool_free_units(conn, b["campus"], b["device_type"], win[0], win[1], bid, now=_local_now())
+    free = booking_engine.pool_free_units(conn, b["campus"], b["device_type"], win[0], win[1], bid, now=_local_now(),
+                                          cart_id=b.get("pool_resource_id") or None)
     reserved = [r["asset_id"] for r in conn.execute("SELECT asset_id FROM booking_units WHERE booking_id = ? AND status = 'reserved'", (bid,))]
     conn.close()
     return {"units": free, "reserved": reserved, "units_requested": b["units_requested"], "label": booking_engine.pool_label(b["device_type"])}
@@ -6115,7 +6148,22 @@ async def create_loan(body: LoanIn, user: dict = Depends(get_current_user)):
         if not campus:
             conn.close()
             raise HTTPException(400, "Pilih kampus untuk peminjaman ini.")
-        target = {"campus": campus, "category": booking_engine.POOL_CATEGORY, "kind": "pool", "asset_id": None, "resource_id": None}
+        pool_cart = None
+        carts = smp_carts(conn, campus) if body.device_type == "laptop" else []
+        if body.cart_id or (carts and is_smp_user(user)):
+            by_id = {c["id"]: c for c in carts}
+            if not is_smp_user(user):
+                conn.close()
+                raise HTTPException(403, "Laptop cart SMP hanya dapat dipinjam guru SMP.")
+            if not body.cart_id or body.cart_id not in by_id:
+                conn.close()
+                raise HTTPException(400, "Pilih lokasi laptop (cart) untuk peminjaman guru SMP.")
+            pool_cart = by_id[body.cart_id]
+            if not pool_cart["has_schedule"]:
+                conn.close()
+                raise HTTPException(409, f"Jadwal {pool_cart['name']} belum dibuat, jadi laptop di sana belum dapat dipinjam. Hubungi Admin ICT.")
+        target = {"campus": campus, "category": booking_engine.POOL_CATEGORY, "kind": "pool", "asset_id": None, "resource_id": None,
+                  "pool_resource_id": pool_cart["id"] if pool_cart else None}
         info = {"name": f"{body.units} × {booking_engine.pool_label(body.device_type)}", "asset_tag": "pool",
                 "category": booking_engine.POOL_CATEGORY, "campus": campus}
     elif body.asset_id:
@@ -6166,6 +6214,7 @@ async def create_loan(body: LoanIn, user: dict = Depends(get_current_user)):
     data = {"campus": target["campus"], "kind": target["kind"], "asset_id": target["asset_id"], "resource_id": target["resource_id"],
             "category": target["category"], "requester_id": user["id"], "requester_name": user["name"], "start_at": start_at, "end_at": end_at,
             "units": body.units if (body.resource_id or body.device_type) else 1, "device_type": body.device_type or "",
+            "pool_resource_id": target.get("pool_resource_id"),
             "class_name": body.class_name, "subject": body.subject, "purpose": body.purpose,
             "use_location": body.use_location, "note": body.note, "take_home": body.take_home, "supervisor_id": supervisor_id,
             "terms_accepted": body.terms_accepted}

@@ -142,6 +142,7 @@ export default function LoanDetailPage() {
           <Row k={t("ln_requester")}>{loan.requester_name}</Row>
           <Row k={t("ln_period")}>{fmtDateTime(loan.start_at)} → {fmtDateTime(loan.end_at)}</Row>
           <Row k={t("ln_units")}>{loan.units_approved ?? loan.units_requested}</Row>
+          {loan.pool_cart && <Row k={t("pool_cart")}>{loan.pool_cart}</Row>}
           <Row k={t("ln_purpose")}>{loan.purpose}</Row>
           <Row k={t("ln_class")}>{[loan.class_name, loan.subject].filter(Boolean).join(" · ")}</Row>
           <Row k={t("ln_use_location")}>{loan.use_location}</Row>

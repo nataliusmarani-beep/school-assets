@@ -800,3 +800,57 @@ def test_bulk_assign_can_put_the_assets_in_a_room(client, make_user, db, monkeyp
     assert r.status_code == 200 and r.json()["created"] == 3
     locs = {x[0] for x in db.execute("SELECT location FROM assets WHERE id IN (?,?,?)", ids).fetchall()}
     assert locs == {"Kelas 7A"}                    # the master's spelling
+
+
+def _smp_carts(db):
+    """Cart 1 (Lab Komputer SD, has a schedule, laptops l0 l1), cart 2 (Lab Komputer SMP, no schedule yet, laptop l2), l3 stands loose."""
+    ids = seed(db, n_laptops=4, n_ipads=0)
+    server.booking_engine.init_booking_schema(db)
+    for rid, name, loc in (("c1", "Laptop Cart SMP", "Lab Komputer SD"), ("c2", "Laptop Cart SMP Lab SMP", "Lab Komputer SMP")):
+        db.execute("INSERT INTO resources (id,campus,name,kind,capacity,location,unit,created_at) VALUES (?,?,?,?,?,?,'SMP','t')",
+                   (rid, KK, name, "laptop_cart", 30, loc))
+    for aid, rid in (("laptop0", "c1"), ("laptop1", "c1"), ("laptop2", "c2")):
+        db.execute("UPDATE asset_loan_settings SET resource_id = ? WHERE asset_id = ?", (rid, aid))
+    db.execute("INSERT INTO school_periods (id,campus,period_no,start_time,end_time) VALUES ('p1',?,1,'07:45','08:25')", (KK,))
+    db.execute("""INSERT INTO fixed_schedules (id,campus,academic_year,semester,resource_id,class_name,subject,teacher_name,weekday,period_from,period_to,units,valid_from,valid_to,created_at)
+                  VALUES ('s1',?,'2026-2027','Ganjil','c1','8A','IPA','Ms X',4,1,1,2,'2026-07-20','2026-12-18','t')""", (KK,))
+    db.commit()
+    return ids
+
+
+def _set_dept(db, user, dept):
+    db.execute("UPDATE users SET department = ? WHERE id = ?", (dept, user["id"]))
+    db.commit()
+
+
+def test_smp_teacher_borrows_from_a_chosen_cart_location(client, make_user, db, monkeypatch):
+    monkeypatch.setattr(server, "_local_now", lambda: server.datetime(2026, 8, 3, 9, 0))
+    _smp_carts(db)
+    smp, sd, ict = make_user("staff", KK), make_user("staff", KK), make_user("ict_admin", KK)
+    _set_dept(db, smp, "SMP Teacher"); _set_dept(db, sd, "SD Teacher")
+    src = client.get("/api/loans/pool/sources", headers=auth(smp), params={"device_type": "laptop"}).json()
+    assert src["required"] is True
+    assert {(c["id"], c["location"], c["has_schedule"]) for c in src["carts"]} == {("c1", "Lab Komputer SD", True), ("c2", "Lab Komputer SMP", False)}
+    assert client.get("/api/loans/pool/sources", headers=auth(sd), params={"device_type": "laptop"}).json() == {"required": False, "carts": []}
+    body = {"device_type": "laptop", "units": 1, "start_at": "2026-08-05T08:00", "end_at": "2026-08-05T09:00", "purpose": "Kelas", "terms_accepted": True}
+    assert client.post("/api/loans", headers=auth(smp), json=body).status_code == 400                       # must pick a location
+    r2 = client.post("/api/loans", headers=auth(smp), json={**body, "cart_id": "c2"})
+    assert r2.status_code == 409 and "belum dibuat" in r2.json()["detail"]                                  # no schedule yet: not lendable
+    av = client.get("/api/loans/pool/availability", headers=auth(smp), params={"device_type": "laptop", "start_at": body["start_at"], "end_at": body["end_at"], "cart_id": "c2"}).json()
+    assert av["free"] == 0 and av["why"].get("no_schedule")
+    av1 = client.get("/api/loans/pool/availability", headers=auth(smp), params={"device_type": "laptop", "start_at": body["start_at"], "end_at": body["end_at"], "cart_id": "c1"}).json()
+    assert av1["free"] == 2                                                                                  # only that cart's laptops
+    ok = client.post("/api/loans", headers=auth(smp), json={**body, "cart_id": "c1", "units": 2})
+    assert ok.status_code == 200 and ok.json()["pool_cart"] == "Laptop Cart SMP — Lab Komputer SD"
+    cands = client.get(f"/api/loans/{ok.json()['id']}/candidates", headers=auth(ict)).json()["units"]
+    assert {u["id"] for u in cands} == {"laptop0", "laptop1"}                                                # never the other cart or the loose laptop
+
+
+def test_cart_choice_is_only_for_smp_teachers_others_unchanged(client, make_user, db, monkeypatch):
+    monkeypatch.setattr(server, "_local_now", lambda: server.datetime(2026, 8, 3, 9, 0))
+    _smp_carts(db)
+    sd = make_user("staff", KK)
+    _set_dept(db, sd, "SD Teacher")
+    body = {"device_type": "laptop", "units": 1, "start_at": "2026-08-05T08:00", "end_at": "2026-08-05T09:00", "purpose": "Kelas", "terms_accepted": True}
+    assert client.post("/api/loans", headers=auth(sd), json=body).status_code == 200                       # today's procedure
+    assert client.post("/api/loans", headers=auth(sd), json={**body, "cart_id": "c1"}).status_code == 403

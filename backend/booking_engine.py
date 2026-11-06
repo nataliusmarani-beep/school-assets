@@ -247,6 +247,7 @@ def init_booking_schema(conn):
     _ensure_column(conn, "resources", "category", "TEXT NOT NULL DEFAULT 'IT Equipment'")
     _ensure_column(conn, "bookings", "schedule_id", "TEXT")
     _ensure_column(conn, "bookings", "device_type", "TEXT NOT NULL DEFAULT ''")          # 'laptop' | 'ipad' for kind 'pool'
+    _ensure_column(conn, "bookings", "pool_resource_id", "TEXT")                           # the cart a pool loan draws its units from (SMP teachers)
     _ensure_column(conn, "bookings", "before_photo", "TEXT NOT NULL DEFAULT ''")           # condition photo ICT attaches when approving
     _ensure_column(conn, "loan_policies", "max_units", "INTEGER NOT NULL DEFAULT 10")      # most units one request may ask for
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_bookings_fixed_session ON bookings(schedule_id, start_at) WHERE schedule_id IS NOT NULL")
@@ -436,18 +437,29 @@ def _committed_marks() -> str:
     return ",".join("?" * len(COMMITTED_STATUSES))
 
 
+def cart_has_schedule(conn, resource_id: str) -> bool:
+    """A cart with no fixed schedule yet cannot tell when its laptops are in class, so nothing is lent from it."""
+    return conn.execute("SELECT 1 FROM fixed_schedules WHERE resource_id = ? LIMIT 1", (resource_id,)).fetchone() is not None
+
+
 def pool_free_units(conn, campus: str, device_type: str, start: datetime, end: datetime,
-                    exclude_booking_id: Optional[str] = None, now: Optional[datetime] = None, diag: Optional[dict] = None) -> list:
+                    exclude_booking_id: Optional[str] = None, now: Optional[datetime] = None, diag: Optional[dict] = None,
+                    cart_id: Optional[str] = None) -> list:
     """Borrowable, active laptops / iPads of the campus that nobody holds during [start, end).
     A unit is busy when it is out on loan, reserved for another approved pool request, or booked as a single item.
     Units inside a cart also carry `cart_free`: how many more of that cart may be taken for this window."""
     if device_type not in POOL_TYPES:
         raise BookingError("Jenis perangkat tidak dikenal.", "device_type")
     words = POOL_TYPES[device_type][1]
-    rows = conn.execute("""SELECT a.id, a.name, a.asset_tag, a.item_type, a.brand, a.model, a.serial_number, s.resource_id, r.name AS resource_name
+    if cart_id and not cart_has_schedule(conn, cart_id):
+        if diag is not None:
+            diag.update({"registered": 0, "busy": 0, "carts": [], "no_schedule": True})
+        return []
+    only_cart, only_cart_p = (" AND s.resource_id = ?", [cart_id]) if cart_id else ("", [])
+    rows = conn.execute(f"""SELECT a.id, a.name, a.asset_tag, a.item_type, a.brand, a.model, a.serial_number, s.resource_id, r.name AS resource_name
                            FROM assets a JOIN asset_loan_settings s ON s.asset_id = a.id LEFT JOIN resources r ON r.id = s.resource_id
-                           WHERE s.borrowable = 1 AND a.status = 'active' AND a.campus = ? AND a.category = ?
-                           ORDER BY a.asset_tag""", (campus, POOL_CATEGORY)).fetchall()
+                           WHERE s.borrowable = 1 AND a.status = 'active' AND a.campus = ? AND a.category = ?{only_cart}
+                           ORDER BY a.asset_tag""", [campus, POOL_CATEGORY, *only_cart_p]).fetchall()
     cands = []
     for r in rows:
         hay = f"{r['item_type']} {r['name']} {r['model']}".lower()
@@ -513,7 +525,8 @@ def validate_pool_selection(conn, booking: dict, unit_ids: list, start: datetime
     """ICT's pick must be free units of the right kind, within what each cart can still give for that window."""
     if len(set(unit_ids)) != len(unit_ids):
         raise BookingError("Unit terpilih terduplikasi.", "units")
-    free = {u["id"]: u for u in pool_free_units(conn, booking["campus"], booking["device_type"], start, end, booking["id"], now=now)}
+    free = {u["id"]: u for u in pool_free_units(conn, booking["campus"], booking["device_type"], start, end, booking["id"], now=now,
+                                                 cart_id=booking.get("pool_resource_id") or None)}
     per_cart = {}
     for uid in unit_ids:
         u = free.get(uid)
@@ -667,7 +680,8 @@ def reserve(conn, *, data: dict, now: datetime, override: bool = False, override
             max_units = int(check["policy"].get("max_units") or 10)
             if units > max_units and not override:
                 raise BookingError(f"Satu permintaan maksimal {max_units} unit untuk kategori ini.", "max_units")
-            free_n = pool_free_count(pool_free_units(conn, data["campus"], device_type, start, end, now=now))
+            free_n = pool_free_count(pool_free_units(conn, data["campus"], device_type, start, end, now=now,
+                                                     cart_id=data.get("pool_resource_id") or None))
             if units > free_n:
                 raise BookingError(f"Tidak tersedia pada waktu tersebut. Tersisa {free_n} {pool_label(device_type)}.", "conflict")
         else:
@@ -687,13 +701,13 @@ def reserve(conn, *, data: dict, now: datetime, override: bool = False, override
         number = next_booking_number(conn, now.year)
         conn.execute("""INSERT INTO bookings (id, number, campus, kind, resource_id, asset_id, category, requester_id, requester_name,
             start_at, end_at, units_requested, units_approved, class_name, subject, purpose, use_location, note, take_home,
-            supervisor_id, is_late_request, override_reason, status, terms_accepted, created_at, updated_at, device_type)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            supervisor_id, is_late_request, override_reason, status, terms_accepted, created_at, updated_at, device_type, pool_resource_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                      (bid, number, data["campus"], data["kind"], resource_id, asset_id, data["category"], data["requester_id"],
                       data["requester_name"], start.strftime(FMT), end.strftime(FMT), units, units if status == "approved" else None,
                       data.get("class_name", ""), data.get("subject", ""), data.get("purpose", ""), data.get("use_location", ""),
                       data.get("note", ""), int(take_home), data.get("supervisor_id"), int(check["is_late"]),
-                      override_reason.strip() if override else "", status, 1, ts, ts, device_type))
+                      override_reason.strip() if override else "", status, 1, ts, ts, device_type, (data.get("pool_resource_id") or None) if device_type else None))
         conn.commit()
     except BaseException:
         conn.rollback()
@@ -919,7 +933,8 @@ def check_out(conn, *, booking_id: str, units: list, now: datetime, by_id: str, 
         if b["kind"] == "pool":
             reserved = {r["asset_id"]: r["id"] for r in conn.execute(
                 "SELECT id, asset_id FROM booking_units WHERE booking_id = ? AND status = 'reserved'", (booking_id,))}
-            free_ids = {x["id"] for x in pool_free_units(conn, b["campus"], b["device_type"], parse_dt(b["start_at"]), parse_dt(b["end_at"]), booking_id, now=now)}
+            free_ids = {x["id"] for x in pool_free_units(conn, b["campus"], b["device_type"], parse_dt(b["start_at"]), parse_dt(b["end_at"]), booking_id, now=now,
+                                           cart_id=b["pool_resource_id"] or None)}
         for u in units:
             aid = u.get("asset_id")
             if not aid or aid in seen:

@@ -135,21 +135,29 @@ function RequestDialog({ asset, onClose, onDone, t, canOverride }) {
 /* Unscheduled laptop / iPad loan: the teacher only says how many; ICT picks the exact units when approving. */
 function PoolRequestDialog({ device, onClose, onDone, t }) {
   const { user } = useAuth();
-  const empty = { campus: "", units: 1, start_at: "", end_at: "", purpose: "", class_name: "", subject: "", use_location: "", note: "", terms_accepted: false };
+  const empty = { campus: "", cart_id: "", units: 1, start_at: "", end_at: "", purpose: "", class_name: "", subject: "", use_location: "", note: "", terms_accepted: false };
   const [f, setF] = useState(empty);
   const [avail, setAvail] = useState(null);
+  const [src, setSrc] = useState({ required: false, carts: [] });      // SMP teachers pick the laptop cart (= its location)
   const [busy, setBusy] = useState(false);
   const set = (patch) => setF((p) => ({ ...p, ...patch }));
   useEffect(() => { setF(empty); setAvail(null); }, [device]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    setSrc({ required: false, carts: [] });
+    if (device !== "laptop" || (!user?.campus && !f.campus)) return;
+    api.get("/loans/pool/sources", { params: { device_type: device, campus: f.campus || undefined } })
+      .then((r) => { setSrc(r.data); setF((p) => (r.data.carts.some((c) => c.id === p.cart_id) ? p : { ...p, cart_id: "" })); })
+      .catch(() => {});
+  }, [device, f.campus]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!device || !f.start_at || !f.end_at || f.end_at <= f.start_at || (!user?.campus && !f.campus)) { setAvail(null); return; }
+    if (!device || !f.start_at || !f.end_at || f.end_at <= f.start_at || (!user?.campus && !f.campus) || (src.required && !f.cart_id)) { setAvail(null); return; }
     const h = setTimeout(() => {
-      api.get("/loans/pool/availability", { params: { device_type: device, start_at: f.start_at, end_at: f.end_at, campus: f.campus || undefined } })
+      api.get("/loans/pool/availability", { params: { device_type: device, start_at: f.start_at, end_at: f.end_at, campus: f.campus || undefined, cart_id: f.cart_id || undefined } })
         .then((r) => setAvail(r.data)).catch(() => setAvail(null));
     }, 300);
     return () => clearTimeout(h);
-  }, [device, f.start_at, f.end_at, f.campus]);
+  }, [device, f.start_at, f.end_at, f.campus, f.cart_id, src.required]);
 
   if (!device) return null;
   const label = device === "ipad" ? "iPad" : "Laptop";
@@ -158,7 +166,7 @@ function PoolRequestDialog({ device, onClose, onDone, t }) {
   const submit = async () => {
     setBusy(true);
     try {
-      const r = await api.post("/loans", { device_type: device, ...f, units });
+      const r = await api.post("/loans", { device_type: device, ...f, cart_id: f.cart_id || undefined, units });
       toast.success(`${t("ln_submitted")} ${r.data.number}`);
       (r.data.warnings || []).forEach((w) => toast.message(w));
       onDone(r.data);
@@ -176,6 +184,14 @@ function PoolRequestDialog({ device, onClose, onDone, t }) {
                 <option value="">—</option>
                 {["YPJ Kuala Kencana", "YPJ TPRA"].map((x) => <option key={x} value={x}>{x}</option>)}
               </select></div>)}
+          {src.required && (
+            <div className="sm:col-span-2" data-testid="pool-cart-field"><Label className="label-mono">{t("pool_cart")} *</Label>
+              <select value={f.cart_id} onChange={(e) => set({ cart_id: e.target.value })} className="mt-2 w-full h-10 border border-slate-200 px-3 text-sm bg-white" data-testid="pool-cart">
+                <option value="">—</option>
+                {src.carts.map((c) => <option key={c.id} value={c.id} disabled={!c.has_schedule}>
+                  {c.name}{c.location ? ` — ${c.location}` : ""}{c.has_schedule ? "" : ` (${t("pool_cart_no_schedule")})`}</option>)}
+              </select>
+              <p className="text-xs text-slate-400 mt-1.5">{t("pool_cart_hint")}</p></div>)}
           <div className="sm:col-span-2"><Label className="label-mono">{t("pool_units")} *</Label>
             <Input type="number" min="1" value={f.units} onChange={(e) => set({ units: e.target.value })} className="mt-2 rounded-none" data-testid="pool-units" /></div>
           <div><Label className="label-mono">{t("ln_start")} *</Label>
@@ -188,7 +204,7 @@ function PoolRequestDialog({ device, onClose, onDone, t }) {
             {avail.free} {label} {t("pool_free_now")} · {t("pool_max_per_request")} {avail.max_units}
             {avail.free === 0 && avail.why && (
               <div className="mt-1 text-[11px] opacity-80" data-testid="pool-why">
-                {avail.why.registered === 0 ? t("pool_why_none") :
+                {avail.why.no_schedule ? t("pool_cart_no_schedule_why") : avail.why.registered === 0 ? t("pool_why_none") :
                   `${t("pool_why_total")} ${avail.why.registered} · ${t("pool_why_busy")} ${avail.why.busy} · ${t("pool_why_cart")} ${avail.why.held_by_cart || 0}${(avail.why.carts || []).length ? ` (${avail.why.carts.join(", ")})` : ""}`}
               </div>)}
           </div>)}
@@ -208,7 +224,7 @@ function PoolRequestDialog({ device, onClose, onDone, t }) {
         </label>
         <DialogFooter>
           <Button variant="outline" className="rounded-none" onClick={onClose}>{t("cancel")}</Button>
-          <Button className="rounded-none" disabled={busy || units < 1 || tooMany || (!user?.campus && !f.campus) || !f.start_at || !f.end_at || !f.purpose.trim() || !f.terms_accepted} onClick={submit} data-testid="pool-submit">{t("ln_submit")}</Button>
+          <Button className="rounded-none" disabled={busy || units < 1 || tooMany || (src.required && !f.cart_id) || (!user?.campus && !f.campus) || !f.start_at || !f.end_at || !f.purpose.trim() || !f.terms_accepted} onClick={submit} data-testid="pool-submit">{t("ln_submit")}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
