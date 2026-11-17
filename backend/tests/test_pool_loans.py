@@ -854,3 +854,19 @@ def test_cart_choice_is_only_for_smp_teachers_others_unchanged(client, make_user
     body = {"device_type": "laptop", "units": 1, "start_at": "2026-08-05T08:00", "end_at": "2026-08-05T09:00", "purpose": "Kelas", "terms_accepted": True}
     assert client.post("/api/loans", headers=auth(sd), json=body).status_code == 200                       # today's procedure
     assert client.post("/api/loans", headers=auth(sd), json={**body, "cart_id": "c1"}).status_code == 403
+
+
+def test_scheduled_class_blocks_cart_loan_whatever_units_it_lists(client, make_user, db, monkeypatch):
+    monkeypatch.setattr(server, "_local_now", lambda: server.datetime(2026, 8, 3, 9, 0))
+    _smp_carts(db)                                  # c1 has a Friday period-1 class (07:45-08:25) listing only 2 units
+    db.execute("UPDATE assets SET status='active'"); db.commit()
+    smp = make_user("staff", KK)
+    _set_dept(db, smp, "SMP Teacher")
+    body = {"device_type": "laptop", "units": 1, "cart_id": "c1", "purpose": "Kelas", "terms_accepted": True}
+    clash = {"start_at": "2026-08-07T07:45", "end_at": "2026-08-07T08:25"}        # Friday = the class
+    r = client.post("/api/loans", headers=auth(smp), json={**body, **clash})
+    assert r.status_code == 409 and "kelas terjadwal" in r.json()["detail"] and "8A" in r.json()["detail"]
+    av = client.get("/api/loans/pool/availability", headers=auth(smp), params={"device_type": "laptop", "cart_id": "c1", **clash}).json()
+    assert av["free"] == 0 and "kelas terjadwal" in av["why"]["class_scheduled"]
+    free = {"start_at": "2026-08-07T09:00", "end_at": "2026-08-07T10:00"}         # same day, no class
+    assert client.post("/api/loans", headers=auth(smp), json={**body, **free}).status_code == 200

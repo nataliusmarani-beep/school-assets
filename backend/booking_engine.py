@@ -442,6 +442,24 @@ def cart_has_schedule(conn, resource_id: str) -> bool:
     return conn.execute("SELECT 1 FROM fixed_schedules WHERE resource_id = ? LIMIT 1", (resource_id,)).fetchone() is not None
 
 
+def cart_class_conflict(conn, resource_id: str, start: datetime, end: datetime) -> Optional[dict]:
+    """The scheduled class that uses this cart during [start, end), or None. While a class is scheduled the whole cart
+    belongs to it, whatever number of units the schedule lists. A day marked "Libur"/holiday, or a handed-over session
+    that was cancelled, does not count."""
+    for occ in sorted(fixed_occurrences(conn, resource_id, start.date(), end.date()), key=lambda o: o["start"]):
+        if occ["materialized"] and occ["booking_status"] in ("cancelled", "rejected"):
+            continue
+        if overlaps(occ["start"], occ["end"], start, end):
+            return occ
+    return None
+
+
+def class_conflict_message(occ: dict, cart_name: str = "") -> str:
+    what = " – ".join(x for x in (occ["class_name"], occ["subject"]) if x)
+    return (f"Pada waktu tersebut {cart_name or 'cart ini'} dipakai kelas terjadwal"
+            f"{f' ({what})' if what else ''}, {occ['start'].strftime('%H:%M')}–{occ['end'].strftime('%H:%M')}. Pilih waktu lain.")
+
+
 def pool_free_units(conn, campus: str, device_type: str, start: datetime, end: datetime,
                     exclude_booking_id: Optional[str] = None, now: Optional[datetime] = None, diag: Optional[dict] = None,
                     cart_id: Optional[str] = None) -> list:
@@ -455,6 +473,13 @@ def pool_free_units(conn, campus: str, device_type: str, start: datetime, end: d
         if diag is not None:
             diag.update({"registered": 0, "busy": 0, "carts": [], "no_schedule": True})
         return []
+    if cart_id:
+        occ = cart_class_conflict(conn, cart_id, start, end)
+        if occ:
+            if diag is not None:
+                cn = conn.execute("SELECT name FROM resources WHERE id = ?", (cart_id,)).fetchone()
+                diag.update({"registered": 0, "busy": 0, "carts": [], "class_scheduled": class_conflict_message(occ, cn["name"] if cn else "")})
+            return []
     only_cart, only_cart_p = (" AND s.resource_id = ?", [cart_id]) if cart_id else ("", [])
     rows = conn.execute(f"""SELECT a.id, a.name, a.asset_tag, a.item_type, a.brand, a.model, a.serial_number, s.resource_id, r.name AS resource_name
                            FROM assets a JOIN asset_loan_settings s ON s.asset_id = a.id LEFT JOIN resources r ON r.id = s.resource_id
@@ -680,8 +705,11 @@ def reserve(conn, *, data: dict, now: datetime, override: bool = False, override
             max_units = int(check["policy"].get("max_units") or 10)
             if units > max_units and not override:
                 raise BookingError(f"Satu permintaan maksimal {max_units} unit untuk kategori ini.", "max_units")
-            free_n = pool_free_count(pool_free_units(conn, data["campus"], device_type, start, end, now=now,
+            diag = {}
+            free_n = pool_free_count(pool_free_units(conn, data["campus"], device_type, start, end, now=now, diag=diag,
                                                      cart_id=data.get("pool_resource_id") or None))
+            if diag.get("class_scheduled"):          # fixed classes always come first, ICT override included
+                raise BookingError(diag["class_scheduled"], "conflict")
             if units > free_n:
                 raise BookingError(f"Tidak tersedia pada waktu tersebut. Tersisa {free_n} {pool_label(device_type)}.", "conflict")
         else:

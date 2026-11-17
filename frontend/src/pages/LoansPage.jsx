@@ -204,7 +204,7 @@ function PoolRequestDialog({ device, onClose, onDone, t }) {
             {avail.free} {label} {t("pool_free_now")} · {t("pool_max_per_request")} {avail.max_units}
             {avail.free === 0 && avail.why && (
               <div className="mt-1 text-[11px] opacity-80" data-testid="pool-why">
-                {avail.why.no_schedule ? t("pool_cart_no_schedule_why") : avail.why.registered === 0 ? t("pool_why_none") :
+                {avail.why.class_scheduled ? avail.why.class_scheduled : avail.why.no_schedule ? t("pool_cart_no_schedule_why") : avail.why.registered === 0 ? t("pool_why_none") :
                   `${t("pool_why_total")} ${avail.why.registered} · ${t("pool_why_busy")} ${avail.why.busy} · ${t("pool_why_cart")} ${avail.why.held_by_cart || 0}${(avail.why.carts || []).length ? ` (${avail.why.carts.join(", ")})` : ""}`}
               </div>)}
           </div>)}
