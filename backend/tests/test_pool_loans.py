@@ -870,3 +870,26 @@ def test_scheduled_class_blocks_cart_loan_whatever_units_it_lists(client, make_u
     assert av["free"] == 0 and "kelas terjadwal" in av["why"]["class_scheduled"]
     free = {"start_at": "2026-08-07T09:00", "end_at": "2026-08-07T10:00"}         # same day, no class
     assert client.post("/api/loans", headers=auth(smp), json={**body, **free}).status_code == 200
+
+
+def test_script_rejects_old_pending_requests_that_clash_with_a_class(client, make_user, db, monkeypatch, capsys):
+    import sys
+    sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[1]))
+    import reject_class_conflicts as rcc
+    monkeypatch.setattr(server, "_local_now", lambda: server.datetime(2026, 8, 3, 9, 0))
+    _smp_carts(db)
+    smp = make_user("staff", KK)
+    _set_dept(db, smp, "SMP Teacher")
+    body = {"device_type": "laptop", "units": 1, "cart_id": "c1", "purpose": "Kelas", "terms_accepted": True}
+    ok = client.post("/api/loans", headers=auth(smp), json={**body, "start_at": "2026-08-07T09:00", "end_at": "2026-08-07T10:00"}).json()
+    old = client.post("/api/loans", headers=auth(smp), json={**body, "start_at": "2026-08-07T11:00", "end_at": "2026-08-07T12:00"}).json()
+    db.execute("UPDATE bookings SET start_at='2026-08-07T07:45', end_at='2026-08-07T08:25' WHERE id=?", (old["id"],)); db.commit()
+    monkeypatch.setattr(sys, "argv", ["x"])
+    rcc.main()
+    assert "1 dari 2" in capsys.readouterr().out
+    assert db.execute("SELECT status FROM bookings WHERE id=?", (old["id"],)).fetchone()[0] == "pending_ict"      # dry run
+    monkeypatch.setattr(sys, "argv", ["x", "--apply"])
+    rcc.main()
+    st = lambda i: db.execute("SELECT status FROM bookings WHERE id=?", (i,)).fetchone()[0]
+    assert st(old["id"]) == "rejected" and st(ok["id"]) == "pending_ict"
+    assert db.execute("SELECT COUNT(*) FROM notification_queue WHERE kind='loan_decided' AND ref_id=?", (old["id"],)).fetchone()[0] == 1
