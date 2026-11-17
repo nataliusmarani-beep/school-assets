@@ -199,3 +199,26 @@ def test_ipad_cart_rejects_fixed_schedule_of_other_unit(client, make_user, db):
     assert bad.status_code == 409 and "unit SD" in bad.text
     ok = client.post("/api/loans/schedules", headers=auth(ict), json=schedule_body(rid, class_name="4B", units=2))
     assert ok.status_code == 200, ok.text
+
+
+def test_d5_schedule_import_copies_e5_settings_and_refuses_twice(db, monkeypatch, capsys):
+    import sys
+    import import_cart_d5_schedule as imp
+    for rid, name in (("e5", imp.REFERENCE), ("d5", imp.TARGET)):
+        db.execute("INSERT INTO resources (id,campus,name,kind,capacity,unit,created_at) VALUES (?,?,?,'laptop_cart',25,'SMP','t')", (rid, KK, name))
+    for no in range(1, 10):
+        db.execute("INSERT INTO school_periods (id,campus,period_no,start_time,end_time,unit) VALUES (?,?,?,?,?,'SMP')", (f"p{no}", KK, no, f"{6 + no:02d}:00", f"{6 + no:02d}:40"))
+    db.execute("""INSERT INTO fixed_schedules (id,campus,academic_year,semester,resource_id,class_name,weekday,period_from,period_to,units,valid_from,valid_to,created_at)
+                  VALUES ('s1',?,'2026-2027','Ganjil','e5','8A',0,1,1,2,'2026-07-20','2026-12-18','t')""", (KK,))
+    db.commit()
+    monkeypatch.setattr(sys, "argv", ["x"])
+    imp.main()
+    out = capsys.readouterr().out
+    assert "28 sesi, 0 bermasalah" in out and db.execute("SELECT COUNT(*) FROM fixed_schedules WHERE resource_id='d5'").fetchone()[0] == 0
+    monkeypatch.setattr(sys, "argv", ["x", "--apply"])
+    imp.main()
+    rows = db.execute("SELECT * FROM fixed_schedules WHERE resource_id='d5'").fetchall()
+    assert len(rows) == 28 and {(r["academic_year"], r["valid_from"], r["valid_to"]) for r in rows} == {("2026-2027", "2026-07-20", "2026-12-18")}
+    with __import__("pytest").raises(SystemExit):
+        imp.main()                                  # second run: refuses, nothing doubled
+    assert db.execute("SELECT COUNT(*) FROM fixed_schedules WHERE resource_id='d5'").fetchone()[0] == 28
