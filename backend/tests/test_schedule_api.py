@@ -85,12 +85,12 @@ def test_off_schedule_request_for_cart_by_periods(client, make_user, db, monkeyp
     rid = setup_cart(client, ict, 3, db)
     client.post("/api/loans/schedules", headers=auth(ict), json=schedule_body(rid, units=2))
     body = {"resource_id": rid, "units": 2, "date": "2026-08-10", "period_from": 3, "period_to": 4, "purpose": "Remedial", "class_name": "8B", "terms_accepted": True}
-    full = client.post("/api/loans", headers=auth(teacher), json=body)            # only 1 free while 7A has 2 of 3
-    assert full.status_code == 409 and "Tersisa 1" in full.json()["detail"]
-    ok = client.post("/api/loans", headers=auth(teacher), json={**body, "units": 1})
+    full = client.post("/api/loans", headers=auth(teacher), json={**body, "units": 1})   # 7A has the cart (2 of 3 units listed): a class holds the whole cart
+    assert full.status_code == 409 and "kelas terjadwal" in full.json()["detail"]
+    ok = client.post("/api/loans", headers=auth(teacher), json={**body, "units": 1, "period_from": 1, "period_to": 2})   # no class in periods 1-2
     assert ok.status_code == 200, ok.text
     loan = ok.json()
-    assert loan["kind"] == "off_schedule" and loan["start_at"] == "2026-08-10T08:50" and loan["end_at"] == "2026-08-10T10:10"
+    assert loan["kind"] == "off_schedule" and loan["start_at"] == "2026-08-10T07:30" and loan["end_at"] == "2026-08-10T08:50"
     assert loan["asset"]["name"] == "Laptop Cart A"
     assert client.post("/api/loans", headers=auth(teacher), json={**body, "take_home": True}).status_code == 400
     assert client.post("/api/loans", headers=auth(teacher), json={"asset_id": "x", "resource_id": rid, "purpose": "x", "terms_accepted": True}).status_code == 400

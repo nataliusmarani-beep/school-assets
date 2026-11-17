@@ -893,3 +893,16 @@ def test_script_rejects_old_pending_requests_that_clash_with_a_class(client, mak
     st = lambda i: db.execute("SELECT status FROM bookings WHERE id=?", (i,)).fetchone()[0]
     assert st(old["id"]) == "rejected" and st(ok["id"]) == "pending_ict"
     assert db.execute("SELECT COUNT(*) FROM notification_queue WHERE kind='loan_decided' AND ref_id=?", (old["id"],)).fetchone()[0] == 1
+
+
+def test_script_also_rejects_pending_direct_cart_requests(db, monkeypatch, capsys):
+    import sys
+    import reject_class_conflicts as rcc
+    monkeypatch.setattr(server, "_local_now", lambda: server.datetime(2026, 8, 3, 9, 0))
+    _smp_carts(db)
+    db.execute("""INSERT INTO bookings (id,number,campus,kind,resource_id,category,requester_id,requester_name,start_at,end_at,units_requested,
+                  status,terms_accepted,created_at,updated_at) VALUES ('bk','PJM-1',?,'off_schedule','c1','IT Equipment','u','Febe','2026-08-07T07:45','2026-08-07T08:25',1,'pending_ict',1,'t','t')""", (KK,))
+    db.commit()
+    monkeypatch.setattr(sys, "argv", ["x", "--apply"])
+    rcc.main()
+    assert db.execute("SELECT status FROM bookings WHERE id='bk'").fetchone()[0] == "rejected"

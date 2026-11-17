@@ -197,6 +197,8 @@ DEFAULT_POLICIES = [
 COMMITTED_STATUSES = ("approved", "partially_approved", "in_use", "overdue")
 PENDING_STATUSES = ("submitted", "pending_supervisor", "pending_ict")
 FIXED_PRIORITY_NOTE = "Jadwal tetap selalu didahulukan."
+# A scheduled class holds the WHOLE of these (laptop / iPad carts): nothing is lent from them while a class is on, whatever units the schedule lists.
+WHOLE_CART_KINDS = ("laptop_cart", "ipad_cart")
 
 FMT = "%Y-%m-%dT%H:%M"
 
@@ -713,6 +715,11 @@ def reserve(conn, *, data: dict, now: datetime, override: bool = False, override
             if units > free_n:
                 raise BookingError(f"Tidak tersedia pada waktu tersebut. Tersisa {free_n} {pool_label(device_type)}.", "conflict")
         else:
+            if resource_id:
+                rr = conn.execute("SELECT name, kind FROM resources WHERE id = ?", (resource_id,)).fetchone()
+                occ = cart_class_conflict(conn, resource_id, start, end) if rr and rr["kind"] in WHOLE_CART_KINDS else None
+                if occ:
+                    raise BookingError(class_conflict_message(occ, rr["name"]), "conflict")
             avail = check_availability(conn, resource_id=resource_id, asset_id=asset_id, units=units, start=start, end=end)
             if not avail["ok"]:
                 raise BookingError(f"Tidak tersedia pada waktu tersebut. Tersisa {avail['free']} unit.", "conflict")
@@ -782,6 +789,11 @@ def decide(conn, *, booking_id: str, decision: str, by_id: str, by_name: str, no
                     raise BookingError(f"Pilih tepat {approved_units} unit {pool_label(b['device_type'])} yang akan dipinjamkan.", "units")
                 validate_pool_selection(conn, dict(b), unit_ids, start, end, now=now)
             else:
+                if b["resource_id"]:
+                    rr = conn.execute("SELECT name, kind FROM resources WHERE id = ?", (b["resource_id"],)).fetchone()
+                    occ = cart_class_conflict(conn, b["resource_id"], start, end) if rr and rr["kind"] in WHOLE_CART_KINDS else None
+                    if occ:
+                        raise BookingError(class_conflict_message(occ, rr["name"]), "conflict")
                 avail = check_availability(conn, resource_id=b["resource_id"], asset_id=b["asset_id"], units=approved_units,
                                            start=start, end=end, exclude_booking_id=b["id"])
                 if not avail["ok"]:
@@ -1254,7 +1266,8 @@ def week_cells(conn, res: dict, monday: date, periods: list, holidays: dict) -> 
                        for b in pending if overlaps(parse_dt(b["start_at"]), parse_dt(b["end_at"]), start, end)]
             used = _peak_usage(slots, start, end)
             cells.append({"period_no": p["period_no"], "start": start.strftime(FMT), "end": end.strftime(FMT), "used": used,
-                          "free": max(capacity - used, 0), "capacity": capacity, "items": items, "pending": waiting})
+                          "free": 0 if (res.get("kind") in WHOLE_CART_KINDS and any(i["type"] == "fixed" for i in items)) else max(capacity - used, 0),
+                          "capacity": capacity, "items": items, "pending": waiting})
         days.append({"date": d.isoformat(), "weekday": i, "holiday": holidays.get(d.isoformat()), "cells": cells})
     return days
 

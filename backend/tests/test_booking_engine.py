@@ -108,6 +108,7 @@ def test_fixed_schedule_blocks_resource_and_holiday_frees_it(db):
 
 def test_off_schedule_cannot_displace_fixed_class(db):
     add_resource(db, capacity=30)
+    db.execute("UPDATE resources SET kind = 'computer_lab'"); db.commit()      # a lab may still share its free seats; carts may not (below)
     add_fixed(db, units=20)                        # 10 units remain on Mondays 08:50-10:10
     ok = be.reserve(db, data=req(kind="off_schedule", category="IT Equipment", resource_id="cart1", units=10,
                                  start_at="2026-08-10T09:00", end_at="2026-08-10T10:00"), now=NOW)
@@ -416,3 +417,17 @@ def test_cart_checkout_requires_group_photo(db):
     with pytest.raises(be.BookingError) as e:
         be.check_out(db, booking_id=b["id"], units=be.bulk_units(db, b), now=datetime(2026, 8, 10, 8, 30), by_id="i", by_name="I")
     assert e.value.code == "photo"
+
+
+def test_class_holds_the_whole_cart_even_with_units_to_spare(db):
+    add_resource(db, capacity=30)
+    add_fixed(db, units=20)                        # the class lists 20 of 30 units, Mondays 08:50-10:10
+    with pytest.raises(be.BookingError) as e:
+        be.reserve(db, data=req(kind="off_schedule", category="IT Equipment", resource_id="cart1", units=10,
+                                start_at="2026-08-10T09:00", end_at="2026-08-10T10:00"), now=NOW)
+    assert e.value.code == "conflict" and "kelas terjadwal" in e.value.message
+    ok = be.reserve(db, data=req(kind="off_schedule", category="IT Equipment", resource_id="cart1", units=10,
+                                 start_at="2026-08-10T11:00", end_at="2026-08-10T12:00"), now=NOW)       # no class then
+    assert ok["status"] == "pending_ict"
+    cells = be.week_cells(db, {"id": "cart1", "campus": KK, "kind": "laptop_cart"}, datetime(2026, 8, 10).date(), be.periods_for(db, KK), {})
+    assert cells[0]["cells"][2]["free"] == 0       # period 3 on Monday shows "Penuh", so no request button

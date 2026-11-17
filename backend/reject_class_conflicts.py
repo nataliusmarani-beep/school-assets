@@ -1,4 +1,4 @@
-"""Reject pending laptop-cart loan requests that clash with a scheduled class on that cart.
+"""Reject pending laptop / iPad cart loan requests that clash with a scheduled class on that cart.
 
 Since the rule "a scheduled class holds the whole cart" was added, new requests are refused on submission; this
 clears the ones that were submitted before. Dry run by default (only lists); add --apply to really reject them.
@@ -23,12 +23,14 @@ def main():
 
     conn = server.get_conn()
     now = server._local_now()
-    rows = conn.execute("""SELECT b.*, r.name AS cart_name FROM bookings b JOIN resources r ON r.id = b.pool_resource_id
-                           WHERE b.kind = 'pool' AND b.status IN ('pending_ict', 'submitted') AND b.end_at > ?
+    rows = conn.execute("""SELECT b.*, r.name AS cart_name, COALESCE(b.pool_resource_id, b.resource_id) AS cart_id
+                           FROM bookings b JOIN resources r ON r.id = COALESCE(b.pool_resource_id, b.resource_id)
+                           WHERE b.kind IN ('pool', 'off_schedule') AND b.status IN ('pending_ict', 'submitted') AND b.end_at > ?
+                             AND (b.kind = 'pool' OR r.kind IN ('laptop_cart', 'ipad_cart'))
                            ORDER BY b.start_at""", (now.strftime(be.FMT),)).fetchall()
     hits = 0
     for b in rows:
-        occ = be.cart_class_conflict(conn, b["pool_resource_id"], be.parse_dt(b["start_at"]), be.parse_dt(b["end_at"]))
+        occ = be.cart_class_conflict(conn, b["cart_id"], be.parse_dt(b["start_at"]), be.parse_dt(b["end_at"]))
         if not occ:
             continue
         hits += 1
