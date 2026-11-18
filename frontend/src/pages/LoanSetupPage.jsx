@@ -118,6 +118,11 @@ function ResourcesTab({ campus, t, load, resources }) {
               <div><Label className="label-mono">{t("su_school_unit")}</Label><select className={SEL} value={edit.unit || ""} onChange={(e) => setEdit({ ...edit, unit: e.target.value })}><option value="">—</option>{SCHOOL_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}</select></div>
               <div><Label className="label-mono">{t("su_capacity")}</Label><Input type="number" min="1" className="mt-2 rounded-none" value={edit.capacity} onChange={(e) => setEdit({ ...edit, capacity: e.target.value })} /></div>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label className="label-mono">{t("su_notify_name")}</Label><Input className="mt-2 rounded-none" value={edit.notify_name || ""} onChange={(e) => setEdit({ ...edit, notify_name: e.target.value })} placeholder="Pak Yusriadi" data-testid="resource-notify-name" /></div>
+              <div><Label className="label-mono">{t("su_notify_phone")}</Label><Input className="mt-2 rounded-none" value={edit.notify_phone || ""} onChange={(e) => setEdit({ ...edit, notify_phone: e.target.value })} placeholder="0812xxxxxxxx" data-testid="resource-notify-phone" /></div>
+            </div>
+            <p className="text-xs text-slate-400">{t("su_notify_hint")}</p>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!edit.active} onChange={(e) => setEdit({ ...edit, active: e.target.checked })} /> {t("su_active")}</label>
           </div>}
           <DialogFooter><Button className="rounded-none" onClick={saveEdit}>{t("save_changes")}</Button></DialogFooter></DialogContent>

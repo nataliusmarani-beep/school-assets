@@ -906,3 +906,31 @@ def test_script_also_rejects_pending_direct_cart_requests(db, monkeypatch, capsy
     monkeypatch.setattr(sys, "argv", ["x", "--apply"])
     rcc.main()
     assert db.execute("SELECT status FROM bookings WHERE id='bk'").fetchone()[0] == "rejected"
+
+
+def test_new_cart_request_is_sent_by_whatsapp_to_that_carts_contact(client, make_user, db, monkeypatch):
+    monkeypatch.setattr(server, "_local_now", lambda: server.datetime(2026, 8, 3, 9, 0))
+    monkeypatch.setattr(server, "WHATSAPP_TOKEN", "tok")
+    sent = []
+    monkeypatch.setattr(server, "send_whatsapp", lambda phone, msg: (sent.append((phone, msg)) or (True, "")))
+    _smp_carts(db)
+    db.execute("UPDATE resources SET notify_phone='62811111', notify_name='Pak Yus' WHERE id='c1'")
+    db.execute("UPDATE resources SET notify_phone='62822222', notify_name='Bu Jeni' WHERE id='c2'"); db.commit()
+    smp = make_user("staff", KK)
+    _set_dept(db, smp, "SMP Teacher")
+    body = {"device_type": "laptop", "units": 2, "cart_id": "c1", "purpose": "Ujian", "terms_accepted": True,
+            "start_at": "2026-08-07T09:00", "end_at": "2026-08-07T10:00"}
+    assert client.post("/api/loans", headers=auth(smp), json=body).status_code == 200
+    assert [p for p, _ in sent] == ["62811111"]                                  # only that cart's contact, nobody else
+    assert "Pak Yus" in sent[0][1] and "2 laptop" in sent[0][1] and "Ujian" in sent[0][1] and "Laptop Cart SMP" in sent[0][1]
+    # a refused request (class on the cart) sends nothing
+    sent.clear()
+    assert client.post("/api/loans", headers=auth(smp), json={**body, "start_at": "2026-08-07T07:45", "end_at": "2026-08-07T08:25"}).status_code == 409
+    assert sent == []
+    # numbers are visible to managers only
+    ict = make_user("ict_admin", KK)
+    seen = lambda u: {r["id"]: r.get("notify_phone") for r in client.get("/api/loans/resources", headers=auth(u)).json()}
+    assert seen(ict)["c1"] == "62811111" and seen(smp)["c1"] is None
+    r = client.put("/api/loans/resources/c2", headers=auth(ict), json={"campus": KK, "name": "Laptop Cart SMP Lab SMP", "kind": "laptop_cart", "unit": "SMP",
+                                                                         "capacity": 30, "notify_phone": "0811-4992-414", "notify_name": "Bu Jeni"})
+    assert r.status_code == 200 and r.json()["notify_phone"] == "628114992414"

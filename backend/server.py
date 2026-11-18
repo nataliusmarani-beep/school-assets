@@ -5936,6 +5936,29 @@ class LoanIn(BaseModel):
     cart_id: Optional[str] = None             # SMP teachers: the laptop cart (location) the laptops come from
 
 
+def notify_cart_contact(conn, b: dict):
+    """WhatsApp the person in charge of the cart (resources.notify_phone) about a new request for it. Never breaks the request."""
+    try:
+        rid = b.get("pool_resource_id") or b.get("resource_id")
+        r = conn.execute("SELECT name, notify_phone, notify_name FROM resources WHERE id = ?", (rid,)).fetchone() if rid else None
+        if not r or not r["notify_phone"]:
+            return
+        what = f'{b["units_requested"]} laptop' if b["kind"] == "pool" and b["device_type"] == "laptop" else \
+            f'{b["units_requested"]} iPad' if b["kind"] == "pool" else f'{b["units_requested"]} unit'
+        lines = [f'Yth. {r["notify_name"] or "Bapak/Ibu"},', f'Ada pengajuan peminjaman baru untuk {r["name"]}.', "",
+                 f'No. Pengajuan: {b["number"]}', f'Pemohon: {b["requester_name"]}', f'Jumlah: {what}',
+                 f'Mulai: {b["start_at"].replace("T", " ")}', f'Selesai: {b["end_at"].replace("T", " ")}']
+        if b.get("class_name"):
+            lines.append(f'Kelas: {b["class_name"]}')
+        if b.get("purpose"):
+            lines.append(f'Keperluan: {b["purpose"]}')
+        lines += ["", "Mohon konfirmasi di aplikasi YPJ Assets."]
+        queue_whatsapp(conn, r["notify_phone"], f'[YPJ Assets] Pengajuan baru {b["number"]}: {r["name"]}',
+                       "".join(f"<p>{html_mod.escape(x)}</p>" for x in lines), "loan_cart_contact", b["id"])
+    except Exception as exc:
+        logger.warning("Cart contact WhatsApp failed: %s", exc)
+
+
 def _engine_call(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
@@ -6243,6 +6266,7 @@ async def create_loan(body: LoanIn, user: dict = Depends(get_current_user)):
             queue_email(conn, addr, f'[YPJ Assets] Pengajuan baru {b["number"]}: {a["name"]}',
                         _loan_mail(b, a, "Pengajuan Menunggu Konfirmasi", detail, "<p>Mohon konfirmasi di aplikasi YPJ Assets.</p>"),
                         "loan_new", b["id"])
+    notify_cart_contact(conn, b)
     view = _loan_view(conn, user, b, a)
     view["warnings"] = warnings
     conn.close()
@@ -6397,6 +6421,8 @@ class ResourceIn(BaseModel):
     location: str = ""
     unit: Literal["", "PAUD", "SD", "SMP"] = ""
     active: bool = True
+    notify_phone: str = ""                    # WhatsApp of the person told about every new request for this cart
+    notify_name: str = ""
 
 
 @api.get("/loans/resources")
@@ -6405,6 +6431,9 @@ async def list_resources(user: dict = Depends(get_current_user), campus: Optiona
     camps = _visible_campuses(user, campus)
     rows = conn.execute(f"SELECT * FROM resources WHERE campus IN ({','.join('?' * len(camps))}) ORDER BY campus, name", camps).fetchall()
     out = [_resource_view(conn, r) for r in rows]
+    for d in out:                              # the WhatsApp contact of a cart is for the people who manage it only
+        if not can_manage_loan(user, d["campus"], d["category"]):
+            d.pop("notify_phone", None); d.pop("notify_name", None)
     conn.close()
     return out
 
@@ -6415,8 +6444,9 @@ async def create_resource(body: ResourceIn, user: dict = Depends(get_current_use
         raise HTTPException(403, "Tidak diizinkan membuat cart/lab untuk kampus dan kategori ini")
     conn = get_conn()
     rid = str(uuid.uuid4())
-    conn.execute("INSERT INTO resources (id, campus, name, kind, category, capacity, location, unit, active, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                 (rid, body.campus, body.name.strip(), body.kind, body.category, body.capacity, body.location.strip(), body.unit, int(body.active), now_iso()))
+    conn.execute("INSERT INTO resources (id, campus, name, kind, category, capacity, location, unit, active, created_at, notify_phone, notify_name) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                 (rid, body.campus, body.name.strip(), body.kind, body.category, body.capacity, body.location.strip(), body.unit, int(body.active), now_iso(),
+                  normalize_phone(body.notify_phone), body.notify_name.strip()))
     conn.commit()
     out = _resource_view(conn, conn.execute("SELECT * FROM resources WHERE id = ?", (rid,)).fetchone())
     conn.close()
@@ -6430,8 +6460,9 @@ async def update_resource(rid: str, body: ResourceIn, user: dict = Depends(get_c
     if not (can_manage_loan(user, res["campus"], res["category"]) and can_manage_loan(user, res["campus"], body.category)) or body.campus != res["campus"]:
         conn.close()
         raise HTTPException(403, "Tidak diizinkan mengubah cart/lab ini")
-    conn.execute("UPDATE resources SET name = ?, kind = ?, category = ?, capacity = ?, location = ?, unit = ?, active = ? WHERE id = ?",
-                 (body.name.strip(), body.kind, body.category, body.capacity, body.location.strip(), body.unit, int(body.active), rid))
+    conn.execute("UPDATE resources SET name = ?, kind = ?, category = ?, capacity = ?, location = ?, unit = ?, active = ?, notify_phone = ?, notify_name = ? WHERE id = ?",
+                 (body.name.strip(), body.kind, body.category, body.capacity, body.location.strip(), body.unit, int(body.active),
+                  normalize_phone(body.notify_phone), body.notify_name.strip(), rid))
     conn.commit()
     out = _resource_view(conn, conn.execute("SELECT * FROM resources WHERE id = ?", (rid,)).fetchone())
     conn.close()

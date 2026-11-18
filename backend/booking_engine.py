@@ -247,6 +247,8 @@ def init_booking_schema(conn):
         if len(found) == 1:
             conn.execute("UPDATE resources SET unit = ? WHERE id = ?", (found[0], r["id"]))
     _ensure_column(conn, "resources", "category", "TEXT NOT NULL DEFAULT 'IT Equipment'")
+    _ensure_column(conn, "resources", "notify_phone", "TEXT NOT NULL DEFAULT ''")          # WhatsApp number (62...) told about every new request for this cart
+    _ensure_column(conn, "resources", "notify_name", "TEXT NOT NULL DEFAULT ''")           # who that is ("Pak Yusriadi")
     _ensure_column(conn, "bookings", "schedule_id", "TEXT")
     _ensure_column(conn, "bookings", "device_type", "TEXT NOT NULL DEFAULT ''")          # 'laptop' | 'ipad' for kind 'pool'
     _ensure_column(conn, "bookings", "pool_resource_id", "TEXT")                           # the cart a pool loan draws its units from (SMP teachers)
