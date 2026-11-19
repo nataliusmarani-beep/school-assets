@@ -3890,6 +3890,8 @@ def _assignment_request_html(to_name: str, items: list, by_name: str, note: str 
 
 def _assignment_approval_html(approver_name: str, items: list, to_name: str, by_name: str, note: str = "") -> str:
     import html as _h
+    # the button opens My Assets on exactly these hand-overs (by batch), ready to approve or reject
+    review = ",".join(dict.fromkeys(a["batch_id"] for a in items if a.get("batch_id")))
     note_html = (f"<p style='font-size:13px;color:#475569;'>Catatan: {_h.escape(note)}</p>" if note else "")
     return _email_shell(f"""
         <h2 style="margin:0 0 10px;font-size:22px;color:#0f172a;">Persetujuan serah terima aset</h2>
@@ -3900,7 +3902,8 @@ def _assignment_approval_html(approver_name: str, items: list, to_name: str, by_
         {note_html}
         <div style="border-left:3px solid #f2c14e;background:#fffbeb;padding:10px 14px;font-size:13px;color:#78350f;">
           Tekan <strong>Setujui</strong> agar {_h.escape(to_name)} dapat memeriksa dan menerima asetnya, atau <strong>Tolak</strong> dan tulis alasannya.
-        </div>""", eyebrow="Persetujuan serah terima", cta_label="Tinjau & putuskan", cta_url=f"{APP_URL}/my-assets")
+        </div>""", eyebrow="Persetujuan serah terima", cta_label="Tinjau & putuskan",
+        cta_url=f"{APP_URL}/my-assets?review={review}" if review else f"{APP_URL}/my-assets")
 
 
 def _assignment_response_html(a_list: list, accepted: bool, by_name: str, reason: str = "") -> str:

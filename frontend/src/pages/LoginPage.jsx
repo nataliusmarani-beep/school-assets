@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate, Navigate, Link } from "react-router-dom";
+import { useNavigate, useLocation, Navigate, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useLang } from "../context/LangContext";
 import { Button } from "../components/ui/button";
@@ -13,13 +13,15 @@ export default function LoginPage() {
   const { user, login } = useAuth();
   const { t } = useLang();
   const navigate = useNavigate();
+  const from = useLocation().state?.from;
+  const target = from?.pathname && from.pathname !== "/login" ? `${from.pathname}${from.search || ""}` : "/";   // where an e-mail link was heading
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
 
-  if (user) return <Navigate to="/" replace />;
+  if (user) return <Navigate to={target} replace />;
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -27,7 +29,7 @@ export default function LoginPage() {
     setSubmitting(true);
     try {
       await login(loginEmail, loginPassword);
-      navigate("/");
+      navigate(target, { replace: true });
     } catch (err) {
       setError(formatErr(err));
     } finally {
