@@ -333,9 +333,15 @@ export default function AssetsListPage() {
   const [campus, setCampus] = useState("all");
   const [category, setCategory] = useState("all");
   const [status, setStatus] = useState("all");
+  const [unit, setUnit] = useState("all");
   const [showImport, setShowImport] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [selected, setSelected] = useState(new Set());
+  // Ticked assets stay ticked when a filter, search or category hides them, so their records are kept here (id -> asset).
+  const known = useRef(new Map());
+  const selectedRef = useRef(selected);       // load() runs from timers, so it reads the latest ticks from here
+  selectedRef.current = selected;
+  const [, rerender] = useState(0);
   const [showBulk, setShowBulk] = useState(false);
   const [bulkUnit, setBulkUnit] = useState("");
 
@@ -373,6 +379,7 @@ export default function AssetsListPage() {
       if (campus !== "all") params.campus = campus;
       if (category !== "all") params.category = category;
       if (status !== "all") params.status = status;
+      if (unit !== "all") params.unit = unit;
       const res = await api.get("/assets/export", { params, responseType: "blob" });
       const url = URL.createObjectURL(res.data);
       const a = document.createElement("a");
@@ -390,9 +397,10 @@ export default function AssetsListPage() {
 
   const selectable = assets.filter((a) => !a.pending_assignment);
   // approval level shared by every ticked asset (null when they differ), so the matching button can be shown as the active one
-  const selLevels = assets.filter((a) => selected.has(a.id)).map((a) => Number(a.requires_assign_approval) || 0);
+  const selAssets = [...selected].map((id) => known.current.get(id)).filter(Boolean);
+  const selLevels = selAssets.map((a) => Number(a.requires_assign_approval) || 0);
   const commonLevel = selLevels.length && selLevels.every((l) => l === selLevels[0]) ? selLevels[0] : null;
-  const selAssets = assets.filter((a) => selected.has(a.id));
+  const hiddenSelected = [...selected].filter((id) => !assets.some((a) => a.id === id)).length;   // ticked but outside the current filter
   const commonOf = (vals) => (vals.length && vals.every((v) => v === vals[0]) ? vals[0] : "__mixed__");
   const commonUnit = commonOf(selAssets.map((a) => a.unit || ""));
   const commonLend = commonOf(selAssets.map((a) => (a.borrowable === null || a.borrowable === undefined ? "" : String(a.borrowable))));
@@ -402,7 +410,7 @@ export default function AssetsListPage() {
   // Accordion: assets grouped by category, each group collapsible with its asset count.
   // Groups stay collapsed by default; searching or filtering opens them so the matches are visible.
   const [openCats, setOpenCats] = useState(new Set());
-  const filtering = !!search || category !== "all" || campus !== "all" || status !== "all";
+  const filtering = !!search || category !== "all" || campus !== "all" || status !== "all" || unit !== "all";
   const catLabel = (c) => { const i = CATEGORY_VALUES.indexOf(c); return i >= 0 ? t(CATEGORY_KEYS[i]) : (c || "—"); };
   const groups = (() => {
     const by = new Map();
@@ -421,8 +429,23 @@ export default function AssetsListPage() {
     if (campus !== "all") params.campus = campus;
     if (category !== "all") params.category = category;
     if (status !== "all") params.status = status;
+    if (unit !== "all") params.unit = unit;
     api.get("/assets", { params })
-      .then((r) => { setAssets(r.data); setSelected((s) => new Set([...s].filter((id) => r.data.some((a) => a.id === id)))); })
+      .then(async (r) => {
+        r.data.forEach((a) => known.current.set(a.id, a));
+        setAssets(r.data);
+        // ticked assets that this view hides: re-read them (fresh badges after a bulk action) and forget the ones that no longer exist
+        const hidden = [...selectedRef.current].filter((id) => !r.data.some((a) => a.id === id));
+        const gone = new Set(hidden);
+        for (let i = 0; i < hidden.length; i += 100) {
+          try {
+            const h = await api.get("/assets", { params: { ids: hidden.slice(i, i + 100).join(",") } });
+            h.data.forEach((a) => { known.current.set(a.id, a); gone.delete(a.id); });
+          } catch { hidden.slice(i, i + 100).forEach((id) => gone.delete(id)); }
+        }
+        if (gone.size) { gone.forEach((id) => known.current.delete(id)); setSelected((s0) => new Set([...s0].filter((id) => !gone.has(id)))); }
+        rerender((n) => n + 1);
+      })
       .finally(() => setLoading(false));
   };
 
@@ -431,7 +454,7 @@ export default function AssetsListPage() {
     const t = setTimeout(load, 200);
     return () => clearTimeout(t);
     /* eslint-disable-next-line */
-  }, [search, campus, category, status]);
+  }, [search, campus, category, status, unit]);
 
   return (
     <div className="p-6 lg:p-10 max-w-[1600px] mx-auto" data-testid="assets-page">
@@ -475,7 +498,7 @@ export default function AssetsListPage() {
 
       {/* Filters */}
       <div className="bg-white border border-slate-200 p-4 mb-6 grid grid-cols-1 md:grid-cols-12 gap-3">
-        <div className="md:col-span-4 relative">
+        <div className="md:col-span-3 relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" strokeWidth={1.75} />
           <Input
             placeholder={t("search_placeholder")}
@@ -485,7 +508,7 @@ export default function AssetsListPage() {
             data-testid="asset-search-input"
           />
         </div>
-        <div className="md:col-span-3">
+        <div className="md:col-span-2">
           <Select value={campus} onValueChange={setCampus}>
             <SelectTrigger className="rounded-none border-slate-300" data-testid="filter-campus">
               <SelectValue placeholder={t("all_campuses")} />
@@ -500,6 +523,18 @@ export default function AssetsListPage() {
                   </span>
                 </SelectItem>
               ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="md:col-span-2">
+          <Select value={unit} onValueChange={setUnit}>
+            <SelectTrigger className="rounded-none border-slate-300" data-testid="filter-unit">
+              <SelectValue placeholder={t("all_units")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t("all_units")}</SelectItem>
+              {["paud", "sd", "smp", "admin", "shared"].map((u) => <SelectItem key={u} value={u}>{t(`unit_${u}`)}</SelectItem>)}
+              <SelectItem value="unset">{t("bu_unset")}</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -534,7 +569,7 @@ export default function AssetsListPage() {
 
       {isAdmin && selected.size > 0 && (
         <div className="sticky top-0 z-20 mb-3 flex flex-wrap items-center gap-3 bg-blue-50 border border-blue-200 px-4 py-2.5 text-sm shadow-sm" data-testid="bulk-transfer-bar">
-          <span className="font-medium text-blue-900">{t("bt_selected").replace("{n}", selected.size)}</span>
+          <span className="font-medium text-blue-900">{t("bt_selected").replace("{n}", selected.size)}{hiddenSelected > 0 && <span className="font-normal text-blue-700" data-testid="bulk-hidden-count"> · {t("bt_hidden").replace("{n}", hiddenSelected)}</span>}</span>
           <button onClick={() => setShowBulk(true)} className="bg-blue-800 hover:bg-blue-900 text-white px-3 py-1.5" data-testid="bulk-transfer-button">{t("bt_transfer")}</button>
           <Link to="/loans/labels" state={{ ids: [...selected] }} className="border border-blue-300 bg-white text-blue-900 hover:bg-blue-100 px-3 py-1.5" data-testid="bulk-print-labels">{t("qr_print_these")}</Link>
           <select value={bulkUnit} onChange={(e) => setBulkUnit(e.target.value)} className="border border-blue-200 bg-white px-2 py-1.5" data-testid="bulk-unit-select">
@@ -578,7 +613,7 @@ export default function AssetsListPage() {
                   <th className="py-3 px-4 w-8">
                     <input type="checkbox" data-testid="select-all-assets"
                       checked={selectable.length > 0 && selectable.every((a) => selected.has(a.id))}
-                      onChange={(e) => setSelected(e.target.checked ? new Set(selectable.map((a) => a.id)) : new Set())} />
+                      onChange={(e) => setSelected((s0) => { const n = new Set(s0); selectable.forEach((a) => e.target.checked ? n.add(a.id) : n.delete(a.id)); return n; })} />
                   </th>
                 )}
                 <th className="text-left font-medium label-mono py-3 px-4">{t("col_tag")}</th>
@@ -706,7 +741,7 @@ export default function AssetsListPage() {
 
       {isAdmin && (
         <BulkTransferDialog open={showBulk} onOpenChange={setShowBulk} t={t}
-          assets={assets.filter((a) => selected.has(a.id))}
+          assets={selAssets}
           onDone={() => { setSelected(new Set()); load(); }} />
       )}
 

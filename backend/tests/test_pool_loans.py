@@ -972,3 +972,18 @@ def test_contact_script_sets_every_cart_and_lab_of_a_location_and_labs_notify(cl
                                                                   "terms_accepted": True, "start_at": "2026-08-07T09:00", "end_at": "2026-08-07T10:00"})
     assert r.status_code == 200, r.text
     assert [p for p, _ in sent] == ["628114992414"] and "E5 | Lab Komputer SD" in sent[0][1] and "Lab. Komputer SD" in sent[0][1]
+
+
+def test_asset_list_filters_by_school_unit_and_can_reread_ticked_assets(client, make_user, db):
+    ids = seed(db, n_laptops=4, n_ipads=0)["laptop"]
+    for aid, unit in zip(ids[:4], ("smp", "smp", "sd", "")):
+        db.execute("UPDATE assets SET unit = ? WHERE id = ?", (unit, aid))
+    db.commit()
+    admin = make_user("super_admin", KK)
+    got = lambda **p: {a["id"] for a in client.get("/api/assets", headers=auth(admin), params=p).json()}
+    assert got(unit="smp") == set(ids[:2]) and got(unit="sd") == {ids[2]}
+    assert ids[3] in got(unit="unset") and not (got(unit="unset") & set(ids[:3]))
+    assert got(unit="smp", ids=f"{ids[0]},{ids[2]}") == {ids[0]}                   # filters and ids combine
+    assert got(ids=f"{ids[0]},{ids[3]}") == {ids[0], ids[3]}                         # re-read of ticked assets, whatever the filter
+    xl = client.get("/api/assets/export", headers=auth(admin), params={"unit": "sd"})
+    assert xl.status_code == 200
