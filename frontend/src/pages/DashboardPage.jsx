@@ -10,6 +10,7 @@ import {
   ShieldAlert, CalendarClock, ArrowUpRight, Mail,
 } from "lucide-react";
 import { Link } from "react-router-dom";
+import PolicyAgreementModal from "../components/layout/PolicyAgreementModal";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip,
   ResponsiveContainer, CartesianGrid,
@@ -30,7 +31,9 @@ function MetricCard({ label, value, hint, icon: Icon, testid }) {
 
 export default function DashboardPage() {
   const { t, lang, fx } = useLang();
-  const { user } = useAuth();
+  const { user, refresh } = useAuth();
+  const [signing, setSigning] = useState(false);
+  useEffect(() => { refresh(); }, []);       // eslint-disable-line react-hooks/exhaustive-deps -- heal a stale session that missed the policy status
   const isAdmin = isManagerRole(user?.role);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -63,6 +66,16 @@ export default function DashboardPage() {
 
   return (
     <div className="p-6 lg:p-10 max-w-[1600px] mx-auto" data-testid="dashboard-page">
+      {user && !user.policy_accepted && (
+        <div className="mb-6 border border-amber-300 bg-amber-50 p-4 flex items-center gap-4 flex-wrap" data-testid="policy-banner">
+          <div className="flex-1 min-w-[240px]">
+            <div className="font-medium text-amber-900">{t("polbtn_title")}</div>
+            <div className="text-sm text-amber-800">{t("polbtn_hint")}</div>
+          </div>
+          <Button onClick={() => setSigning(true)} className="rounded-none bg-slate-900" data-testid="policy-fill-button">{t("polbtn_button")}</Button>
+        </div>
+      )}
+      {signing && user && !user.policy_accepted && <PolicyAgreementModal />}
       <div className="flex items-end justify-between mb-8">
         <div>
           <div className="label-mono mb-2">{t("overview")}</div>

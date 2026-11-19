@@ -1010,3 +1010,12 @@ def test_recipient_email_uses_the_same_review_link():
     body = server._assignment_request_html("Guru", [item, dict(item), other], "Admin")
     assert "/my-assets?review=B1,B2" in body                                          # one link, batches de-duplicated
     assert "/my-assets?review=" not in server._assignment_request_html("Guru", [dict(item, batch_id=None)], "Admin")
+
+
+def test_login_answer_carries_the_policy_status_so_the_modal_shows_straight_away(client, make_user):
+    new = make_user("staff", accepted=False)
+    old = make_user("staff", accepted=True)
+    r = client.post("/api/auth/login", json={"email": new["email"], "password": "secret123"}).json()
+    assert r["policy_required"] is True and r["policy_accepted"] is False         # a teacher's first login must not skip the policy modal
+    r = client.post("/api/auth/login", json={"email": old["email"], "password": "secret123"}).json()
+    assert r["policy_accepted"] is True
