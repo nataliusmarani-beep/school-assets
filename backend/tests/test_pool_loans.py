@@ -975,15 +975,18 @@ def test_contact_script_sets_every_cart_and_lab_of_a_location_and_labs_notify(cl
 
 
 def test_asset_list_filters_by_school_unit_and_can_reread_ticked_assets(client, make_user, db):
-    ids = seed(db, n_laptops=4, n_ipads=0)["laptop"]
-    for aid, unit in zip(ids[:4], ("smp", "smp", "sd", "")):
-        db.execute("UPDATE assets SET unit = ? WHERE id = ?", (unit, aid))
+    ids = seed(db, n_laptops=5, n_ipads=0)["laptop"]
+    for aid, unit, room in zip(ids[:5], ("smp", "smp", "sd", "", ""), ("", "", "", "Lab Komputer SMP", "Ruang Guru")):
+        db.execute("UPDATE assets SET unit = ?, location = ? WHERE id = ?", (unit, room or "ICT", aid))
     db.commit()
     admin = make_user("super_admin", KK)
     got = lambda **p: {a["id"] for a in client.get("/api/assets", headers=auth(admin), params=p).json()}
-    assert got(unit="smp") == set(ids[:2]) and got(unit="sd") == {ids[2]}
-    assert ids[3] in got(unit="unset") and not (got(unit="unset") & set(ids[:3]))
+    assert got(unit="smp") == {ids[0], ids[1], ids[3]}                               # stored unit, plus the unit guessed from the room "Lab Komputer SMP"
+    assert got(unit="sd") == {ids[2]}
+    assert got(unit="unset") == {ids[3], ids[4]}                                     # unit field still empty (guessed or not)
     assert got(unit="smp", ids=f"{ids[0]},{ids[2]}") == {ids[0]}                   # filters and ids combine
-    assert got(ids=f"{ids[0]},{ids[3]}") == {ids[0], ids[3]}                         # re-read of ticked assets, whatever the filter
+    assert got(ids=f"{ids[0]},{ids[4]}") == {ids[0], ids[4]}                         # re-read of ticked assets, whatever the filter
+    rows = {a["id"]: a for a in client.get("/api/assets", headers=auth(admin)).json()}
+    assert rows[ids[3]]["unit_guess"] == "smp" and rows[ids[0]]["unit_guess"] == "" and rows[ids[4]]["unit_guess"] == ""
     xl = client.get("/api/assets/export", headers=auth(admin), params={"unit": "sd"})
     assert xl.status_code == 200

@@ -2054,15 +2054,12 @@ def asset_permissions(conn, user: dict, asset: dict) -> dict:
     }
 
 
-def conditions_unit(unit: Optional[str], conditions: list, params: list):
-    """Asset list filter on the owning school unit: a unit code, or "unset" for assets without one."""
-    if not unit:
-        return
+def unit_matches(a: dict, unit: str) -> bool:
+    """Asset list filter on the school unit. A unit code matches the stored unit or, when none is stored, the unit the rest of the app
+    guesses from the name / room (see asset_units_of); "unset" matches assets whose unit field is still empty."""
     if unit == "unset":
-        conditions.append("(unit IS NULL OR unit = '')")
-    else:
-        conditions.append("unit = ?")
-        params.append(unit)
+        return not (a.get("unit") or "").strip()
+    return unit in asset_units_of(a)
 
 
 @api.get("/assets")
@@ -2080,7 +2077,6 @@ async def list_assets(
     conn = get_conn()
     conditions = []
     params = []
-    conditions_unit(unit, conditions, params)
     if ids:                                    # the list page re-reads the ticked assets that a filter currently hides
         id_list = [i for i in ids.split(",") if i][:200]
         conditions.append(f"id IN ({','.join('?' * len(id_list))})" if id_list else "0")
@@ -2111,6 +2107,8 @@ async def list_assets(
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     rows = conn.execute(f"SELECT * FROM assets {where} ORDER BY created_at DESC", params).fetchall()
     assets = [row_to_dict(r) for r in rows]
+    if unit:
+        assets = [a for a in assets if unit_matches(a, unit)]
     pend = {r["asset_id"]: {"to_name": r["to_name"], "created_at": r["created_at"], "status": r["status"], "approver_name": r["approver_name"]}
             for r in conn.execute("SELECT asset_id, to_name, created_at, status, approver_name FROM assignments "
                                   "WHERE status IN ('pending', 'awaiting_approval') OR (status = 'accepted' AND applied = 0)")}
@@ -2120,6 +2118,7 @@ async def list_assets(
         a["depreciation"] = calc_depreciation(a["purchase_price"], a["purchase_date"], a.get("useful_life_years", 5), a.get("residual_value") or 0)
         a["pending_assignment"] = pend.get(a["id"])
         a["borrowable"] = lend.get(a["id"])      # 1 / 0 once someone decided, None while still undecided
+        a["unit_guess"] = "" if a.get("unit") else (guess_unit(a.get("name") or "", a.get("item_type") or "", a.get("location") or "") or "")
     return assets
 
 
@@ -2662,7 +2661,6 @@ async def export_assets(
     import openpyxl
     conn = get_conn()
     conditions, params = [], []
-    conditions_unit(unit, conditions, params)
     if category:    conditions.append("category = ?");              params.append(category)
     if status:      conditions.append("status = ?");                params.append(status)
     if campus:      conditions.append("campus = ?");                params.append(campus)
@@ -2701,6 +2699,8 @@ async def export_assets(
 
     for r in rows:
         d = dict(r)
+        if unit and not unit_matches(d, unit):
+            continue
         ws.append([_cell(d, k) for k in IMPORT_COLUMNS + ["created_at"]])
 
     # Auto-size columns
