@@ -3868,6 +3868,7 @@ def _assignment_items_html(items: list) -> str:
 def _assignment_request_html(to_name: str, items: list, by_name: str, note: str = "", reminder: bool = False,
                              room_name: str = None) -> str:
     import html as _h
+    review = ",".join(dict.fromkeys(a["batch_id"] for a in items if a.get("batch_id")))
     n = len(items)
     what = f"serah terima kelas <strong>{_h.escape(room_name)}</strong>" if room_name else "serah terima aset"
     lead = (f"Pengingat: ada {what} yang <strong>belum Anda periksa</strong>." if reminder and room_name else
@@ -3885,7 +3886,8 @@ def _assignment_request_html(to_name: str, items: list, by_name: str, note: str 
           Aset baru tercatat atas nama Anda setelah Anda memeriksa fisik barangnya dan menekan <strong>Terima</strong>.
           Jika ada yang tidak sesuai (tidak ada / rusak), tekan <strong>Tolak</strong> dan tulis alasannya.
           {'Penanggung jawab kelas baru berlaku setelah <strong>semua aset</strong> diperiksa; sebelum itu guru sebelumnya tetap bertanggung jawab.' if room_name else ''}
-        </div>""", eyebrow="Serah terima kelas" if room_name else "Serah terima aset", cta_label="Tinjau & konfirmasi", cta_url=f"{APP_URL}/my-assets")
+        </div>""", eyebrow="Serah terima kelas" if room_name else "Serah terima aset", cta_label="Tinjau & konfirmasi",
+                        cta_url=f"{APP_URL}/my-assets?review={review}" if review else f"{APP_URL}/my-assets")
 
 
 def _assignment_approval_html(approver_name: str, items: list, to_name: str, by_name: str, note: str = "") -> str:

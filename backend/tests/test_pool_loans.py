@@ -1000,6 +1000,13 @@ def test_approval_email_opens_my_assets_on_exactly_that_hand_over(client, make_u
     r = client.post("/api/assignments/bulk", headers=auth(admin), json={"to_user_id": teacher["id"], "asset_ids": ["mu1", "mu2"], "kind": "class"}).json()
     body = html["kepsek@example.com"]
     assert f"/my-assets?review={r['batch_id']}" in body                            # the approver lands on this request, not the plain page
-    assert "/my-assets?review" not in html["guru@example.com"] if "guru@example.com" in html else True
     rows = client.get("/api/assignments/approvals", headers=auth(boss)).json()
     assert [x["batch_id"] for x in rows] == [r["batch_id"]]                          # the page matches the link to these rows by batch
+
+
+def test_recipient_email_uses_the_same_review_link():
+    item = {"asset_name": "Laptop", "asset_tag": "T1", "kind": "class", "batch_id": "B1", "location": ""}
+    other = dict(item, batch_id="B2")
+    body = server._assignment_request_html("Guru", [item, dict(item), other], "Admin")
+    assert "/my-assets?review=B1,B2" in body                                          # one link, batches de-duplicated
+    assert "/my-assets?review=" not in server._assignment_request_html("Guru", [dict(item, batch_id=None)], "Admin")
