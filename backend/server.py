@@ -2054,6 +2054,17 @@ def asset_permissions(conn, user: dict, asset: dict) -> dict:
     }
 
 
+def conditions_unit(unit: Optional[str], conditions: list, params: list):
+    """Asset list filter on the owning school unit: a unit code, or "unset" for assets without one."""
+    if not unit:
+        return
+    if unit == "unset":
+        conditions.append("(unit IS NULL OR unit = '')")
+    else:
+        conditions.append("unit = ?")
+        params.append(unit)
+
+
 @api.get("/assets")
 async def list_assets(
     user: dict = Depends(get_current_user),
@@ -2063,10 +2074,17 @@ async def list_assets(
     location: Optional[str] = None,
     campus: Optional[str] = None,
     assigned_to: Optional[str] = None,
+    unit: Optional[str] = None,
+    ids: Optional[str] = None,
 ):
     conn = get_conn()
     conditions = []
     params = []
+    conditions_unit(unit, conditions, params)
+    if ids:                                    # the list page re-reads the ticked assets that a filter currently hides
+        id_list = [i for i in ids.split(",") if i][:200]
+        conditions.append(f"id IN ({','.join('?' * len(id_list))})" if id_list else "0")
+        params.extend(id_list)
     if category:
         conditions.append("category = ?")
         params.append(category)
@@ -3032,10 +3050,17 @@ async def list_assets(
     location: Optional[str] = None,
     campus: Optional[str] = None,
     assigned_to: Optional[str] = None,
+    unit: Optional[str] = None,
+    ids: Optional[str] = None,
 ):
     conn = get_conn()
     conditions = []
     params = []
+    conditions_unit(unit, conditions, params)
+    if ids:                                    # the list page re-reads the ticked assets that a filter currently hides
+        id_list = [i for i in ids.split(",") if i][:200]
+        conditions.append(f"id IN ({','.join('?' * len(id_list))})" if id_list else "0")
+        params.extend(id_list)
     if category:
         conditions.append("category = ?")
         params.append(category)
@@ -3541,10 +3566,12 @@ async def export_assets(
     campus:      Optional[str] = None,
     location:    Optional[str] = None,
     assigned_to: Optional[str] = None,
+    unit:        Optional[str] = None,
 ):
     import openpyxl
     conn = get_conn()
     conditions, params = [], []
+    conditions_unit(unit, conditions, params)
     if category:    conditions.append("category = ?");              params.append(category)
     if status:      conditions.append("status = ?");                params.append(status)
     if campus:      conditions.append("campus = ?");                params.append(campus)
