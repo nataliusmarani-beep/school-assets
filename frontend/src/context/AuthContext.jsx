@@ -15,11 +15,14 @@ export function AuthProvider({ children }) {
       .finally(() => setLoading(false));
   }, []);
 
+  // Re-read the full profile (policy status included); keeps the old user if the call fails.
+  const refresh = () => api.get("/auth/me").then((res) => { setUser(res.data); return res.data; }).catch(() => null);
+
   const login = async (email, password) => {
     const res = await api.post("/auth/login", { email, password });
     if (res.data.token) localStorage.setItem("auth_token", res.data.token);
     setUser(res.data);
-    return res.data;
+    return (await refresh()) || res.data;
   };
 
   const register = async (data) => {
@@ -40,7 +43,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, setUser }}>
+    <AuthContext.Provider value={{ user, loading, login, register, logout, setUser, refresh }}>
       {children}
     </AuthContext.Provider>
   );

@@ -1028,6 +1028,9 @@ export const translations = {
     pol_sanction_esign: "Your electronic confirmation in this system (typed full name, date and time, version of the policies and device information) is recorded as your signed acknowledgement and has the same effect as a written statement of agreement. You must re-confirm whenever a new version is published.",
 
     // Policy acknowledgement
+    polbtn_title: "Policy form not filled in yet",
+    polbtn_hint: "You must read and e-sign the asset policies before you can borrow or receive assets.",
+    polbtn_button: "Fill in policy form",
     polack_title: "Welcome — please read and confirm the school asset policies",
     polack_intro: "Before you use the School Assets Management system you must read all the policies below and confirm that you will follow them. This confirmation is recorded as your electronic signature.",
     polack_scroll_hint: "Scroll to the end of the policies to unlock the confirmation.",
@@ -2552,6 +2555,9 @@ export const translations = {
     pol_sanction_esign: "Konfirmasi elektronik Anda di sistem ini (nama lengkap yang diketik, tanggal dan jam, versi kebijakan, serta informasi perangkat) dicatat sebagai pernyataan tertandatangani Anda dan berlaku sama seperti pernyataan persetujuan tertulis. Anda wajib mengonfirmasi ulang setiap kali versi baru diterbitkan.",
 
     // Policy acknowledgement
+    polbtn_title: "Form kebijakan belum diisi",
+    polbtn_hint: "Baca dan tanda tangani kebijakan aset terlebih dahulu agar dapat meminjam atau menerima aset.",
+    polbtn_button: "Isi form kebijakan",
     polack_title: "Selamat datang — mohon baca dan konfirmasi kebijakan aset sekolah",
     polack_intro: "Sebelum menggunakan sistem Manajemen Aset Sekolah, Anda wajib membaca seluruh kebijakan di bawah ini dan menyatakan akan mematuhinya. Konfirmasi ini dicatat sebagai tanda tangan elektronik Anda.",
     polack_scroll_hint: "Gulir sampai akhir kebijakan untuk membuka kolom konfirmasi.",

@@ -1394,17 +1394,19 @@ async def login(body: LoginIn, response: Response):
     conn = get_conn()
     email = body.email.lower()
     row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-    conn.close()
     if not row or not verify_password(body.password, row["password_hash"]):
+        conn.close()
         raise HTTPException(401, "Invalid email or password")
     user = row_to_dict(row)
+    policy = policy_status(conn, user)      # the app decides on the policy modal from this, so it must be in the login answer too
+    conn.close()
     token = create_token(user["id"], user["email"], user["role"])
     response.set_cookie("access_token", token, httponly=True, samesite="lax", max_age=7*24*3600, path="/")
     return {
         "id": user["id"], "email": user["email"], "name": user["name"],
         "role": user["role"], "department": user.get("department"),
         "campus": user.get("campus"),
-        "token": token,
+        "token": token, **policy,
     }
 
 
