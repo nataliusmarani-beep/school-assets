@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import api, { fmtCurrency, formatErr } from "../lib/api";
 import { useLang } from "../context/LangContext";
 import { Button } from "../components/ui/button";
@@ -34,9 +34,12 @@ export default function MyAssetsPage() {
   const [busy, setBusy] = useState(false);
   const [approvals, setApprovals] = useState([]);
   const [apReject, setApReject] = useState(null);
+  const [params] = useSearchParams();
+  const review = new Set((params.get("review") || "").split(",").filter(Boolean));     // batches named by the approval e-mail
+  const [approvalsLoaded, setApprovalsLoaded] = useState(false);
 
   const load = useCallback(() => {
-    api.get("/assignments/approvals").then((r) => setApprovals(r.data)).catch(() => {});
+    api.get("/assignments/approvals").then((r) => setApprovals(r.data)).catch(() => {}).finally(() => setApprovalsLoaded(true));
     return api.get("/my/assets")
       .then((r) => { setData(r.data); setSel(new Set()); })
       .catch((e) => toast.error(formatErr(e)))
@@ -89,12 +92,39 @@ export default function MyAssetsPage() {
         <Kpi testid="ma-kpi-value" label={t("ma_kpi_value")} value={fmtCurrency(summary.book_value)} icon={Wallet} />
       </div>
 
-      {approvals.length > 0 && (
+      {review.size > 0 && approvalsLoaded && (() => {
+        const mine = approvals.filter((p) => review.has(p.batch_id));
+        if (!mine.length) return (
+          <div className="bg-slate-50 border border-slate-300 p-4 mb-8 text-sm text-slate-700" data-testid="review-gone">{t("aa_review_gone")}</div>);
+        const ids = mine.map((p) => p.id);
+        return (
+          <section className="bg-white border-2 border-blue-700 p-6 mb-8 shadow-sm" data-testid="review-section" ref={(el) => el && el.scrollIntoView?.({ block: "nearest" })}>
+            <h2 className="font-display text-xl font-medium text-slate-900">{t("aa_review_title")}</h2>
+            <p className="text-sm text-slate-600 mt-1 mb-4 max-w-xl">{t("aa_review_hint").replace("{to}", mine[0].to_name).replace("{by}", mine[0].created_by_name)}</p>
+            <div className="divide-y divide-slate-100 border border-slate-200 mb-4">
+              {mine.map((p) => (
+                <div key={p.id} className="p-3 text-sm" data-testid="review-row">
+                  <Link to={`/assets/${p.asset_id}`} className="font-medium text-slate-900 hover:text-blue-700">{p.asset_name}</Link>
+                  <span className="font-mono text-xs text-slate-500 ml-2">({p.asset_tag})</span>
+                  {p.location && <span className="text-xs text-slate-500 ml-3">{p.location}</span>}
+                </div>))}
+            </div>
+            {mine[0].note && <div className="text-xs text-slate-500 italic mb-4">"{mine[0].note}"</div>}
+            <div className="flex gap-2 flex-wrap">
+              <Button disabled={busy} onClick={() => decide(ids, "approve")} className="rounded-none bg-emerald-700 hover:bg-emerald-800" data-testid="review-approve-all">
+                {t("aa_approve_all").replace("{n}", ids.length)}</Button>
+              <Button disabled={busy} variant="outline" onClick={() => setApReject(ids)} className="rounded-none" data-testid="review-reject-all">
+                {t("aa_reject_all").replace("{n}", ids.length)}</Button>
+            </div>
+          </section>);
+      })()}
+
+      {approvals.filter((p) => !review.has(p.batch_id)).length > 0 && (
         <section className="bg-blue-50/60 border border-blue-300 p-6 mb-8" data-testid="approval-section">
           <h2 className="font-display text-xl font-medium text-slate-900">{t("aa_title")}</h2>
           <p className="text-sm text-slate-600 mt-1 mb-4 max-w-xl">{t("aa_hint")}</p>
           <div className="space-y-2">
-            {approvals.map((p) => (
+            {approvals.filter((p) => !review.has(p.batch_id)).map((p) => (
               <div key={p.id} className="bg-white border border-slate-200 p-4 flex items-center gap-4 flex-wrap" data-testid="approval-row">
                 <div className="flex-1 min-w-[220px]">
                   <Link to={`/assets/${p.asset_id}`} className="font-medium text-slate-900 hover:text-blue-700">{p.asset_name}</Link>

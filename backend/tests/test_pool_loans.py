@@ -990,3 +990,16 @@ def test_asset_list_filters_by_school_unit_and_can_reread_ticked_assets(client, 
     assert rows[ids[3]]["unit_guess"] == "smp" and rows[ids[0]]["unit_guess"] == "" and rows[ids[4]]["unit_guess"] == ""
     xl = client.get("/api/assets/export", headers=auth(admin), params={"unit": "sd"})
     assert xl.status_code == 200
+
+
+def test_approval_email_opens_my_assets_on_exactly_that_hand_over(client, make_user, db, monkeypatch):
+    sent, boss, teacher = _approval_setup(db, make_user, monkeypatch)
+    html = {}
+    monkeypatch.setattr(server, "send_email", lambda to, subject, body, cc=None: html.setdefault(to, body) or True)
+    admin = make_user("super_admin", "")
+    r = client.post("/api/assignments/bulk", headers=auth(admin), json={"to_user_id": teacher["id"], "asset_ids": ["mu1", "mu2"], "kind": "class"}).json()
+    body = html["kepsek@example.com"]
+    assert f"/my-assets?review={r['batch_id']}" in body                            # the approver lands on this request, not the plain page
+    assert "/my-assets?review" not in html["guru@example.com"] if "guru@example.com" in html else True
+    rows = client.get("/api/assignments/approvals", headers=auth(boss)).json()
+    assert [x["batch_id"] for x in rows] == [r["batch_id"]]                          # the page matches the link to these rows by batch
