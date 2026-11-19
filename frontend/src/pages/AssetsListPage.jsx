@@ -342,6 +342,7 @@ export default function AssetsListPage() {
   const selectedRef = useRef(selected);       // load() runs from timers, so it reads the latest ticks from here
   selectedRef.current = selected;
   const [, rerender] = useState(0);
+  const autoOpen = useRef(false);               // set when the search / filters just changed: the next result opens all its groups
   const [showBulk, setShowBulk] = useState(false);
   const [bulkUnit, setBulkUnit] = useState("");
 
@@ -418,7 +419,7 @@ export default function AssetsListPage() {
     const order = (k) => { const i = CATEGORY_VALUES.indexOf(k); return i < 0 ? 999 : i; };
     return [...by.entries()].sort((x, y) => order(x[0]) - order(y[0])).map(([key, items]) => ({ key, items }));
   })();
-  const isOpen = (key) => filtering || openCats.has(key);
+  const isOpen = (key) => openCats.has(key);        // a search / filter opens every group once (see load), then the user can fold them freely
   const toggleCat = (key) => setOpenCats((s) => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n; });
   const allOpen = groups.length > 0 && groups.every((g) => openCats.has(g.key));
 
@@ -434,6 +435,7 @@ export default function AssetsListPage() {
       .then(async (r) => {
         r.data.forEach((a) => known.current.set(a.id, a));
         setAssets(r.data);
+        if (autoOpen.current) { autoOpen.current = false; setOpenCats(new Set(r.data.map((a) => a.category || ""))); }
         // ticked assets that this view hides: re-read them (fresh badges after a bulk action) and forget the ones that no longer exist
         const hidden = [...selectedRef.current].filter((id) => !r.data.some((a) => a.id === id));
         const gone = new Set(hidden);
@@ -451,6 +453,7 @@ export default function AssetsListPage() {
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
   useEffect(() => {
+    autoOpen.current = filtering;
     const t = setTimeout(load, 200);
     return () => clearTimeout(t);
     /* eslint-disable-next-line */
@@ -596,9 +599,9 @@ export default function AssetsListPage() {
       {groups.length > 1 && (
         <div className="mb-2 flex items-center justify-between text-xs text-slate-500">
           <span>{groups.length} {t("asset_categories")}</span>
-          <button type="button" className="text-blue-800 hover:underline disabled:opacity-40" disabled={filtering}
+          <button type="button" className="text-blue-800 hover:underline disabled:opacity-40" 
             onClick={() => setOpenCats(allOpen ? new Set() : new Set(groups.map((g) => g.key)))} data-testid="toggle-all-groups">
-            {allOpen || filtering ? t("collapse_all") : t("expand_all")}
+            {allOpen ? t("collapse_all") : t("expand_all")}
           </button>
         </div>
       )}
@@ -690,9 +693,10 @@ export default function AssetsListPage() {
                           {a.handover_flag === "discrepancy" && (
                             <div className="mt-1"><span className="inline-flex items-center px-2 py-0.5 text-xs border bg-rose-50 text-rose-700 border-rose-200">{t("cr_discrepancy")}</span></div>
                           )}
-                          {(a.unit || a.borrowable === 1 || a.borrowable === 0) && (
+                          {(a.unit || a.unit_guess || a.borrowable === 1 || a.borrowable === 0) && (
                             <div className="mt-1 flex flex-wrap gap-1" data-testid={`state-badges-${a.id}`}>
                               {a.unit && <span className="inline-flex items-center px-2 py-0.5 text-xs border bg-slate-50 text-slate-700 border-slate-300">{t(`unit_${a.unit}`)}</span>}
+                              {!a.unit && a.unit_guess && <span className="inline-flex items-center px-2 py-0.5 text-xs border border-dashed bg-white text-slate-500 border-slate-300" title={t("unit_guessed")} data-testid={`unit-guess-${a.id}`}>{t(`unit_${a.unit_guess}`)}</span>}
                               {a.borrowable === 1 && <span className="inline-flex items-center px-2 py-0.5 text-xs border bg-emerald-50 text-emerald-800 border-emerald-300">{t("bl_badge_1")}</span>}
                               {a.borrowable === 0 && <span className="inline-flex items-center px-2 py-0.5 text-xs border bg-slate-50 text-slate-600 border-slate-300">{t("bl_badge_0")}</span>}
                             </div>
