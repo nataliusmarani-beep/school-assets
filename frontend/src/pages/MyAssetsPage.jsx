@@ -94,6 +94,30 @@ export default function MyAssetsPage() {
 
       {review.size > 0 && approvalsLoaded && (() => {
         const mine = approvals.filter((p) => review.has(p.batch_id));
+        const toAccept = pending.filter((p) => review.has(p.batch_id));      // the same link also serves the recipient (teacher)
+        if (toAccept.length) {
+          const ids = toAccept.map((p) => p.id);
+          return (
+            <section className="bg-white border-2 border-emerald-700 p-6 mb-8 shadow-sm" data-testid="review-accept-section" ref={(el) => el && el.scrollIntoView?.({ block: "nearest" })}>
+              <h2 className="font-display text-xl font-medium text-slate-900">{t("ma_review_title")}</h2>
+              <p className="text-sm text-slate-600 mt-1 mb-4 max-w-xl">{t("ma_review_hint").replace("{by}", toAccept[0].created_by_name)}</p>
+              <div className="divide-y divide-slate-100 border border-slate-200 mb-4">
+                {toAccept.map((p) => (
+                  <div key={p.id} className="p-3 text-sm" data-testid="review-accept-row">
+                    <Link to={`/assets/${p.asset_id}`} className="font-medium text-slate-900 hover:text-blue-700">{p.asset_name}</Link>
+                    <span className="font-mono text-xs text-slate-500 ml-2">({p.asset_tag})</span>
+                    {p.location && <span className="text-xs text-slate-500 ml-3">{p.location}</span>}
+                  </div>))}
+              </div>
+              {toAccept[0].note && <div className="text-xs text-slate-500 italic mb-4">"{toAccept[0].note}"</div>}
+              <div className="flex gap-2 flex-wrap">
+                <Button disabled={busy} onClick={() => respond(ids, "accept")} className="rounded-none bg-emerald-700 hover:bg-emerald-800" data-testid="review-accept-all">
+                  {t("ma_accept_review").replace("{n}", ids.length)}</Button>
+                <Button disabled={busy} variant="outline" onClick={() => setRejectIds(ids)} className="rounded-none" data-testid="review-reject-recipient">
+                  {t("aa_reject_all").replace("{n}", ids.length)}</Button>
+              </div>
+            </section>);
+        }
         if (!mine.length) return (
           <div className="bg-slate-50 border border-slate-300 p-4 mb-8 text-sm text-slate-700" data-testid="review-gone">{t("aa_review_gone")}</div>);
         const ids = mine.map((p) => p.id);
@@ -146,7 +170,7 @@ export default function MyAssetsPage() {
         </section>
       )}
 
-      {pending.length > 0 && (
+      {pending.filter((p) => !review.has(p.batch_id)).length > 0 && (
         <section className="bg-amber-50/60 border border-amber-300 p-6 mb-8" data-testid="pending-section">
           <div className="flex items-start justify-between gap-4 flex-wrap mb-4">
             <div>
@@ -170,7 +194,7 @@ export default function MyAssetsPage() {
             </div>
           </div>
           <div className="space-y-2">
-            {pending.map((p) => (
+            {pending.filter((p) => !review.has(p.batch_id)).map((p) => (
               <div key={p.id} className="bg-white border border-slate-200 p-4 flex items-center gap-4 flex-wrap" data-testid="pending-row">
                 <input type="checkbox" checked={sel.has(p.id)} onChange={() => toggle(p.id)} className="w-4 h-4" aria-label={p.asset_name} />
                 <div className="flex-1 min-w-[220px]">
