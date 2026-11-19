@@ -5950,6 +5950,8 @@ def notify_cart_contact(conn, b: dict):
                  f'Mulai: {b["start_at"].replace("T", " ")}', f'Selesai: {b["end_at"].replace("T", " ")}']
         if b.get("class_name"):
             lines.append(f'Kelas: {b["class_name"]}')
+        if b.get("use_location"):
+            lines.append(f'Lokasi pemakaian: {b["use_location"]}')
         if b.get("purpose"):
             lines.append(f'Keperluan: {b["purpose"]}')
         lines += ["", "Mohon konfirmasi di aplikasi YPJ Assets."]

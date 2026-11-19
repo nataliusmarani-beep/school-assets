@@ -934,3 +934,41 @@ def test_new_cart_request_is_sent_by_whatsapp_to_that_carts_contact(client, make
     r = client.put("/api/loans/resources/c2", headers=auth(ict), json={"campus": KK, "name": "Laptop Cart SMP Lab SMP", "kind": "laptop_cart", "unit": "SMP",
                                                                          "capacity": 30, "notify_phone": "0811-4992-414", "notify_name": "Bu Jeni"})
     assert r.status_code == 200 and r.json()["notify_phone"] == "628114992414"
+
+
+def test_direct_cart_request_also_notifies_the_carts_contact(client, make_user, db, monkeypatch):
+    monkeypatch.setattr(server, "_local_now", lambda: server.datetime(2026, 8, 3, 9, 0))
+    monkeypatch.setattr(server, "WHATSAPP_TOKEN", "tok")
+    sent = []
+    monkeypatch.setattr(server, "send_whatsapp", lambda phone, msg: (sent.append((phone, msg)) or (True, "")))
+    _smp_carts(db)
+    db.execute("UPDATE resources SET notify_phone='62811111', notify_name='Bu Jeni' WHERE id='c1'"); db.commit()
+    teacher = make_user("staff", KK)
+    r = client.post("/api/loans", headers=auth(teacher), json={"resource_id": "c1", "units": 1, "purpose": "Ujian", "terms_accepted": True,
+                                                                  "start_at": "2026-08-07T09:00", "end_at": "2026-08-07T10:00"})
+    assert r.status_code == 200, r.text
+    assert [p for p, _ in sent] == ["62811111"] and "Bu Jeni" in sent[0][1] and "1 unit" in sent[0][1]
+
+
+def test_contact_script_sets_every_cart_and_lab_of_a_location_and_labs_notify(client, make_user, db, monkeypatch, capsys):
+    import sys
+    import set_cart_contact as scc
+    monkeypatch.setattr(server, "_local_now", lambda: server.datetime(2026, 8, 3, 9, 0))
+    monkeypatch.setattr(server, "WHATSAPP_TOKEN", "tok")
+    sent = []
+    monkeypatch.setattr(server, "send_whatsapp", lambda phone, msg: (sent.append((phone, msg)) or (True, "")))
+    for rid, name, kind in (("a", "E5 | Laptop Cart SMP #1", "laptop_cart"), ("b", "E5 | Lab Komputer SD", "computer_lab"), ("c", "D5 | Lab Komputer SMP", "computer_lab")):
+        db.execute("INSERT INTO resources (id,campus,name,kind,capacity,unit,created_at) VALUES (?,?,?,?,?,'SMP','t')", (rid, KK, name, kind, 30))
+    db.commit()
+    monkeypatch.setattr(sys, "argv", ["x", "--prefix", "E5 |", "--name", "Bu Jeni", "--phone", "08114992414"])
+    scc.main()                                                                       # lists only
+    assert db.execute("SELECT COUNT(*) FROM resources WHERE notify_phone != ''").fetchone()[0] == 0
+    monkeypatch.setattr(sys, "argv", ["x", "--prefix", "E5 |", "--name", "Bu Jeni", "--phone", "08114992414", "--apply"])
+    scc.main()
+    got = {r["id"]: r["notify_phone"] for r in db.execute("SELECT id, notify_phone FROM resources")}
+    assert got == {"a": "628114992414", "b": "628114992414", "c": ""}               # E5 cart + E5 lab, not D5
+    teacher = make_user("staff", KK)
+    r = client.post("/api/loans", headers=auth(teacher), json={"resource_id": "b", "units": 5, "purpose": "Sumatif", "use_location": "Lab. Komputer SD",
+                                                                  "terms_accepted": True, "start_at": "2026-08-07T09:00", "end_at": "2026-08-07T10:00"})
+    assert r.status_code == 200, r.text
+    assert [p for p, _ in sent] == ["628114992414"] and "E5 | Lab Komputer SD" in sent[0][1] and "Lab. Komputer SD" in sent[0][1]
