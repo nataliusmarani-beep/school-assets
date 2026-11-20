@@ -1026,3 +1026,29 @@ def test_managers_can_list_decided_loans_under_all_within_their_scope(client, ma
     staff = make_user("staff", KK)
     assert client.get("/api/loans", headers=auth(ict), params={"scope": "all"}).status_code == 200     # was 403: only leaders / super admin
     assert client.get("/api/loans", headers=auth(staff), params={"scope": "all"}).status_code == 403
+
+
+def test_ict_admin_gets_a_read_only_assets_per_user_view_of_their_own_campus(client, make_user):
+    ict = make_user("ict_admin", KK)
+    mine = make_user("staff", KK)
+    other = make_user("staff", "YPJ Lain")
+    staff = make_user("staff", KK)
+    rows = client.get("/api/dashboard/users", headers=auth(ict)).json()["users"]
+    assert {u["id"] for u in rows} >= {mine["id"]} and other["id"] not in {u["id"] for u in rows}
+    assert client.get(f"/api/users/{mine['id']}/assets", headers=auth(ict)).status_code == 200
+    assert client.get(f"/api/users/{other['id']}/assets", headers=auth(ict)).status_code == 403   # another campus
+    assert client.get("/api/dashboard/users", headers=auth(staff)).status_code == 403
+    assert client.get("/api/assignments", headers=auth(ict), params={"status": "pending"}).status_code == 200
+
+
+def test_campus_admin_sees_assets_of_other_campuses_but_edits_only_their_own(client, make_user, db):
+    ids = seed(db, n_laptops=2, n_ipads=0)["laptop"]
+    db.execute("UPDATE assets SET campus = ? WHERE id = ?", (KK, ids[0]))
+    db.execute("UPDATE assets SET campus = ? WHERE id = ?", ("YPJ Lain", ids[1]))
+    db.commit()
+    ca = make_user("campus_admin", KK)
+    seen = {a["id"] for a in client.get("/api/assets", headers=auth(ca)).json()}
+    assert {ids[0], ids[1]} <= seen                                                   # both campuses are visible
+    assert client.get(f"/api/assets/{ids[1]}", headers=auth(ca)).status_code == 200
+    assert client.put(f"/api/assets/{ids[0]}", headers=auth(ca), json={"name": "Renamed"}).status_code == 200
+    assert client.put(f"/api/assets/{ids[1]}", headers=auth(ca), json={"name": "Renamed"}).status_code == 403   # other campus: view only

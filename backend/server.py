@@ -2007,7 +2007,7 @@ def is_admin_user(user: dict) -> bool:
 
 def asset_scope(user: dict, prefix: str = "") -> tuple:
     """(sql_condition, params) limiting an assets query to what this user may see; ("", []) for admins and leaders."""
-    if is_admin_user(user) or user.get("role") == "leader":
+    if is_admin_user(user) or user.get("role") in ("leader", "campus_admin"):     # Campus Admin may look at every campus; editing stays on their own (ensure_asset_manager)
         return "", []
     campus = (user.get("campus") or "").strip()
     if campus:
@@ -2016,7 +2016,7 @@ def asset_scope(user: dict, prefix: str = "") -> tuple:
 
 
 def can_view_asset(user: dict, asset: dict) -> bool:
-    if is_admin_user(user) or user.get("role") == "leader":
+    if is_admin_user(user) or user.get("role") in ("leader", "campus_admin"):
         return True
     campus = (user.get("campus") or "").strip()
     return asset.get("assigned_to_user_id") == user["id"] or bool(campus and asset.get("campus") == campus)
@@ -2031,8 +2031,9 @@ def loan_block_reason(user: dict, asset: dict):
     """None when this user may request a loan on the asset, else a user-facing reason (Indonesian)."""
     if is_admin_user(user):
         return None
-    if not can_view_asset(user, asset):
-        return "Aset ini bukan di kampus Anda."
+    own_campus = (user.get("campus") or "").strip()
+    if not can_view_asset(user, asset) or (user.get("role") == "campus_admin" and asset.get("campus") != own_campus):
+        return "Aset ini bukan di kampus Anda."      # Campus Admin can see other campuses but borrows only on their own
     if (asset.get("user_type") or "") != "shared":
         return "Hanya aset kategori Bersama (Shared) yang dapat dipinjam, misalnya laptop, kamera, atau perangkat di Lab Komputer."
     if asset.get("status") != "active":
@@ -4079,13 +4080,16 @@ async def my_assets(user: dict = Depends(get_current_user)):
 
 @api.get("/users/{uid}/assets")
 async def user_assets(uid: str, user: dict = Depends(get_current_user)):
-    if user["role"] not in ADMIN_ROLES and user["id"] != uid:
+    if user["role"] not in ADMIN_ROLES + ("campus_admin", "ict_admin") and user["id"] != uid:
         raise HTTPException(403, "Not allowed")
     conn = get_conn()
     u = conn.execute("SELECT id,name,email,department,campus,role FROM users WHERE id = ?", (uid,)).fetchone()
     if not u:
         conn.close()
         raise HTTPException(404, "User not found")
+    if user["role"] == "ict_admin" and user["id"] != uid and (u["campus"] or "") != (user.get("campus") or ""):
+        conn.close()
+        raise HTTPException(403, "ICT Admin hanya dapat melihat pengguna di kampusnya sendiri.")
     out = _user_bundle(conn, uid)
     out["user"] = dict(u)
     conn.close()
@@ -4093,10 +4097,15 @@ async def user_assets(uid: str, user: dict = Depends(get_current_user)):
 
 
 @api.get("/dashboard/users")
-async def dashboard_users(_: dict = Depends(admin_required)):
+async def dashboard_users(user: dict = Depends(get_current_user)):
+    """Assets per user. Admins see everyone; an ICT Admin gets the same overview (read-only) for the users of their own campus."""
+    if user.get("role") not in ADMIN_ROLES + ("campus_admin", "ict_admin"):
+        raise HTTPException(403, "Admin access required")
     conn = get_conn()
     users = [dict(r) for r in conn.execute(
         "SELECT id,name,email,role,department,campus FROM users ORDER BY name").fetchall()]
+    if user["role"] == "ict_admin":
+        users = [u for u in users if (u["campus"] or "") == (user.get("campus") or "")]
     stats = {u["id"]: {"personal_count": 0, "class_count": 0, "pending_count": 0,
                        "purchase_value": 0, "book_value": 0, "oldest_pending": None} for u in users}
     unassigned = 0
@@ -4138,7 +4147,10 @@ async def list_assignments(status: Optional[str] = None, user: dict = Depends(ge
         cond.append("status IN ('pending', 'awaiting_approval')")
     elif status:
         cond.append("status = ?"); params.append(status)
-    if user["role"] not in ADMIN_ROLES:
+    if user["role"] == "ict_admin":     # read-only overview: hand-overs to people of their own campus, plus their own
+        cond.append("(to_user_id = ? OR created_by = ? OR approver_id = ? OR to_user_id IN (SELECT id FROM users WHERE campus = ?))")
+        params += [user["id"], user["id"], user["id"], user.get("campus") or ""]
+    elif user["role"] not in ADMIN_ROLES:
         cond.append("(to_user_id = ? OR created_by = ? OR approver_id = ?)"); params += [user["id"], user["id"], user["id"]]
     if cond:
         sql += " WHERE " + " AND ".join(cond)
