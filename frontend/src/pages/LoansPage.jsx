@@ -18,6 +18,7 @@ import LoanDashboard from "../components/loans/LoanDashboard";
 
 const TO_HAND_OVER = ["approved", "partially_approved"];                  // decided, but not yet checked out
 const NOT_RETURNED = ["in_use", "overdue", "problem"];                      // checked out, not yet checked in
+const NO_CHECKOUT = ["computer_lab", "room"];                               // labs / rooms are used in place: nothing is handed over or returned
 const AWAITING = ["pending_supervisor", "pending_ict", "submitted"];     // the "to confirm" tab only lists these; decided ones move to "all"
 
 export const STATUS_STYLE = {
@@ -295,7 +296,7 @@ export default function LoansPage() {
     } else {
       api.get("/loans", { params: { scope: tab === "handover" ? "manage" : tab, status: statusFilter === "all" || tab === "handover" ? undefined : statusFilter } })
         .then((r) => setRows(tab === "manage" ? r.data.filter((x) => AWAITING.includes(x.status))
-          : tab === "handover" ? r.data.filter((x) => TO_HAND_OVER.includes(x.status) || NOT_RETURNED.includes(x.status)) : r.data)).catch((e) => toast.error(formatErr(e))).finally(() => setLoading(false));
+          : tab === "handover" ? r.data.filter((x) => (TO_HAND_OVER.includes(x.status) || NOT_RETURNED.includes(x.status)) && !NO_CHECKOUT.includes(x.asset_tag)) : r.data)).catch((e) => toast.error(formatErr(e))).finally(() => setLoading(false));
     }
   }, [tab, search, category, statusFilter]);
 
