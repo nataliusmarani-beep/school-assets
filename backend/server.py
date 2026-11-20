@@ -3353,9 +3353,16 @@ async def get_activity(
 
 # ---- Dashboard ----
 @api.get("/dashboard/stats")
-async def dashboard_stats(user: dict = Depends(get_current_user)):
+async def dashboard_stats(user: dict = Depends(get_current_user), campus: Optional[str] = None):
+    """campus: narrow the whole dashboard to one campus. Only accounts that see every campus may ask (leader, admins);
+    everyone else already gets just their own campus from asset_scope."""
     conn = get_conn()
     sc, sp = asset_scope(user)
+    if campus and not sc:
+        if campus not in VALID_CAMPUSES:
+            conn.close()
+            raise HTTPException(400, "Kampus tidak dikenal")
+        sc, sp = "campus = ?", [campus]
     rows = conn.execute("SELECT * FROM assets" + (" WHERE " + sc if sc else ""), sp).fetchall()
     assets = [row_to_dict(r) for r in rows]
     total_assets = len(assets)
