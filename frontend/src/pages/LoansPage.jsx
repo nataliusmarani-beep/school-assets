@@ -16,6 +16,8 @@ import { canWrite } from "../lib/roles";
 import { fmtDateTime } from "../components/loans/LoanForms";
 import LoanDashboard from "../components/loans/LoanDashboard";
 
+const TO_HAND_OVER = ["approved", "partially_approved"];                  // decided, but not yet checked out
+const NOT_RETURNED = ["in_use", "overdue", "problem"];                      // checked out, not yet checked in
 const AWAITING = ["pending_supervisor", "pending_ict", "submitted"];     // the "to confirm" tab only lists these; decided ones move to "all"
 
 export const STATUS_STYLE = {
@@ -270,7 +272,7 @@ export default function LoansPage() {
   const tabs = useMemo(() => [
     ...(dashboard ? [{ id: "dashboard", label: "ln_tab_dashboard" }] : []),
     ...(writer ? [{ id: "borrow", label: "ln_tab_borrow" }, { id: "mine", label: "ln_tab_mine" }] : []),
-    ...(manager ? [{ id: "manage", label: "ln_tab_manage" }] : []),
+    ...(manager ? [{ id: "manage", label: "ln_tab_manage" }, { id: "handover", label: "ln_tab_handover" }] : []),
     ...(viewAll ? [{ id: "all", label: "ln_tab_all" }] : []),
   ], [dashboard, writer, manager, viewAll]);
   const [tab, setTab] = useState(params.get("tab") || (params.get("asset") ? "borrow" : tabs[0]?.id) || "mine");
@@ -279,6 +281,7 @@ export default function LoansPage() {
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [hoFilter, setHoFilter] = useState("all");      // handover tab: all | out (to hand over) | back (not returned)
   const [target, setTarget] = useState(null);
   const [poolDevice, setPoolDevice] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -290,8 +293,9 @@ export default function LoansPage() {
       api.get("/loans/assets", { params: { search: search || undefined, category: category === "all" ? undefined : category } })
         .then((r) => setCatalog(r.data)).catch((e) => toast.error(formatErr(e))).finally(() => setLoading(false));
     } else {
-      api.get("/loans", { params: { scope: tab, status: statusFilter === "all" ? undefined : statusFilter } })
-        .then((r) => setRows(tab === "manage" ? r.data.filter((x) => AWAITING.includes(x.status)) : r.data)).catch((e) => toast.error(formatErr(e))).finally(() => setLoading(false));
+      api.get("/loans", { params: { scope: tab === "handover" ? "manage" : tab, status: statusFilter === "all" || tab === "handover" ? undefined : statusFilter } })
+        .then((r) => setRows(tab === "manage" ? r.data.filter((x) => AWAITING.includes(x.status))
+          : tab === "handover" ? r.data.filter((x) => TO_HAND_OVER.includes(x.status) || NOT_RETURNED.includes(x.status)) : r.data)).catch((e) => toast.error(formatErr(e))).finally(() => setLoading(false));
     }
   }, [tab, search, category, statusFilter]);
 
@@ -368,7 +372,16 @@ export default function LoansPage() {
         </>
       ) : (
         <>
-          <div className={tab === "manage" ? "hidden" : "mb-4"}>
+          {tab === "handover" && (
+            <div className="mb-4 flex gap-2 flex-wrap" data-testid="handover-filter">
+              {[["all", rows.length, "ln_ho_all"], ["out", rows.filter((x) => TO_HAND_OVER.includes(x.status)).length, "ln_ho_out"],
+                ["back", rows.filter((x) => NOT_RETURNED.includes(x.status)).length, "ln_ho_back"]].map(([id, n, key]) => (
+                <button key={id} onClick={() => setHoFilter(id)} data-testid={`handover-${id}`}
+                  className={`px-3 py-1.5 text-sm border ${hoFilter === id ? "bg-slate-900 text-white border-slate-900" : "border-slate-300 text-slate-700 hover:bg-slate-50"}`}>
+                  {t(key)} <span className="font-mono text-xs ml-1">{n}</span>
+                </button>))}
+            </div>)}
+          <div className={tab === "manage" || tab === "handover" ? "hidden" : "mb-4"}>
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger className="w-60 rounded-none" data-testid="loan-status-filter"><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -377,7 +390,7 @@ export default function LoansPage() {
               </SelectContent>
             </Select>
           </div>
-          <LoanTable rows={rows} t={t} showRequester={tab !== "mine"} />
+          <LoanTable rows={tab === "handover" ? rows.filter((x) => hoFilter === "all" || (hoFilter === "out" ? TO_HAND_OVER : NOT_RETURNED).includes(x.status)) : rows} t={t} showRequester={tab !== "mine"} />
         </>
       )}
 
