@@ -236,6 +236,15 @@ function PoolRequestDialog({ device, onClose, onDone, t }) {
   );
 }
 
+// Rows of the same start date share one soft colour, so a day's requests read as a group. The colour follows the date (not the position), so it stays put when the list changes.
+const DAY_COLORS = ["#fef3c7", "#dbeafe", "#dcfce7", "#fce7f3", "#ede9fe", "#ffedd5", "#cffafe", "#fee2e2", "#ecfccb", "#e0e7ff"];
+const dayColor = (iso) => {
+  const day = String(iso || "").slice(0, 10);
+  let h = 0;
+  for (const c of day) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return DAY_COLORS[h % DAY_COLORS.length];
+};
+
 function LoanTable({ rows, t, showRequester }) {
   if (!rows.length) return <div className="bg-white border border-slate-200 p-10 text-center text-sm text-slate-500">{t("ln_empty")}</div>;
   return (
@@ -249,7 +258,7 @@ function LoanTable({ rows, t, showRequester }) {
           <th className="label-mono py-3 px-4">{t("ln_status")}</th>
         </tr></thead>
         <tbody>{rows.map((r) => (
-          <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50" data-testid={`loan-row-${r.number}`}>
+          <tr key={r.id} className="border-b border-white hover:brightness-95" style={{ backgroundColor: dayColor(r.start_at) }} data-testid={`loan-row-${r.number}`}>
             <td className="py-3 px-4 font-mono text-xs"><Link className="text-blue-700 hover:underline" to={`/loans/${r.id}`}>{r.number}</Link></td>
             <td className="py-3 px-4">{r.asset_name || "—"} <span className="font-mono text-xs text-slate-400">{r.asset_tag}</span></td>
             {showRequester && <td className="py-3 px-4">{r.requester_name}</td>}
