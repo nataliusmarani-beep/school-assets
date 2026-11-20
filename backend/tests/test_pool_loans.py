@@ -1019,3 +1019,10 @@ def test_login_answer_carries_the_policy_status_so_the_modal_shows_straight_away
     assert r["policy_required"] is True and r["policy_accepted"] is False         # a teacher's first login must not skip the policy modal
     r = client.post("/api/auth/login", json={"email": old["email"], "password": "secret123"}).json()
     assert r["policy_accepted"] is True
+
+
+def test_managers_can_list_decided_loans_under_all_within_their_scope(client, make_user):
+    ict = make_user("ict_admin", KK)
+    staff = make_user("staff", KK)
+    assert client.get("/api/loans", headers=auth(ict), params={"scope": "all"}).status_code == 200     # was 403: only leaders / super admin
+    assert client.get("/api/loans", headers=auth(staff), params={"scope": "all"}).status_code == 403

@@ -16,6 +16,8 @@ import { canWrite } from "../lib/roles";
 import { fmtDateTime } from "../components/loans/LoanForms";
 import LoanDashboard from "../components/loans/LoanDashboard";
 
+const AWAITING = ["pending_supervisor", "pending_ict", "submitted"];     // the "to confirm" tab only lists these; decided ones move to "all"
+
 export const STATUS_STYLE = {
   pending_supervisor: "bg-amber-50 text-amber-700 border-amber-200",
   pending_ict: "bg-amber-50 text-amber-700 border-amber-200",
@@ -263,7 +265,7 @@ export default function LoansPage() {
   const role = user?.role;
   const writer = canWrite(role);
   const manager = ["super_admin", "admin", "campus_admin", "ict_admin"].includes(role);
-  const viewAll = ["super_admin", "leader"].includes(role);
+  const viewAll = ["super_admin", "leader"].includes(role) || manager;     // managers see decided requests here, within their own scope
   const dashboard = ["super_admin", "admin", "campus_admin", "ict_admin", "leader"].includes(role);
   const tabs = useMemo(() => [
     ...(dashboard ? [{ id: "dashboard", label: "ln_tab_dashboard" }] : []),
@@ -289,7 +291,7 @@ export default function LoansPage() {
         .then((r) => setCatalog(r.data)).catch((e) => toast.error(formatErr(e))).finally(() => setLoading(false));
     } else {
       api.get("/loans", { params: { scope: tab, status: statusFilter === "all" ? undefined : statusFilter } })
-        .then((r) => setRows(r.data)).catch((e) => toast.error(formatErr(e))).finally(() => setLoading(false));
+        .then((r) => setRows(tab === "manage" ? r.data.filter((x) => AWAITING.includes(x.status)) : r.data)).catch((e) => toast.error(formatErr(e))).finally(() => setLoading(false));
     }
   }, [tab, search, category, statusFilter]);
 
@@ -366,7 +368,7 @@ export default function LoansPage() {
         </>
       ) : (
         <>
-          <div className="mb-4">
+          <div className={tab === "manage" ? "hidden" : "mb-4"}>
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger className="w-60 rounded-none" data-testid="loan-status-filter"><SelectValue /></SelectTrigger>
               <SelectContent>
