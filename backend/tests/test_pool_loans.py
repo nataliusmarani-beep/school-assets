@@ -1052,3 +1052,18 @@ def test_campus_admin_sees_assets_of_other_campuses_but_edits_only_their_own(cli
     assert client.get(f"/api/assets/{ids[1]}", headers=auth(ca)).status_code == 200
     assert client.put(f"/api/assets/{ids[0]}", headers=auth(ca), json={"name": "Renamed"}).status_code == 200
     assert client.put(f"/api/assets/{ids[1]}", headers=auth(ca), json={"name": "Renamed"}).status_code == 403   # other campus: view only
+
+
+def test_dashboard_stats_can_be_narrowed_to_one_campus(client, make_user, db):
+    ids = seed(db, n_laptops=3, n_ipads=0)["laptop"]
+    for aid, campus in zip(ids, (KK, KK, "YPJ TPRA")):
+        db.execute("UPDATE assets SET campus = ? WHERE id = ?", (campus, aid))
+    db.commit()
+    boss = make_user("leader", "")
+    all_ = client.get("/api/dashboard/stats", headers=auth(boss)).json()["total_assets"]
+    kk = client.get("/api/dashboard/stats", headers=auth(boss), params={"campus": KK}).json()["total_assets"]
+    tp = client.get("/api/dashboard/stats", headers=auth(boss), params={"campus": "YPJ TPRA"}).json()["total_assets"]
+    assert kk == 2 and tp == 1 and all_ >= 3
+    assert client.get("/api/dashboard/stats", headers=auth(boss), params={"campus": "Nowhere"}).status_code == 400
+    ict = make_user("ict_admin", KK)                                                    # bound to their own campus, the filter cannot widen it
+    assert client.get("/api/dashboard/stats", headers=auth(ict), params={"campus": "YPJ TPRA"}).json()["total_assets"] == kk

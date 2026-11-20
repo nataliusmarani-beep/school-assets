@@ -10,6 +10,8 @@ import {
   ShieldAlert, CalendarClock, ArrowUpRight, Mail,
 } from "lucide-react";
 import { Link } from "react-router-dom";
+import { campusLabel } from "../lib/campus";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import PolicyAgreementModal from "../components/layout/PolicyAgreementModal";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip,
@@ -39,9 +41,12 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
 
+  const [campus, setCampus] = useState("all");
+  const canPickCampus = ["super_admin", "admin", "campus_admin", "leader"].includes(user?.role);     // these see every campus; the others are already limited to theirs
   useEffect(() => {
-    api.get("/dashboard/stats").then((r) => setStats(r.data)).finally(() => setLoading(false));
-  }, []);
+    api.get("/dashboard/stats", { params: { campus: canPickCampus && campus !== "all" ? campus : undefined } })
+      .then((r) => setStats(r.data)).finally(() => setLoading(false));
+  }, [campus, canPickCampus]);
 
   const sendReminders = async () => {
     if (!window.confirm(t("due_send_confirm"))) return;
@@ -76,13 +81,24 @@ export default function DashboardPage() {
         </div>
       )}
       {signing && user && !user.policy_accepted && <PolicyAgreementModal />}
-      <div className="flex items-end justify-between mb-8">
+      <div className="flex items-end justify-between gap-4 flex-wrap mb-8">
         <div>
           <div className="label-mono mb-2">{t("overview")}</div>
           <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight text-slate-900">
             {t("asset_dashboard")}
           </h1>
         </div>
+        {canPickCampus && (
+          <Select value={campus} onValueChange={setCampus}>
+            <SelectTrigger className="rounded-none border-slate-300 w-56 bg-white" data-testid="dashboard-campus-filter">
+              <SelectValue placeholder={t("all_campuses")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t("all_campuses")}</SelectItem>
+              {["YPJ Kuala Kencana", "YPJ TPRA"].map((c) => <SelectItem key={c} value={c}>{campusLabel(c)}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        )}
         {isAdmin && (
           <Link to="/assets/new" data-testid="dashboard-add-asset"
             className="hidden md:inline-flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white text-sm px-4 py-2">
