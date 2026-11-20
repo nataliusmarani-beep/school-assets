@@ -32,7 +32,7 @@ const NAV_LINKS = [
   { to: "/", labelKey: "nav_dashboard", icon: LayoutDashboard, testid: "nav-dashboard" },
   { to: "/assets", labelKey: "nav_assets", icon: Boxes, testid: "nav-assets" },
   { to: "/my-assets", labelKey: "nav_my_assets", icon: UserCheck, testid: "nav-my-assets", badge: "pendingMine" },
-  { to: "/user-assets", labelKey: "nav_user_assets", icon: ListChecks, testid: "nav-user-assets", adminOnly: true },
+  { to: "/user-assets", labelKey: "nav_user_assets", icon: ListChecks, testid: "nav-user-assets", roles: ["super_admin", "admin", "campus_admin", "ict_admin"] },
   { to: "/classrooms", labelKey: "nav_classrooms", icon: School, testid: "nav-classrooms" },
   { to: "/faults", labelKey: "nav_faults", icon: Wrench, testid: "nav-faults" },
   { to: "/compliance", labelKey: "nav_compliance", icon: ShieldCheck, testid: "nav-compliance" },

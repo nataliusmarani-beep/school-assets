@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import api, { fmtCurrency, fmtDate, formatErr } from "../lib/api";
+import { useAuth } from "../context/AuthContext";
 import { useLang } from "../context/LangContext";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -24,6 +25,8 @@ function Kpi({ label, value, icon: Icon, testid }) {
 
 export default function UserAssetsPage() {
   const { t } = useLang();
+  const { user } = useAuth();
+  const readOnly = user?.role === "ict_admin";     // ICT Admin gets the overview of their campus, but hands nothing over from here
   const [data, setData] = useState(null);
   const [pending, setPending] = useState([]);
   const [q, setQ] = useState("");
@@ -64,9 +67,9 @@ export default function UserAssetsPage() {
           <h1 className="font-display text-3xl sm:text-4xl font-semibold tracking-tight text-slate-900 mb-1">{t("ua_title")}</h1>
           <p className="text-sm text-slate-500 max-w-2xl">{t("ua_subtitle")}</p>
         </div>
-        <Button onClick={() => setHandoverOpen(true)} className="rounded-none bg-slate-900" data-testid="handover-button">
+        {!readOnly && <Button onClick={() => setHandoverOpen(true)} className="rounded-none bg-slate-900" data-testid="handover-button">
           <ArrowRightLeft className="w-4 h-4 mr-2" strokeWidth={1.75} /> {t("ua_handover_btn")}
-        </Button>
+        </Button>}
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
@@ -93,7 +96,7 @@ export default function UserAssetsPage() {
                 <span className="text-xs px-2 py-0.5 border bg-slate-50 text-slate-600 border-slate-200">
                   {p.kind === "class" ? t("ma_kind_class") : t("ma_kind_personal")}
                 </span>
-                <Button size="sm" variant="outline" className="rounded-none" onClick={() => cancel(p.id)}>{t("ua_cancel")}</Button>
+                {!readOnly && <Button size="sm" variant="outline" className="rounded-none" onClick={() => cancel(p.id)}>{t("ua_cancel")}</Button>}
               </div>
             ))}
           </div>

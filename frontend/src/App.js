@@ -69,7 +69,7 @@ function App() {
               <ProtectedRoute><Layout><MyAssetsPage /></Layout></ProtectedRoute>
             } />
             <Route path="/user-assets" element={
-              <ProtectedRoute adminOnly><Layout><UserAssetsPage /></Layout></ProtectedRoute>
+              <ProtectedRoute viewRoles={["ict_admin"]} adminOnly><Layout><UserAssetsPage /></Layout></ProtectedRoute>
             } />
             <Route path="/classrooms" element={
               <ProtectedRoute><Layout><ClassroomsPage /></Layout></ProtectedRoute>
