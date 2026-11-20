@@ -5409,6 +5409,8 @@ async def list_loans(user: dict = Depends(get_current_user), scope: str = "mine"
     """scope=mine: my requests; scope=manage: what I may decide on (ICT / admin); scope=all: everything (leader, super admin)."""
     conn = get_conn()
     conds, params = [], []
+    if scope == "all" and user["role"] in ("admin", "campus_admin", *CAMPUS_BOUND):
+        scope = "manage"      # decided requests live in "all"; a manager sees it within the same scope as the to-handle list
     if scope == "all":
         if user["role"] not in ("leader", "super_admin"):
             conn.close()
