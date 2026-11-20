@@ -1,3 +1,4 @@
+import UserPicker from "./UserPicker";
 import { useEffect, useState } from "react";
 import api, { formatErr } from "../../lib/api";
 import { Button } from "../ui/button";
@@ -49,10 +50,7 @@ export default function BulkTransferDialog({ open, onOpenChange, t, assets, onDo
         <div className="space-y-4">
           <div>
             <label className="label-mono">{t("ho_recipient")}</label>
-            <select value={toId} onChange={(e) => setToId(e.target.value)} className={SEL} data-testid="bt-recipient">
-              <option value="">{t("ho_recipient_ph")}</option>
-              {users.map((u) => <option key={u.id} value={u.id}>{u.name}{u.department ? ` — ${u.department}` : ""}</option>)}
-            </select>
+            <UserPicker users={users} value={toId} onChange={setToId} placeholder={t("ho_recipient_ph")} noResults={t("no_results")} testid="bt-recipient" />
           </div>
           <div>
             <label className="label-mono">{t("ho_kind")}</label>

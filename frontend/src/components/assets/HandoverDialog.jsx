@@ -1,3 +1,4 @@
+import UserPicker from "./UserPicker";
 import { useEffect, useState } from "react";
 import api, { formatErr } from "../../lib/api";
 import { Button } from "../ui/button";
@@ -79,10 +80,7 @@ export default function HandoverDialog({ open, onOpenChange, t, onDone, classroo
           )}
           <div>
             <label className="label-mono">{t("ho_recipient")}</label>
-            <select value={toId} onChange={(e) => setToId(e.target.value)} className={SEL} data-testid="ho-recipient">
-              <option value="">{t("ho_recipient_ph")}</option>
-              {users.map((u) => <option key={u.id} value={u.id}>{u.name}{u.department ? ` — ${u.department}` : ""}</option>)}
-            </select>
+            <UserPicker users={users} value={toId} onChange={setToId} placeholder={t("ho_recipient_ph")} noResults={t("no_results")} testid="ho-recipient" />
           </div>
           {room && (
             <div className="border border-slate-200 max-h-64 overflow-y-auto" data-testid="ho-list">
