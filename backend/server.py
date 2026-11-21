@@ -39,9 +39,11 @@ from pydantic import BaseModel, Field, EmailStr
 
 try:  # run as the package (uvicorn backend.server:app) or as a plain module (tests, local scripts)
     from . import booking_engine, byod
+    from .rab_proxy import register_rab_proxy
 except ImportError:
     import booking_engine
     import byod
+    from rab_proxy import register_rab_proxy
 from apscheduler.schedulers.background import BackgroundScheduler
 
 
@@ -7716,6 +7718,8 @@ def send_byod_reminders():
 
 
 app.include_router(api)
+# RAB & Request app served under /request (server-side reverse proxy). Registered before the SPA catch-all below.
+register_rab_proxy(app)
 app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 
 # Serve React build in production (frontend/build lives one level up from backend/)

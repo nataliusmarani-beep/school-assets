@@ -22,6 +22,7 @@ import {
   ListChecks,
   School,
   Laptop,
+  Wallet,
 } from "lucide-react";
 import { useCallback, useRef, useState, useEffect } from "react";
 import api from "../../lib/api";
@@ -178,6 +179,16 @@ export default function AppLayout({ children }) {
               )}
             </NavLink>
           ))}
+          {/* RAB & Request is a separate app served under /request by the backend proxy (backend/rab_proxy.py):
+              a plain link (full page load), not a router link. */}
+          <a
+            href="/request/"
+            data-testid="nav-rab-request"
+            className="sidebar-link flex items-center gap-3 px-3 py-2.5 text-sm border-l-2 border-transparent text-slate-400 hover:text-white hover:bg-white/5 transition-colors"
+          >
+            <Wallet className="w-4 h-4" strokeWidth={1.75} />
+            <span className="flex-1">{t("nav_rab_request")}</span>
+          </a>
         </div>
       </nav>
 
