@@ -1090,8 +1090,10 @@ def get_loan_cc(req: dict, conn, extra: list = None) -> list:
     return result
 
 
-def _loan_html(req: dict, heading: str, detail_lines: list, footer: str = "") -> str:
+def _loan_html(req: dict, heading: str, detail_lines: list, footer: str = "", url: str = None, cta_label: str = "Buka Asset Registry") -> str:
     """Generic HTML body for loan notification emails."""
+    if url is None:     # legacy loan e-mails -> loan list; BYOD e-mails -> that request
+        url = f"{APP_URL}/byod/{req['id']}" if req.get("student_name") and req.get("id") else f"{APP_URL}/loans"
     rows = "".join(
         f"<tr><td style='padding:4px 8px;color:#64748b;'>{k}</td>"
         f"<td style='padding:4px 8px;font-weight:500;'>{v}</td></tr>"
@@ -1102,7 +1104,7 @@ def _loan_html(req: dict, heading: str, detail_lines: list, footer: str = "") ->
         <table style="border-collapse:collapse;margin:16px 0;font-size:14px;">
           {rows}
         </table>
-        {footer}""")
+        {footer}""", cta_label=cta_label, cta_url=url)
 
 
 # ---- Scheduler: return-date reminders ----
@@ -4982,7 +4984,8 @@ def _loan_mail(b: dict, asset: dict, heading: str, extra: list, footer: str) -> 
     lines = [("No. Pengajuan", b["number"]), ("Aset", f'{asset.get("name", "")} ({asset.get("asset_tag", "")})'),
              ("Pemohon", b["requester_name"]), ("Mulai", b["start_at"].replace("T", " ")),
              ("Selesai", b["end_at"].replace("T", " ")), ("Status", LOAN_STATUS_ID.get(b["status"], b["status"]))] + extra
-    return _loan_html(b, heading, lines, footer)
+    # the button opens that very booking (detail + confirm/approve actions), not the app home
+    return _loan_html(b, heading, lines, footer, url=f"{APP_URL}/loans/{b['id']}", cta_label="Buka pengajuan peminjaman")
 
 
 def _loan_context(conn, bid: str):
