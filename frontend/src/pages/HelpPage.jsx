@@ -27,7 +27,7 @@ const SECTION_IDS = [
 
 function SectionHeader({ id, icon: Icon, title }) {
   return (
-    <div id={id} className="flex items-center gap-4 mb-5 scroll-mt-8">
+    <div id={id} className="flex items-center gap-4 mb-5 scroll-mt-24">
       <div className="w-11 h-11 flex-shrink-0 border border-blue-200 bg-blue-50 flex items-center justify-center">
         <Icon className="w-5 h-5 text-blue-700" strokeWidth={1.5} />
       </div>
@@ -87,7 +87,7 @@ function Shot({ name, kind = "browser", className = "" }) {
   const { lang, t } = useLang();
   const [open, setOpen] = useState(false);
   const src = shot(lang, name);
-  const img = <img src={src} alt="" loading="lazy" draggable={false} className="block w-full h-auto" />;
+  const img = <img src={src} alt="" draggable={false} className="block w-full h-auto" />;
   const frame = kind === "phone" ? (
     <div className="rounded-[1.6rem] bg-slate-900 p-2 shadow-xl ring-1 ring-slate-700">{<div className="rounded-[1.1rem] overflow-hidden bg-white">{img}</div>}</div>
   ) : kind === "tablet" ? (
@@ -168,6 +168,17 @@ export default function HelpPage() {
     return () => observer.disconnect();
   }, []);
 
+  // Jump to a topic and keep it pinned while screenshots above it finish loading (otherwise the page drifts past the title).
+  const jumpTo = (e, id) => {
+    e.preventDefault();
+    const go = () => document.getElementById(id)?.scrollIntoView({ block: "start" });
+    go();
+    window.history.replaceState(null, "", `#${id}`);
+    const imgs = Array.from(document.images).filter((i) => !i.complete);
+    imgs.forEach((i) => i.addEventListener("load", go, { once: true }));
+    setTimeout(() => imgs.forEach((i) => i.removeEventListener("load", go)), 4000);
+  };
+
   return (
     <div className="p-6 lg:p-10 max-w-[1200px] mx-auto">
       <div className="label-mono mb-2">{t("documentation")}</div>
@@ -185,6 +196,7 @@ export default function HelpPage() {
               <a
                 key={s.id}
                 href={`#${s.id}`}
+                onClick={(e) => jumpTo(e, s.id)}
                 className={`block text-sm py-1.5 pl-3 border-l-2 transition-colors ${
                   active === s.id
                     ? "border-blue-600 text-blue-700 font-medium"
